@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "runId": "2026-10-26-01",
+  "schemaVersion": 2,
+  "runId": "2026-10-26-02",
   "status": "accepted",
   "candidateDigest": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
   "acceptance": "phase5-acceptance.json",
@@ -12837,7 +12837,49 @@
   "nonRegistryEvidence": {
     "B22_STRICT_WORK": {
       "job": "b22-direct",
-      "scope": "Strict work budgets and disabled-counter/removal controls; no heap/wall-time threshold substitution."
+      "scope": "Strict work budgets and disabled-counter/removal controls; no heap/wall-time threshold substitution.",
+      "currentSensitivity": {
+        "job": "independent-b22-legacy-sensitivity",
+        "candidateRef": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+        "treatment": "newly executed",
+        "mode": "existing --legacy-copies in-memory fixture fault",
+        "fault": {
+          "file": "src/array-view.js",
+          "find": "static placementDestination(owner, key, operationContext) {",
+          "replace": "static placementDestination(owner, key, operationContext) {\n        return undefined",
+          "scope": "in-memory --legacy-copies loader"
+        },
+        "witness": "pending push history work detects the original copied-producer history after all semantic controls complete",
+        "diagnostic": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: B22 copied placement entries are not linear: 16 forward issued: 120\r\n    at file:///C:/Projects/cascada-chain-resolution/test/fixtures/pending-push-work.js:240:13 {\r\n  generatedMessage: false,\r\n  code: 'ERR_ASSERTION',\r\n  actual: false,\r\n  expected: true,\r\n  operator: '==',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v24.14.1\r\n",
+        "semanticControlSummary": {
+          "samples": 27,
+          "retainedControls": [
+            "view",
+            "outputs"
+          ],
+          "allSettledLiveCapturesZero": true,
+          "allSettledCaptureMembershipsZero": true
+        },
+        "counterSubstitutionAnchors": 21,
+        "includesLegacyFault": true,
+        "orderedRuntimeInstances": [
+          {
+            "instance": 1,
+            "pid": 20672,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          }
+        ],
+        "measurement": {
+          "size": 16,
+          "delivery": "forward",
+          "stage": "issued",
+          "copiedEntries": 120,
+          "allowed": 40
+        },
+        "qualification": "The original catalog remains239 reused registry entries and264 diagnostics. This direct non-registry diagnostic supplements the already passing normal-suite wrapper; expected exit1 is sensitivity evidence, not a runtime failure."
+      }
     }
   },
   "qualifications": {
@@ -12928,5 +12970,29 @@
       "reason": "Function category now independently rejects native dispatch; old provenance-only fault is no longer load-bearing."
     }
   ],
-  "policy": "Named witnesses plus fallback; no --full claim. Exact assertions and actual child receipts, not titles or anchor matches, establish detection. Selected intended diagnostics retained with exact edits and receipts. Non-detecting selectors and later crashes receive no additional credit."
+  "policy": "Named witnesses plus fallback; no --full claim. Exact assertions and actual child receipts, not titles or anchor matches, establish detection. Selected intended diagnostics retained with exact edits and receipts. Non-detecting selectors and later crashes receive no additional credit.",
+  "evidenceOrigin": {
+    "runId": "2026-10-26-01",
+    "candidateDigest": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+    "treatment": "reused with justification",
+    "dates": "Original registry execution dates retained in phase5-acceptance.json. Registry catalog remains reused; current direct non-registry B22 sensitivity has its own new job/date/candidate."
+  },
+  "reviewedCandidateDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+  "currentReview": {
+    "scope": "All B01–B22 rows,106 obligation groups,239 unchanged registry entries",
+    "disposition": "Every original exact edit/selector and detecting diagnostic independently reconciled; no new supported defect or required sensitivity gap established",
+    "reuseRationale": "All production/test/fixture/loader/package input bytes, semantic contracts, auxiliary probe bytes and relevant Node/Mocha/host environment match. Only test/README.md differs in the original manifest: documentation/probe-link consolidation, never executed. No production or test correction invalidated the original self-contained result/diagnostic/coverage summaries. Original date and candidate remain attached.",
+    "entries": 239,
+    "selectors": 266,
+    "diagnostics": 264,
+    "matchingDiagnosticChildReceipts": 120,
+    "explicitNonDetectingSelectors": 2,
+    "verificationHelperSHA256": "8d2977a38997da841307bb2534f0c5543f82d53f5b315652d8e16f87f1018151",
+    "independentApproval": "approved",
+    "limits": "Original named-witness/fallback mode, late crash, two non-detecting selectors and counter-only qualifications preserved unchanged. Raw log hashes are provenance, not detection claims.",
+    "newNonRegistryDiagnostics": 1,
+    "reviewer": "/root/independent_review",
+    "reviewedAt": "2026-10-26T15:51:25Z",
+    "reviewedCandidateDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8"
+  }
 }

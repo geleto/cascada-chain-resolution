@@ -1,11 +1,28 @@
 {
-  "schemaVersion": 1,
-  "runId": "2026-10-26-01",
+  "schemaVersion": 2,
+  "runId": "2026-10-26-02",
   "status": "accepted",
-  "scope": "Full B01–B22 review; all broad gates newly executed after supported corrections",
-  "candidateDigest": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+  "scope": "Fresh full B01–B22 source review on unchanged runtime/tests; new normal/traced suites and direct B22 sensitivity, explicit reuse of applicable prior broad execution evidence; independently approved.",
+  "candidateDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
   "manifest": {
     "AGENTS.md": "1196982d7a09b2ab8f730b1c5acb2961269ccad1f0289e96ccd27bd0f1b785fe",
+    "docs/data-limitations.md": "7a3aac84ab5ab4a7fb22f50f509c864bf1f0a7bdb0332e8e790e5b8544098363",
+    "docs/phase5-probes/coordinator-probe.mjs": "916d9db769605ebe43c6665a4aa309c7ed7b2a613d0e44e8ba604350fb85c0e5",
+    "docs/phase5-probes/copied-delivery-extra.mjs": "a4eb7f392159351ede155cf2441c9194561ac6824de0137f8b57affb1ccb71a7",
+    "docs/phase5-probes/copied-delivery-recovery.mjs": "5a750eb4aec6ba9dc07e9692464f3af91f0b547f854edbf6341f124b5639d6ea",
+    "docs/phase5-probes/deep-copy-history.mjs": "17ca2623faff6b50e2be16d5578f464d20705beabc1add111820a1828eb9d546",
+    "docs/phase5-probes/delivery-lifetime-probe.mjs": "91dba26b5e1d85b42c2083e1032893f031280de954e809251464dd4d6d38d84d",
+    "docs/phase5-probes/delivery-presence.mjs": "d3bb72748a0d2ba7370b71285afca15fafe0f718f6c75e10cc0f593579174c28",
+    "docs/phase5-probes/delivery-recovery.mjs": "7fdd52d45422ed4b546ae489f0f5897229194fb7fc36d0e5f339772a19ef297f",
+    "docs/phase5-probes/independent-probe.mjs": "475baa0d2b9beaea8b8b15cb029ea796d8318f58e8aa20ed9ba9337d26455f8c",
+    "docs/phase5-probes/lifetime-overflow.mjs": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b",
+    "docs/phase5-probes/lifetime-preparation-controls.mjs": "2fcddef351837ee5c241b087bbb1dec0ffa6e7dbcdae36ede24e77cd0e7f4066",
+    "docs/phase5-probes/lifetime-remaps.mjs": "b2897dad743c94ffa2f7c9a2b10c87f2b4a8b6a9d986d0acc8a443735ce06333",
+    "docs/phase5-probes/range-selected-retention.mjs": "acb587a5f10394f039a9b73255428053b6c4374a741af64bafecc90a842dde62",
+    "docs/phase5-probes/ready-controls.mjs": "f2f315209098161a8abbe285069bc889e10122badf7c84e784ee75d59c11d4e8",
+    "docs/phase5-probes/sibling-lifetime-probe.mjs": "2aa2aac88c78e0f00c61c72a03854bcca12582c3051712b1ebf279f04347013d",
+    "docs/phase5-probes/work-histories.mjs": "91978cb575e524d012ebfcee3ac3b4e37971e4a71d140db6bcdadfc92f3856f7",
+    "docs/phase5-probes/work-release.mjs": "d997fb5411a7a57e4756fdb29d6fe2f5725fbc925167be0d9d738dff321d7082",
     "package-lock.json": "d8f673c237f1c993e2d7ed4f11c21cf7e68f20c00a6bd1dcc5fe47a20b9d0554",
     "package.json": "11ac60953b41913ec940ba56e4367fe171718d864f1fa09484f9d34c03e1f39b",
     "src/array-invocation.js": "f31778eeeeffb7f5e17e7a509adb5fc2ff04a48365530ea7ca7951fbcc550c47",
@@ -51,7 +68,7 @@
     "src/refcounts.js": "2f9dd79ff746cab63b97bf198ebde4d8b98a4b719af85179612d823107a621d3",
     "src/run.js": "0615981318dbdc4034bb9b053973b82d3b1903fbbe3e53dd9eceec930ffddd4e",
     "src/thenable-subscription.js": "05f596748cb9b5216dc3c513939597372e1741b45aaa3fc2e0ba7e15bae85d32",
-    "test/README.md": "a4f3cd6b332eba82fb8a5a539e849bd4e494c29740804465b29eb067f790dca9",
+    "test/README.md": "2d56a2442fa4b98210865ecdd5be179c0f8e2619bad97e21522bda2ec7437126",
     "test/action-throw-boundaries.test.js": "a6b2b8b315d7271b7b1110a0a91e5d3ed66c4c353a2347f3f64cf6f0423c474a",
     "test/array-backing-producers.test.js": "bc731d2b9e1883b2ebb231312e4bab67ca61fb2842198aa0dc8e855076604d18",
     "test/array-complete-collection.test.js": "bb363f3ac5ccb9dbcb50fcf12a86b226560839b57fbe918e29e1df98316e0897",
@@ -271,13 +288,20 @@
     "mocha": "11.3.0",
     "platform": "win32",
     "arch": "x64",
-    "release": "10.0.26200",
-    "revision": "841002a9135c0fee7e029feb8b7d1b1b869422ab"
+    "osRelease": "10.0.26200",
+    "osVersion": "Windows 11 Pro",
+    "execPath": "C:\\Program Files\\nodejs\\node.exe",
+    "revision": "21ea2e311962d8c6b61f9b40b701012c1f1563ac",
+    "dirty": "",
+    "inheritedOverrides": []
   },
   "initialCandidate": {
-    "digest": "49d1a26b24b53d49915f1a67eca439754e11aa7b92d1c0ea70145179ec790c4c",
-    "revision": "841002a9135c0fee7e029feb8b7d1b1b869422ab",
-    "inputCount": 259
+    "digest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+    "revision": "21ea2e311962d8c6b61f9b40b701012c1f1563ac",
+    "inputCount": 277,
+    "dirtyFiles": [],
+    "workingManifestCount": 314,
+    "workingManifestDigest": "141272285ed7469da301cd1e9468b085cbdec37df351ed7d4d1383fd40e7bd51"
   },
   "semanticContractHashes": {
     "AGENTS.md": "1196982d7a09b2ab8f730b1c5acb2961269ccad1f0289e96ccd27bd0f1b785fe",
@@ -362,7 +386,19 @@
     "concurrency": 2,
     "deadlineMinutes": 30,
     "safeguardBaseline": "normal must pass on matching inputs before safeguards --skip-baseline",
-    "receiptPolicy": "Instances preserve receipt order; startup alone receives no runtime execution credit."
+    "receiptPolicy": "Instances preserve receipt order; startup alone receives no runtime execution credit.",
+    "currentRun": {
+      "clearInherited": [
+        "CASCADA_*",
+        "NODE_OPTIONS"
+      ],
+      "workingDirectory": "repository root",
+      "concurrency": 2,
+      "deadlineMinutes": 20,
+      "testTimeoutMs": 60000,
+      "inputsBeforeAfter": "277-path manifest/digest equal before and after both suite jobs",
+      "freshReceiptPolicy": "Raw ordered loaded/executed rows verified. New process instance begins at each loaded row, including PID reuse. No startup-only instance earns runtime-execution credit."
+    }
   },
   "runs": [
     {
@@ -402,7 +438,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-placement-sequences",
@@ -449,7 +488,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-preparation-sequences",
@@ -506,7 +548,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-nested-sequences",
@@ -556,7 +601,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-array-sequences",
@@ -606,7 +654,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "traced",
@@ -1846,7 +1897,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-array-failure-release-50",
@@ -1886,7 +1940,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-array-reflection-release-50",
@@ -1927,7 +1984,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-array-surface-50",
@@ -1969,7 +2029,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-boundary-release-50",
@@ -2006,7 +2069,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-call-selection-release-50",
@@ -2044,7 +2110,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-capture-fatal-50",
@@ -2083,7 +2152,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-discarded-argument-leaves-50",
@@ -2121,7 +2193,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-external-owner-release-50",
@@ -2158,7 +2233,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-flat-completion-50",
@@ -2195,7 +2273,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-inspection-failure-retention-50",
@@ -2232,7 +2313,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-mutation-failure-retention-50",
@@ -2269,7 +2353,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-path-release-50",
@@ -2306,7 +2393,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-preparation-authority-50",
@@ -2348,7 +2438,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-outward-registration-release-50",
@@ -2385,7 +2478,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-prepared-boundaries-50",
@@ -2422,7 +2518,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-public-surface-release-50",
@@ -2459,7 +2558,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-receiver-identity-50",
@@ -2504,7 +2606,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-registration-release-50",
@@ -2541,7 +2646,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-result-contract-50",
@@ -2582,7 +2690,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-terminal-release-50",
@@ -2619,7 +2730,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-completed-work-retention-10",
@@ -2656,7 +2770,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-snapshot-identity-lifetime-10",
@@ -2694,7 +2811,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-snapshot-identity-lifetime-50",
@@ -2732,7 +2852,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-snapshot-identity-lifetime-1000",
@@ -2770,7 +2893,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "b22-direct",
@@ -6543,7 +6669,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-construction-retention-50",
@@ -6581,7 +6710,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "lifetime-construction-retention-1000",
@@ -6619,7 +6751,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "direct-pending-copy-work",
@@ -7484,7 +7619,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "direct-array-range-work",
@@ -7551,7 +7689,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "direct-queue-storage-release",
@@ -7589,7 +7730,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "safeguards",
@@ -7627,7 +7771,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "range-selected-release-10",
@@ -7666,7 +7813,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "range-selected-release-50",
@@ -7705,7 +7855,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "range-selected-release-1000",
@@ -7744,7 +7897,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "review-range-reproduction",
@@ -7787,7 +7943,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "review-copied-delivery-extra",
@@ -7849,7 +8008,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "review-copied-delivery-recovery",
@@ -7895,7 +8057,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "review-ready-controls",
@@ -7938,7 +8103,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "review-deep-copy-history",
@@ -7980,7 +8148,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "array-validation-retention-10",
@@ -8019,7 +8190,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "array-validation-retention-50",
@@ -8058,7 +8232,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "array-validation-retention-1000",
@@ -8097,7 +8274,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "array-remap-failure-retention-10",
@@ -8136,7 +8316,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "array-remap-failure-retention-50",
@@ -8175,7 +8358,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "array-remap-failure-retention-1000",
@@ -8214,7 +8400,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "deferred-validation-retention-10",
@@ -8253,7 +8442,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "deferred-validation-retention-50",
@@ -8292,7 +8484,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "deferred-validation-retention-1000",
@@ -8331,7 +8526,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-lifetime-overflow",
@@ -8372,7 +8570,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-lifetime-remaps",
@@ -8413,7 +8614,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-lifetime-preparation-controls",
@@ -8454,7 +8658,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-delivery-lifetime-probe",
@@ -8495,7 +8702,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-delivery-presence",
@@ -8561,7 +8771,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-delivery-recovery",
@@ -8649,7 +8862,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-work-release",
@@ -8834,7 +9050,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "run04-work-histories",
@@ -14627,7 +14846,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-boundary-histories",
@@ -14680,7 +14902,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-external-sequences",
@@ -14730,7 +14955,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-pending-histories",
@@ -14775,7 +15003,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-0",
@@ -14825,7 +15056,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "scale-receiving",
@@ -14881,7 +15115,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-1",
@@ -14931,7 +15168,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-2",
@@ -14981,7 +15221,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-3",
@@ -15031,7 +15274,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-4",
@@ -15081,7 +15327,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-5",
@@ -15131,7 +15380,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-6",
@@ -15181,7 +15433,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "matrix-7",
@@ -15231,7 +15486,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-0",
@@ -15292,7 +15550,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-1",
@@ -15353,7 +15614,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-2",
@@ -15414,7 +15678,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-3",
@@ -15475,7 +15742,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-4",
@@ -15536,7 +15806,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-5",
@@ -15597,7 +15870,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-6",
@@ -15658,7 +15934,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "coordinator-probe-normal",
@@ -15698,7 +15977,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "coordinator-probe-traced",
@@ -15744,7 +16026,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "independent-probe-normal",
@@ -15783,7 +16068,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "independent-probe-traced",
@@ -15828,7 +16116,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "pairs-7",
@@ -15889,7 +16180,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     }
   ],
   "supplementalRuns": [
@@ -15927,7 +16221,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "sibling-lifetime-traced",
@@ -15969,7 +16266,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "receiver-witness-normal",
@@ -16007,7 +16307,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "receiver-witness-traced",
@@ -16051,7 +16354,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "placement-capture-stack50-normal",
@@ -16087,7 +16393,10 @@
         "loaded": 0,
         "executed": 0,
         "instances": []
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     },
     {
       "label": "placement-capture-stack50-traced",
@@ -16131,7 +16440,10 @@
             "executed": true
           }
         ]
-      }
+      },
+      "evidenceTreatment": "reused with justification",
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "originalRunId": "2026-10-26-01"
     }
   ],
   "coverageSets": {
@@ -17715,36 +18027,37 @@
     }
   },
   "independentReview": {
-    "reviewer": "/root/evidence_review",
-    "reviewedAt": "2026-10-26T07:11:07.193Z",
-    "decision": "approved on final candidate; finite-coverage and instrumentation qualifications retained",
+    "reviewer": "/root/independent_review",
+    "model": "Codex GPT-6; exact build unknown",
     "productionFixAuthor": false,
-    "report": "phase5-review.md#independent-review",
-    "reconciliation": {
-      "executionInputs": 260,
-      "jobs": 86,
-      "logs": 86,
-      "receiptFiles": 81,
-      "loadedInstances": 320,
-      "executedInstances": 303,
-      "safeguards": 239
+    "reviewedCandidate": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+    "revision": "21ea2e311962d8c6b61f9b40b701012c1f1563ac",
+    "decision": "approved",
+    "reviewedAt": "2026-10-26T15:51:25Z",
+    "scope": "Full B01–B22 current source, complete route/resource catalogue, current consolidated records and evidence treatment",
+    "reviewedDocumentationHashes": {
+      "docs/phase5-review.md": "be99ed81d7df7f2920997bd4ebb06f67f35afeea7fd58492f33a700ba58e6d87",
+      "docs/phase5-acceptance.json": "60bc2d498cd97c8ee2d0a08e159c374e4eda52188aae930bd3e154b1de79d178",
+      "docs/phase5-sensitivity.json": "0a86b7b4c9706ef1cfdaaadc8d7c68fe485a9bc70eeda7b8c95806f36978a3f1",
+      "docs/phase5-stabilization.md": "4ab73b0ff61a1208abb060f5cb89d7054db84706db897d1bdcf726bfd6990ef2"
     },
-    "qualifications": {
-      "startupOnlyInstances": {
-        "count": 17,
-        "disabledCounterControls": 3,
-        "preparationCoordinators": 2,
-        "runnerControlCoordinators": 5,
-        "familyCoordinators": 6,
-        "rawVM": 1,
-        "credit": "No traced runtime execution credit for these instances; raw VM has separate semantic assertions."
-      },
-      "safeguardMode": "Named witnesses with fallback; not full-suite-per-fault mode.",
-      "lateCrash": "property-reception-prepares-managed-state has 13 intended assertion failures before Mocha exit 7; crash/unexecuted tests add no credit.",
-      "earlierCandidate": "Candidate 1 failed its unsupported Function receiver fixture; no integrated acceptance credit. Migration changed only that fixture.",
-      "interruptedRunner": "58 recorded jobs retained from v1; unrecorded jobs rerun on unchanged candidate/environment using v2. No unrecorded results accepted.",
-      "stack50": "Two current-pin normal/traced supplemental jobs close the original transcript-only provenance gap; not added to the 86-job inventory."
-    }
+    "verificationHelperSHA256": "26bb57348da2dfff5507eabd981ac9fb8996d243e204902e0544610607a52e2b",
+    "basis": [
+      "Fresh contract-derived B13–B15 and cross-boundary source review; boundary/lifetime dispositions and no-author production review",
+      "All original86+6 job records, original manifest/environment/approval, catalog/diagnostics and coverage sets preserved",
+      "Both new raw5454-pass logs,277 current input hashes,240 ordered loaded/223 executed instances independently reconstructed",
+      "All239 exact faults/selectors,106 groups,264 original diagnostics,120 embedded matching child receipts and two non-detecting qualifications reconcile",
+      "Current generator definitions and all matrix/pair partitions/products/252 checked joint keys reconcile",
+      "New B22 intended assertion120>40 follows all27 semantic samples and2 retained controls with actual runtime receipt"
+    ],
+    "qualifications": [
+      "Finite generator vocabulary/schedules and selected reflection sites; supported host contracts",
+      "17 startup-only traced instances receive no runtime-execution credit",
+      "Named witnesses with fallback, no --full registry claim",
+      "Two non-detecting selectors and original late-crash qualification remain explicit",
+      "Reused jobs preserve original date and candidate; unavailable raw hashes are provenance only"
+    ],
+    "correctionReReview": "No production correction required; final approval/status bookkeeping expressly authorized by reviewer."
   },
   "consolidation": {
     "reason": "User requested one reusable baseline and removal of superseded per-run and intermediate records.",
@@ -17934,5 +18247,3015 @@
         }
       ]
     }
+  },
+  "evidenceCandidates": {
+    "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a": {
+      "runId": "2026-10-26-01",
+      "scope": "Full B01–B22 review; all broad gates newly executed after supported corrections",
+      "manifest": {
+        "AGENTS.md": "1196982d7a09b2ab8f730b1c5acb2961269ccad1f0289e96ccd27bd0f1b785fe",
+        "package-lock.json": "d8f673c237f1c993e2d7ed4f11c21cf7e68f20c00a6bd1dcc5fe47a20b9d0554",
+        "package.json": "11ac60953b41913ec940ba56e4367fe171718d864f1fa09484f9d34c03e1f39b",
+        "src/array-invocation.js": "f31778eeeeffb7f5e17e7a509adb5fc2ff04a48365530ea7ca7951fbcc550c47",
+        "src/array-length.js": "23b551e429ac7c912acefb05ff715506132f80e949f6a058180d09a4ae2b9a37",
+        "src/array-methods.js": "282889d9c450de8e3eddcc59f902e66f8056e60de36d441ef6736b86069a9b78",
+        "src/array-remap.js": "b78669e794f8c6f57eec620b6459739c8f787bc9f2f01d0052585deef3c35356",
+        "src/array-view.js": "6809d30296d8686145e68e473eb5baad1cf79ff5b20c1d3011d16f86ade886f4",
+        "src/captured-graph.js": "924cc16729562c7ed336df2182dce6b4185a799977d121ec1b7b2e3cd236a6d7",
+        "src/captured-identity.js": "9497645d7cdeeba198be26a4822c43a8a06382e9866267bb2bf9dad874a475e5",
+        "src/chain.js": "82a400c0eb9e2b29d966872ca37a6ec7922c4c56fdf22cfb8d43d1201b44fb56",
+        "src/data-declarations.js": "f7c0269b01be352c3cdc5f980dac88f2fb3bb794ca37387e1deba03f73e4a9b3",
+        "src/enter.js": "8e6b868d0df50b91d48b5cb6b66397b09bd86af5df3711660d189ca384181dab",
+        "src/error.js": "219b39d8cda53b62abfbdc807e69d404ff214942bc3b2c3099d4a73807c62fa8",
+        "src/execution.js": "2257fac0a467067853984882f94ab182f732b3ea551018d2997ff7ff6bc01d34",
+        "src/export.js": "3fe744e5b1fd7d2252f818939afaf7dba492ef3d9a019b2dc1852d6ded6abaf2",
+        "src/external-access.js": "46b9801a393fc7e8b3da47f97019b0953c0f45a665c3d661a599a915ead68827",
+        "src/external-mutation-tree.js": "5f410c6aaada587396813bc4d1537b2850567fb1f078416282184ff5c71b10de",
+        "src/external-operation.js": "405aeed9c2b505a15623354497acbd77bc23344b32f0327e5c00da89e1bff7ae",
+        "src/external-snapshot.js": "0b33922418d027fbcf939abcdcb34304575439e2982efc80c28c29ec276533ab",
+        "src/import.js": "2386ed7504d4b4bc75e763dd10ef8e2059cce6b84d6bb7e5a36c74d64deafed5",
+        "src/index.js": "baadd65a9574ab1e23068e7911368c3e077f8b0a240704d2141538754be1b5cb",
+        "src/input-preparations.js": "48417596bec809693bf866c9e1216e58e922af9ebe489e6d68b6f414e3babdf6",
+        "src/internal-step.js": "53ddd99dd4ed6e2d7fbf90bfa07ddf684d74726febf0deff3ea871468f905407",
+        "src/invocation.js": "082715568141e12dedb50324773e0309cf30bb73040c2c6fb6ea23600f4c49e3",
+        "src/language-conversion.js": "2bc2f5ed3b46dbb3be2eab109190a6767a1b9ea171d0ee33cecd1de2894f0d10",
+        "src/language-properties.js": "aa37aa9f63a949a1044347b7cf35ad36c399c7ad089ee69ade15ad7a45158ffe",
+        "src/language-values.js": "f836a915654b8f5a98d7d929978bbd008d6f79268520d7bc3801b8c0ab237257",
+        "src/managed-capture.js": "f3f3f43cda9d0223e4eae67a751ffa863959e8e1a6cbf1137e9fe15976556c37",
+        "src/managed-invocation.js": "3a9648195fa96e73eb90b43ee8b7e16119a01e99423a1d63def6284d7a8cf67b",
+        "src/meta.js": "d451852816c048837d4d5e9d5774ebbdebe95bffd1d21279268fbd9d68553bc2",
+        "src/mutate-property.js": "a7b9b4bf5896104784fd94424626b6b32392203c6826b0b105b643b81a618bdb",
+        "src/mutations.js": "5cb0ea2bf789467f639422f4bf84afe754ab38169d74fbe110abed40b2a57cc8",
+        "src/observations.js": "ee9e296cf4e2695dcd401062b27b08a16cc780ab61082286cfc565e1a69503db",
+        "src/operation-lifecycle.js": "3981aa0a2631c625d0b6d6fea2c5e77739ff46479f30dd26f3eb7160f9cf4f64",
+        "src/operation-result.js": "eb31870551330e403788c934581fdf9a6dc4deff28c2a52aa796b14e73a6ad40",
+        "src/ownership.js": "9bb234a5496ac5ca462f59a2b9bae7a981bdf469bf65b5d84e7806140f8d067b",
+        "src/parent-placements.js": "8cdd82aac67436d65ebc6a5d2d16534639900afab4f7892a5581bc6b7c92278b",
+        "src/path-context.js": "27632a7ac22940c38ff40e4957860f9843184527faed0e522883297b07ec554a",
+        "src/path-operation.js": "f9e3780d0638f8bfd5b5aecf324e25661adefc6842e4289a52911ae4d5d942bc",
+        "src/placement-structure.js": "3beaebb1a43732dac8d9ace3350c8fc8a1302693fa30a52fb91228da8a1e1ff6",
+        "src/poisoned-value.js": "44a03aa2e11b21fb7aed7dee6ee4d3c1809aa82fd1864743d84f15f40f59f649",
+        "src/property-versions.js": "939277033ab0fcfcb35aa1e854b2f6bc7e42554c1779bd9c01a4d882f7b802c3",
+        "src/refcounts.js": "2f9dd79ff746cab63b97bf198ebde4d8b98a4b719af85179612d823107a621d3",
+        "src/run.js": "0615981318dbdc4034bb9b053973b82d3b1903fbbe3e53dd9eceec930ffddd4e",
+        "src/thenable-subscription.js": "05f596748cb9b5216dc3c513939597372e1741b45aaa3fc2e0ba7e15bae85d32",
+        "test/README.md": "a4f3cd6b332eba82fb8a5a539e849bd4e494c29740804465b29eb067f790dca9",
+        "test/action-throw-boundaries.test.js": "a6b2b8b315d7271b7b1110a0a91e5d3ed66c4c353a2347f3f64cf6f0423c474a",
+        "test/array-backing-producers.test.js": "bc731d2b9e1883b2ebb231312e4bab67ca61fb2842198aa0dc8e855076604d18",
+        "test/array-complete-collection.test.js": "bb363f3ac5ccb9dbcb50fcf12a86b226560839b57fbe918e29e1df98316e0897",
+        "test/array-consumption.test.js": "223dbd5fe664a56ddb87f0cbc28e45205b5b6c5b439ad8af301e0426ad01f620",
+        "test/array-history-storage.test.js": "e9a14796d411456e619258ca89001f3e951eb54cb2ac52c5715aa42abc935199",
+        "test/array-intrinsic-boundaries.test.js": "b1c6ea4c35f5bebd97795e88506d65a00d20b206fd3dfb22b7aca9a7c54076fc",
+        "test/array-length.test.js": "8c31dfb820d523cdde2986e79eed2cefbe24da2c263740dcb35cb0ef2278813f",
+        "test/array-native-equivalence.test.js": "8e8220795d16d069b030ef4af6ea56a8925d1575296ca2b57d289aef62225e01",
+        "test/array-preparation.test.js": "3cf0eaac4425c141958c3f353f22190351935429ba7fb97f00b218361f23e51c",
+        "test/array-range-identity.test.js": "fbfb69e0c70232c0f2135d17be73c34b0d436ada54502602cf7f2fdce53af900",
+        "test/array-range-recovery.test.js": "89962c550b745f21b9ed4a3589de7374920b25d30433878af699366d018f4344",
+        "test/array-range-work.test.js": "a004bfb2b97d6237de6f00244337e3ab02dca3c02403055c63ee83b7e0631e2a",
+        "test/array-search.test.js": "84c9ab0abd8b01e3330a24c3703ec5f77da96c610c0b7e47088bd3f7c0d77bc0",
+        "test/array-sort-boundaries.test.js": "a68172d0415afcd045551e9fcda8f2ac7db156f4be797ab1b6ca70cde58fbf35",
+        "test/array-transition-capture.test.js": "3a162e5ad88f68687fea2eb5dd8fb768d883d231eeeb94682a1aff8de773685b",
+        "test/array-view-action-boundaries.test.js": "76d40268d14128882ab5ab61ff00b155bea2ebcc091eed9eb455d334b74887b7",
+        "test/array-view.test.js": "98a3a2e2faa8be12dd7807a98c3826bd0addd0dfc44ec903c7b8fcde3ab95186",
+        "test/boundary-contracts.test.js": "a47b460d6e091b8b3bdfbf8b41bb393b01ef8b987bf6d8b0a1e71fabf338423d",
+        "test/boundary-histories.test.js": "3875222df90f3082095b978ca646c0c9bd8f679faac223d6cd09411f01cfd618",
+        "test/boundary-lifetimes.test.js": "2634b856756c650eb5a951a58045ea79d27aba135aad71f93456d6555c857411",
+        "test/boundary-policy.test.js": "59b5f965156dc51dd333b9402f4bfb8a08a63a8f1c285176102d3484fe7084de",
+        "test/browser-loading.test.js": "3cb108381e36eaa6b9fa6f6cf90b0dab0b206d183bd62e26fa73c6129ad75466",
+        "test/captured-inputs.test.js": "6ad153fe3c425b1afee3c7008eac411bf965b72a38d26dd411e7de1b4b068a4a",
+        "test/captured-shape.test.js": "f9976c8c40d8917133a47fe63f7bacc6b3982b42c33016de42e3e441a0eec90b",
+        "test/causal-failures.test.js": "7809feb76d36a190592f34f57c4c5a462face0218b35085cb2de50fb99116122",
+        "test/chain.test.js": "e4dc2d170b1d5cdc1f224598d87e13ab0218a7bec1837686d5adacd413a29ebd",
+        "test/classification-failures.test.js": "6f07b920587052e742a663d39a1151df6574b24d66694ac785e4248b33fef496",
+        "test/complete-failures.test.js": "ac78b928380f4f1e83fc1e1f69adfb886fd3cfe329228fcc4bfb7dcdd7dbf961",
+        "test/copied-delivery.test.js": "b77604076c32bcb7af0ac7c0e404d7af258a3741946e9d1adad9899e60de0359",
+        "test/data-classes.test.js": "85fdbb5275a5be947d568b9a7437660763458b78c1ab329535351b87ca65687e",
+        "test/data-declarations.test.js": "504f0e95f77f2e5c30df6f11cd0fedd34dea4a532234808632fc90ff77f7a493",
+        "test/declaration-failure-boundaries.test.js": "a22d62eef74152ba4e289d22b0b987df7fbceb1bf5c1ce5f9edb6acfc7e1dec5",
+        "test/detached-cleanup-boundaries.test.js": "38f13216748c6e23c9b0853dcad2966bef7fc472dc4dcd6ce51f1021e8024ecd",
+        "test/enter.test.js": "4150e2cba3c7f72ecdd768f906ca68ba5da134e2f11ada646047f833704f7940",
+        "test/entry-identity-dependencies.test.js": "0f7a01fca60e154c0b6eb176871947c7ea747307ad7e798dfbb7a86c7553e95f",
+        "test/entry-identity.test.js": "ec44891015be7317eeee889afbbe9f8b8268d54e0ce0b834b34a06d6e0c823f4",
+        "test/entry-storage.test.js": "0f089fe282e5a7c608c18c314f1a6adf8c78d4b16f0076166b4ff3daf7a057f4",
+        "test/entry-structure.test.js": "977990dc561e31f30b9a59cdc05f4d526506c7cbf777712b01f1d7f9af1eb8ae",
+        "test/error-attribution.test.js": "f81bc1dea230669b8dd9674d6c5ad2713770d2649f4d66f0e3723f5a4242b410",
+        "test/error-union.test.js": "19d5fea775de959960e41235c66faaf29cd181cc04fb29a2f9d38fa5fafbaddf",
+        "test/execution-context.test.js": "e2eef9fe16198c51589a6ee269964d53d151452e16160f7036e1ddc5fe33e144",
+        "test/experiments/error-reporting-order.mjs": "3d42ee64c2e39b87e1abed4aa56070da25123898d2989b750805d53ff1d2de28",
+        "test/experiments/phase2-ownership-model.mjs": "c9a757bbc96d9e43bedcdbbc359ccfdfc46b4cdcec9b8a05381d598b49af98bb",
+        "test/experiments/phase2-retirement.mjs": "8eb96e64c9be5c64467440c4450accf3a88b01064d00de9a2ce1af0e05d76370",
+        "test/export.test.js": "3e5982aa24413e53930c073e434dcb1d89b065513d66d3d4ad73089a4487754c",
+        "test/expression-boundary.test.js": "ea53a1be6aff944beae35c2aad3bbc2aee8fab385164a0e451b5d515cc50a294",
+        "test/external-array-length-boundaries.test.js": "20efe7846a70546c114fbd968b139a8a7bd03a49df48e8c7e9a63555ddce6902",
+        "test/external-binding-diagnostics.test.js": "99a34ef5dd3bd72d002a7fa47fdbaac1a3eafa08456f20bd44cae3b1cb63afc5",
+        "test/external-context.test.js": "5e946c9f2d786d0692d482b0869febb1ffed2c6243016f459b918619f6fb3aa2",
+        "test/external-coordination.test.js": "14d4f5dd531b6ae636655484652f526a5d9251a242d207e15b350150ef502455",
+        "test/external-error-oracle.js": "b2f82f9b04c2f9732da6a4195d72490290b26d710ada486f067fd8185047af3c",
+        "test/external-error-oracle.test.js": "d99c6e702892bab429853df648bd5d18df2d278f40998d4115d771ce11af70a2",
+        "test/external-paths.test.js": "e2450ee61d59ca9e1629c51e38709348213b482320d43746cafa86a49630a8e2",
+        "test/external-then-probe.test.js": "b9b6aef855158a9313d0fec25a6034fce9daf3850403d61478c3ba408d8bd5de",
+        "test/external-tree.test.js": "0aef8293ee6e4f124be5e9773c735eb7b88f7fa1bc113f99e4fc7f56f1c7152e",
+        "test/fatal-execution.test.js": "a6768bff21061119c2984b0cbdaae83bf0367c83ce25bc462ddef85476d3caf6",
+        "test/fixtures/argument-preparation-failure.js": "556da164af85040f3c124883fb9e7c6bb55d5419c1384a6e02247a68d6035c96",
+        "test/fixtures/array-enumeration-work.js": "683ae105ffa4d6b37219ddbd1df638258fdd5dca35df61b477ded4e66a787ae5",
+        "test/fixtures/array-failure-release.mjs": "687d9f75e304990e80136bd6b4c7ba1b4803aab32ae68563b31da400821dd90c",
+        "test/fixtures/array-point-work.js": "74258c3167b03e88a4c960a87b9b6ae74baf8c0be16e795d0e39db138ec59e33",
+        "test/fixtures/array-range-failure-retention.mjs": "ccdcb2733aa304bcdb83656e72fbdf58882b5b310da907a2db6e4a7594bd08f7",
+        "test/fixtures/array-range-work.js": "182ad0f35f2a214eaf31b22c4cc6f9f0163aed2f38d1f1038ac821288b95cee5",
+        "test/fixtures/array-reflection-release.mjs": "01162183ddb736604601db299f48f39dcd74ac82811e924c507d1d379972afbb",
+        "test/fixtures/array-remap-failure-retention.mjs": "9b5807c924e51723edc42b9151b8629538c7327884353ccd9081310204eecd1f",
+        "test/fixtures/array-sequences.js": "9accf25c3f4c88da5d62ae32587e56d47dd3e75dc632575e67dad829e70dda0f",
+        "test/fixtures/array-surface.mjs": "7f98693067be42a1b9e01f6b51c660a0fd1d9c7c76860f9a6a1e016ff360f116",
+        "test/fixtures/array-validation-retention.mjs": "0f9201c9afceaa3fdadd6a8b98026e0a2b96637d3a4f7035650d2f6364ddf722",
+        "test/fixtures/array-view-failure-retention.mjs": "2b547bec3a2f0e13f4457bcaefab3b2f2a296507ae54464ab51a96b0408653b1",
+        "test/fixtures/boundary-histories.js": "0d03ce7ebce4431afe92ffc351c974d96490d4e5c2de3a1eff4488fb9494536e",
+        "test/fixtures/boundary-release.mjs": "55becb692f9c026823272a7d8d431ebe139e2a41cf0eefc74e754fd00f5507ec",
+        "test/fixtures/call-selection-release.mjs": "4b8236f35aad3d0aa831d2a319d04511c8e68697d781d84c83b22ae97d21ad7e",
+        "test/fixtures/capture-fatal.mjs": "8159008493b3d02353b6bbfa32380f43a92424e6bdf7548c4cdad421f357bc47",
+        "test/fixtures/classification-declaration-failure.js": "d1a0c271458830b34a3f6bb024c11516c1d2286dac4506958609f7d14bf49071",
+        "test/fixtures/completed-work-retention.js": "c5f0b2d0ea13e8d78d9dcc1f1097c524b69aa585ca4509ce4b98a3b65a504fb2",
+        "test/fixtures/conflict-matrix.js": "bf0787490f3346e812c9c832e83cf6772d86d22f3e6b31f17b390bcae073efed",
+        "test/fixtures/construction-retention.js": "d963d6feba74fb4886a4f7f62af8b1176465bcf8f6aa2f7cdebd89d02c976f14",
+        "test/fixtures/continuation-failure.js": "83aaf5a2c54bff4381e36e1016d5431348cfdc037e244a2b26b19406bc7bf6ae",
+        "test/fixtures/deferred-validation-retention.mjs": "d7717b06a06d55eea4f6a60d7fc67da6de078b22be47808b5488cd9dd6e3666c",
+        "test/fixtures/detached-cleanup-failure.js": "7b36ef0aa7b31cef27731bc350505db071c6359529d634e93812b8ea6dad0228",
+        "test/fixtures/discarded-argument-leaves.mjs": "cc669edaa23d5396540d8c5fc6cab7efe085a508b3656198752a69091518d67c",
+        "test/fixtures/enter-direct-import.js": "52de64472b187c230e44638cd77e68761938bc7c21174909f8421538da9a1633",
+        "test/fixtures/entry-failure.js": "bd38b4676298eed994b2d85c07b5c52d924afd62350bae066e1133366d7f2f59",
+        "test/fixtures/entry-history-work.js": "419887d7d73d4f127eed112c0977cb96aba0935077e095ee6b5eb01ced817e99",
+        "test/fixtures/external-owner-release.mjs": "86b5b52f1ca9dd0ccfc41ef36c964074d7d06a97189eaa62b8e4a9efce7e400c",
+        "test/fixtures/external-sequences.js": "1ce3f3275af731f976a1c56617692a5168ed60f15dc79b86c77cc95a9890b023",
+        "test/fixtures/flat-completion.mjs": "4be7d06f3c1a947f2358901ba055613f4b26c11bb67815ee16783f5fc2b77241",
+        "test/fixtures/generated-runner-control.mjs": "8671930cfff75b14a46b492b5f2cbc1d047275248ccf5b554b850b638c461be1",
+        "test/fixtures/identity-work.js": "5e8e528e64bf891c7cea7ac5ce4a7875271fbc2cd70a773cd4b0a47a369d8b9b",
+        "test/fixtures/import-retention.js": "752474ae44c3f197c8c60633deb471ecb361d4a24904366d2f7e7135759d8ddf",
+        "test/fixtures/inspection-failure-retention.mjs": "7eb0e0e5c8f54b25407b88c0c11a8648462eaac3c07effd9271a2880369ee7aa",
+        "test/fixtures/internal-stage-failure.js": "6034fa44c16fc3331f2670db41eff9fc0b0df35395fd0a13cb8f15b8097b01b1",
+        "test/fixtures/invocation-completion-failure.js": "04e1c8a1134a0d461c4e5eb8a8ea97440375581e92b0eedab0d18037fe42562a",
+        "test/fixtures/join-internal-failure.js": "c9770f2e6412e5d68f19675713c13798790d01cc60cf56373ed1fda550c70b2a",
+        "test/fixtures/length-fork-work.js": "b70ff6f1825e14a48a036767faf10162c5dfb62d5ba778dc23c7c207d8e980e5",
+        "test/fixtures/managed-capture-work.js": "cb621877bd9491ef5798827eccbcee9edd3f5825e2f399739750af9da69afa00",
+        "test/fixtures/mutation-failure-retention.mjs": "b90fc44d1270f1b5b82e0a301f07124e15ad12b2432199c30a87b0169cd143b4",
+        "test/fixtures/native-error-data.mjs": "f80f9283f7ca5c87054d120b7f701a59ef95521cd32aaeeb2e5b09d28e6b1c89",
+        "test/fixtures/nested-sequences.js": "25df18d306bac50b1af9785a448f19d2cd974836e9e0ac2f16d1e1ba394f735f",
+        "test/fixtures/outward-completion-failure.js": "a8e12139f9e97ba159ff386d07bdf9688533ff8739a36216b7871face6d56552",
+        "test/fixtures/outward-registration-release.mjs": "d84871cef08a30de88bfd769d76637a2bd2b09cac6a14fa102fbf534fb47bfc8",
+        "test/fixtures/owner-finalization-failure.js": "97389979d3d06ed086662087a9680d1f25c68414479c829c105a9ae210396d05",
+        "test/fixtures/ownership-destinations.js": "48c6d06b44b6c3bafd90b00ed78359de3c67fb87b6b21033a7bb40b7f66f7a8d",
+        "test/fixtures/ownership-interactions.js": "f56041bd2ce5ff55691837e99ddcf12ec21ebe62a9e5414e8c3517dadd31210f",
+        "test/fixtures/ownership-lifecycle.js": "fc479543aa8d7b39a13f672003b849981416f4b9d1c03fcc71b41f834676f4d5",
+        "test/fixtures/ownership-work.js": "a9aef00b4b9aa6cc4872c1a312fd9206a2a3afc1750d0ccfb12c9bd05b9130b6",
+        "test/fixtures/path-release.mjs": "8491552cc322d4bd5dc96eedaf3f596f4a421b0e1f700625ec223ddce54f4621",
+        "test/fixtures/pending-copy-work.js": "d280f04474d5cfc98e5dfc45a55aae8b269a3b778648a247f44a0b979a940d2f",
+        "test/fixtures/pending-push-work.js": "3c803a56780c2a0ffa6a294fa1225c75916537086575179e02127d7688086918",
+        "test/fixtures/pending-structural-publication.js": "b10ee07e28fed53e904c57de07ed9edf5d1a1adfd707c6990aaf8c67a5ebf0bf",
+        "test/fixtures/placement-capture-failure-retention.mjs": "7641b8a46adfa10b3614ed1d95cbe4802e72504a70c6807917b97cd5bc448089",
+        "test/fixtures/placement-sequences.js": "b493d32f30abec130c934d142fce7b53d53598b1d8f107ec3bc34194671d4719",
+        "test/fixtures/preparation-authority.mjs": "98848c173fd1feec240209b5fbab8a6d84f2b5bd92fb29d338a332cb7540bdf8",
+        "test/fixtures/preparation-back-references.mjs": "c9cdcd6aa8226350b979bbc62a44e9c00ee747cfed71fa0a30d96d19a3e3322f",
+        "test/fixtures/preparation-output-release.mjs": "4c2191d17e68970795d4794a26c9c3f786a6ec6848856f2d60759a7f5fc4df80",
+        "test/fixtures/preparation-sequences.js": "e15964f63a576b95efebd2a44c3d4412a34fc81f9c7c5fc1aba8aa835871a4e8",
+        "test/fixtures/preparation-work.js": "0e0e7142c07824caa2fefe336bf8a0410a7792fc941008f620ac887ad5fe9ce2",
+        "test/fixtures/prepared-boundaries.mjs": "a3f46033d31cc290904cb7233479841bd5cc4ddf9bc7979295b9de2c91bbe374",
+        "test/fixtures/public-surface-release.mjs": "a7f7b4e11b898cadd22e39fed973000509995d18af9ff375d8a5b81cf38a6b55",
+        "test/fixtures/publication-model.js": "87aff8e329579c8d92b3bcf6021a1d85afa46cd4e8d5be42b8ccf19ab0734bd8",
+        "test/fixtures/publication-pairs.js": "1d8194e75721a96b7c7273fc09bc3862144fd620b9d7387914a28d2c8c16d73b",
+        "test/fixtures/publication-rejection-audit.js": "3cc9d27463d5380471c30f7ecac06f8b2721792495e8751f17af2e081512e703",
+        "test/fixtures/queue-storage-release.mjs": "0e5adf8653a0d2d791de1ce6347ce075df3df7e3f110fce94b4d9090bded20c1",
+        "test/fixtures/receiver-identity.mjs": "f36d221d1ce18440dfd69979704347744440592ab20322e50d0a08efa780024d",
+        "test/fixtures/receiving-branch-poison.mjs": "bb92751b1b40b220e143e23479f0979f20c53156e262a0483c046e2a26b9f2c4",
+        "test/fixtures/receiving-invocation-differential.mjs": "3843c014136d4f0e68aa95593d09b49218549aba09f7d6c5ba6b8b82258ec4ca",
+        "test/fixtures/receiving-invocation-faults.mjs": "32f72a848acec3ca9469ea5e233d15c1becdfa1ccdcb7440848fd6b05f2b4c34",
+        "test/fixtures/registration-release.mjs": "b2cdf06237d674a570efadb7f00ad16a3dd442a36f99eaef46b0549caea6ef2a",
+        "test/fixtures/result-contract.mjs": "03d23cd99585bd5ae75b31590016a87df59c74184d7457d3736a53b5924f32c5",
+        "test/fixtures/snapshot-identity-lifetime.js": "f9fd04544142ad7b780da2947a9942f495ca64c2cd4c44331b1d2a35e0164995",
+        "test/fixtures/snapshot-internal-failure.js": "d001946af89016bfd0fe12a451ff2ae366382b2f44c91f31eed845a5d41f630b",
+        "test/fixtures/stable-receiving-categories.mjs": "d5498d160f057ed5075de1ff19a643907953af0d24e513b7fce4247604bfa0db",
+        "test/fixtures/suspended-mutator-fatal.js": "db882474b89ec37b597fb9fd77f0f9a2159f4a6eef5925f948c20773c024deec",
+        "test/fixtures/terminal-release.mjs": "42abe3b1764f011c0c62452276a46aca4fa7d0c113d6d4849a94921986bd3751",
+        "test/generated-runner.js": "0d8efa42d2b2bd7fb130194d57c7a049e8f5f5609cd0a45386d88dffbf7f7b0f",
+        "test/generated-runner.test.js": "2e8dd784e557eba47771857a512bbde7d80d940d9507505bd9aee0bf086e9891",
+        "test/generated-sequences.test.js": "48e29e272687bcc0efb8f5caf19e4fe400617cb3b7c9b40ad7b1e3ee6f39b66f",
+        "test/get-errors.test.js": "27c3213700194c26d12ed959986b4abe20129d89718d5dfe703c4dc63ac08725",
+        "test/graph-oracle.js": "b6d493447097200cb5a37dba29b71406c0a792a41a263a2ec53e94c6ea987552",
+        "test/graph-oracle.test.js": "86937d2f2a7ebb99e348bd3567f3913ebffcb1053856f9e1b4245ab7f9b3f83e",
+        "test/has-error.test.js": "40950eaeeb03e3bd46c5a66509778ba4430019e2ba5b9dd594949cc7be378ee6",
+        "test/identity-lineage.test.js": "7de704e4b447b0318bc882b91e72e1d3c1c2ed1fb1521fdcfb24a74c777e9d14",
+        "test/import-progress.test.js": "b8f0f4d40337cb1bcab093f66c939a187dfe19c30982eb5b3a4600c8d3cdf913",
+        "test/import.test.js": "c590652b79d6060acac98d7986322473ffaa85c67d4ad84374c576d256ff7fc7",
+        "test/index-recovery.test.js": "2cd63f55bda83c33c1bf6d39b2bcf1d65561b2292ef7f3227256a9f779a72911",
+        "test/input-preparations.test.js": "6548e7bb13d17feabafd11f9ff3e5075d31e172d8510cb699f1a97ced440fac3",
+        "test/inspection-outcomes.test.js": "6ef5dc7505e4af80524fd9ca91e9dcd3f9e6166d3772f84d3a74fee80826e21c",
+        "test/internal-stage-boundaries.test.js": "2377cd1459bf893a593f70d52e53aae7ea5247d5a13c86e578f89a0fb4a0cb5b",
+        "test/invocation-failure-boundaries.test.js": "b6acbf70fc097ebcb219381aae5d3f654c99bb34ecc572212ead539050a6521d",
+        "test/invocation-inputs.test.js": "7aa01f59422394ae6e1197b2e14dc5e68776d6c519d052358b3f5257eb6353b4",
+        "test/invocation-preparation.test.js": "f2190e499b660a226e3586d9444f6fce0736d4531d863ab6f106904f3b7b384c",
+        "test/join-failure-boundaries.test.js": "8a28b917f529e85b2bb77efb22e7bce49361e8656965071fcbef793d21c1845e",
+        "test/language-values.test.js": "c645276654615d545be7b4d102cc8e2bd3e08a81d058140d80d33878208768b2",
+        "test/managed-capture.test.js": "48361362aa07c46234d3dd26c74e801bfa50c6c7f7094df0881b8e91736bfbd2",
+        "test/managed-invocation.test.js": "31fae1701b28cf71837a28f92645bb94c56cf003637fb6d93f11d45341823a65",
+        "test/managed-then-probe.test.js": "2afaa2cf4bf164140bf368e32ed1ea20f626a09d5dfc5819f622319e287cec4a",
+        "test/meta.test.js": "6265848db53447839ce3f75dfbbe659cd9557ea309ec65298482134489078bb3",
+        "test/method-result-identity.test.js": "fb14e2aff18743ef9b9efcddff14649372929edb9f6f09a057ff040257248439",
+        "test/module-url.js": "94fd65292bcb1e2a503a7e2cf1680c36a7a8c56fef6426e0d29750dcc1455c7d",
+        "test/native-equivalence-support.js": "b008e499c962100bb745af79e22f0da173842991e8015a9883d945c803be86a3",
+        "test/operation-lifecycle.test.js": "05573bb5f703dcba50dd508048d0f4c91b3bd159a9f36d394672986a1ec2c7cd",
+        "test/operation-sequences.test.js": "0070a18bb72fdcc0c2392797b8c64c8ae427cb82f51a3133793b2ad65040849f",
+        "test/ordered-thenable.js": "5de45436577123c480ecf0dcd59d39d3c8a02b1383093b595173b9349845915f",
+        "test/ownership-isolation.test.js": "c8c595846dfb83f779bdaf6fe9d0dddafa38050c5e243b006fdbdb8900eedd88",
+        "test/ownership.test.js": "ff1f1d8ec147944b58e97b7d2e6dc87450a00141b5aa37ff4e1b3540736eeae9",
+        "test/parent-placements.test.js": "0a8e54548996146c6b797e60f1753061db1944eb260cfa10c7fdbc1d96f13f54",
+        "test/path-operations.test.js": "46334b6df052565e76bcf0f96620e0d52240db7f1fa4beabc8bdf89350f59f1d",
+        "test/pending-boundary-histories.test.js": "0f8710056e9253ffd370daf126192e75934b22998f8938ca40f0b4aa8408869b",
+        "test/pending-copy-work.test.js": "43bff5edea82e6bf81fff1dcc6afbd42f4a5cc9d3b7c417d745b6f3debfd71a0",
+        "test/pending-push-work.test.js": "260b305a41957dff5d7731dc088b4c31d8e2713e5cc72df660f7b3b46c1bae08",
+        "test/phase5-boundary-intersections.test.js": "4c8a3941c7337f0fed5dbef0acae5f7c11001d68da722228741c2df3d6de1ec5",
+        "test/phase5-execution-interactions.test.js": "22c9456ad4547adadeb5296bc1ae64da29af9fa5b6aeb6074446928720574fda",
+        "test/phase5-surface-intersections.test.js": "bb880166fa0d017fda093bfc8847df5e81a51a2ad816c585ab186709b693721c",
+        "test/placement-version-boundaries.test.js": "7f28482804985825f2957e236f60f74cbc5ae517b90c2903fb0e2703ba4f7a3a",
+        "test/poison-reception-attribution.test.js": "5fa905c870a8710ea3d7dbc8b0b74c57df747e06e6fd3c1febee273031411c0d",
+        "test/prepared-input-failure-boundaries.test.js": "67ad9b853994385e8d3217b19fc8a015591d11ab7995b92b4a48cf3d95e955f6",
+        "test/presence-summaries.test.js": "c7a090d60ca79acfbee6382e13861141c8a2b7e71ee22ca901c69cd05f141f74",
+        "test/promises.test.js": "443e04206975e602cc3eee8e2c1b8891bcd7969ec01800cdeadafe5cbfccff1c",
+        "test/public-exports.test.js": "60b9bccefdef0b620a78e84c195c5911f8695e16ce33f995fb37da871749ef8a",
+        "test/publication-failure-boundaries.test.js": "d51e4440d161149753ba018dd31649408f95804baac74dc7d053a9322cb11354",
+        "test/publication-failures.test.js": "731fc929f16b52b02f43cf2362bd3d4529e9826f8ef343d31b918e336bbb9f16",
+        "test/publication-trace.test.js": "45e329ebdffc1b30a426aa5dae0358a785053fab4e9df814874d7b9beec3b00e",
+        "test/query-failures.test.js": "a1d1d28b513e8cdbdf71151d08df5621d385109ae904562b8627c690b86e5f3d",
+        "test/receiving-contracts.test.js": "8b667e08856c2e89b026298965e4180225d05b0233427d7feaf8ad90021732f5",
+        "test/receiving-invocation-differential.test.js": "a0c5c0fc820c3961238b5479d815a2afdb50313006f5394a02508d86612122aa",
+        "test/receiving-order.test.js": "5bfba5ebb6d9001940a806e93204054b36d5618e531b594aa1ad9a2e260853af",
+        "test/receiving-paths.test.js": "cc8e4961da56d11bd9c147d5a27b6ffd49fb5044eb035ea9be784647df58d2fb",
+        "test/refcounts.test.js": "50b41b34d53369a4dbf719875f82bfc29bfa1e49797ddb0d243727e1b3674ac5",
+        "test/reflection-boundaries.test.js": "980176ffacb617ba0c02c3871fb76a982f583a10da3cdeb0cdfdabb009559289",
+        "test/representation-identity.test.js": "3920ff8d12218092520987324186e14e501fdb8bef0719ef9064a8c09553564c",
+        "test/run.test.js": "8ce5f9a917bd30ede5dbb9f52acbc64aaa76079771af89bfb2cd250f432d6b83",
+        "test/runtime-boundaries.test.js": "61912d11ca8570d467403667f5100267144ca1b1f322d0c65cf67889eab29063",
+        "test/runtime-loaders.test.js": "12d3875379b4ab24bbb39116bd0e54662a6aeb024880e4dad9b03e384f2ee80b",
+        "test/safeguard-evidence.test.js": "3635207dbd08dc7542e7dd0c85714986d2087de30c4c97fa7ba50aab6bd93ab8",
+        "test/safeguards/evidence.mjs": "48b6c546ec5f830997515c385888df1bfb73ee9d5097a86115646d432f0afd40",
+        "test/safeguards/fault-hook.mjs": "ddd75d7b19b8f548317e26c4748592927dfb7dd32c05bd30d92317b900939ad5",
+        "test/safeguards/registry.mjs": "f72600e837c2c407aacbc0ad208ae0c29ca9739611cbc30645b66e9c865e273b",
+        "test/safeguards/run.mjs": "b10351c5208eba422c5f4fdb611262ca4d29d306b0f4df566b24222d04390ec0",
+        "test/scope-recovery.test.js": "e6e07a4c511805bfdce4345d1104f09114e2d0bfbaa9c606adc077856b4ee581",
+        "test/snapshot-failure-boundaries.test.js": "075e765f27705f0d14bfb3f4eb25d349a35da6175d440c6b376be06c256d0e01",
+        "test/snapshot-identity.test.js": "0f1c2b4dd324b8b94fd17d1e2423ef415efc5de71c0f47abda4a9e10e687565f",
+        "test/storage-settlement.test.js": "fafe03521ad9895e39afa3f1ea429adb9499914eb3574cf2444b15bd539fda44",
+        "test/stress.test.js": "bc11e10d8d72c55f6e75c7da1396f719c69b8e2cbabd44699d5f02ed080a8682",
+        "test/string-native-equivalence.test.js": "782b8fe8a5dc0743cb7d30dcaa7b4265198712fcc494c4377756ad1826c86889",
+        "test/support.js": "bc08b2ca1badc6b2654a693cb91693b8f0f8c2fecaae38f9972b71efef521ae9",
+        "test/supported-thenables.test.js": "e20884d3c6fa3675f4c63e09976ab5122a43e014ba60e5927de605c41db8755d",
+        "test/then-probe-boundaries.test.js": "5817ee9d12e1574c5d12e221c3167e3dcd69bc6df6e455bd6f9d93d4fff05418",
+        "test/trace-runtime.js": "cda3f568ea717eb71c203648ed01fd1f824a14c50db0cb7e62505c0ac4b75d7c",
+        "test/trace-state.js": "49989f55d7229db405a7dd1c21880521b108abe98a299d9810a6cba5f19616f0",
+        "test/verify-parents.js": "588d818a2600b72df8f0c08f9a6c5222762ae7576106ea8a6e93f6f6a4423a2f",
+        "test/verify-refcounts.js": "56fe671fab42a2a10127e66b1df3bce5fe999cb5fe86dda28987dc2e2d2d42ae",
+        "test/verify-storage.js": "cb40d91a9a5b68229809af784ed7831707a1971a146d8ea7b68b3648dbb667a6",
+        "test/verify-storage.test.js": "3770f7739dd0c28222d57ac4f6aa52672fca61a941385c33499c2dd1b2adffb2",
+        "test/write-based-identity.test.js": "9d1488893742d0f70c194fcdbaa112e114dd356de344714797788d2e39ebea45"
+      },
+      "environment": {
+        "node": "v24.14.1",
+        "mocha": "11.3.0",
+        "platform": "win32",
+        "arch": "x64",
+        "release": "10.0.26200",
+        "revision": "841002a9135c0fee7e029feb8b7d1b1b869422ab"
+      },
+      "initialCandidate": {
+        "digest": "49d1a26b24b53d49915f1a67eca439754e11aa7b92d1c0ea70145179ec790c4c",
+        "revision": "841002a9135c0fee7e029feb8b7d1b1b869422ab",
+        "inputCount": 259
+      },
+      "auxiliaryInputs": {
+        "docs/phase5-probes/range-selected-retention.mjs": {
+          "sha256": "acb587a5f10394f039a9b73255428053b6c4374a741af64bafecc90a842dde62",
+          "executedPath": "docs/phase5-reruns/2026-10-25-02-range-selected-retention.mjs"
+        },
+        "docs/phase5-probes/copied-delivery-extra.mjs": {
+          "sha256": "a4eb7f392159351ede155cf2441c9194561ac6824de0137f8b57affb1ccb71a7",
+          "executedPath": "docs/phase5-reruns/2026-10-25-02-review-copied-delivery-extra.mjs"
+        },
+        "docs/phase5-probes/copied-delivery-recovery.mjs": {
+          "sha256": "5a750eb4aec6ba9dc07e9692464f3af91f0b547f854edbf6341f124b5639d6ea",
+          "executedPath": "docs/phase5-reruns/2026-10-25-02-review-copied-delivery-recovery.mjs"
+        },
+        "docs/phase5-probes/ready-controls.mjs": {
+          "sha256": "f2f315209098161a8abbe285069bc889e10122badf7c84e784ee75d59c11d4e8",
+          "executedPath": "docs/phase5-reruns/2026-10-25-02-review-ready-controls.mjs"
+        },
+        "docs/phase5-probes/deep-copy-history.mjs": {
+          "sha256": "17ca2623faff6b50e2be16d5578f464d20705beabc1add111820a1828eb9d546",
+          "executedPath": "docs/phase5-reruns/2026-10-25-02-review-deep-copy-history.mjs"
+        },
+        "docs/phase5-probes/lifetime-overflow.mjs": {
+          "sha256": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+        },
+        "docs/phase5-probes/lifetime-remaps.mjs": {
+          "sha256": "b2897dad743c94ffa2f7c9a2b10c87f2b4a8b6a9d986d0acc8a443735ce06333",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+        },
+        "docs/phase5-probes/lifetime-preparation-controls.mjs": {
+          "sha256": "2fcddef351837ee5c241b087bbb1dec0ffa6e7dbcdae36ede24e77cd0e7f4066",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+        },
+        "docs/phase5-probes/delivery-lifetime-probe.mjs": {
+          "sha256": "91dba26b5e1d85b42c2083e1032893f031280de954e809251464dd4d6d38d84d",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs"
+        },
+        "docs/phase5-probes/delivery-presence.mjs": {
+          "sha256": "d3bb72748a0d2ba7370b71285afca15fafe0f718f6c75e10cc0f593579174c28",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-delivery-presence.mjs"
+        },
+        "docs/phase5-probes/delivery-recovery.mjs": {
+          "sha256": "7fdd52d45422ed4b546ae489f0f5897229194fb7fc36d0e5f339772a19ef297f",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-delivery-recovery.mjs"
+        },
+        "docs/phase5-probes/work-release.mjs": {
+          "sha256": "d997fb5411a7a57e4756fdb29d6fe2f5725fbc925167be0d9d738dff321d7082",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-work-release.mjs"
+        },
+        "docs/phase5-probes/work-histories.mjs": {
+          "sha256": "91978cb575e524d012ebfcee3ac3b4e37971e4a71d140db6bcdadfc92f3856f7",
+          "executedPath": "docs/phase5-reruns/2026-10-25-04-work-histories.mjs"
+        },
+        "docs/phase5-probes/coordinator-probe.mjs": {
+          "sha256": "916d9db769605ebe43c6665a4aa309c7ed7b2a613d0e44e8ba604350fb85c0e5",
+          "executedPath": "docs/phase5-reruns/2026-10-26-01-coordinator-probe.mjs"
+        },
+        "docs/phase5-probes/independent-probe.mjs": {
+          "sha256": "475baa0d2b9beaea8b8b15cb029ea796d8318f58e8aa20ed9ba9337d26455f8c",
+          "executedPath": "docs/phase5-reruns/2026-10-26-01-independent-probe.mjs"
+        },
+        "docs/phase5-probes/sibling-lifetime-probe.mjs": {
+          "sha256": "2aa2aac88c78e0f00c61c72a03854bcca12582c3051712b1ebf279f04347013d",
+          "executedPath": "docs/phase5-reruns/2026-10-26-01-sibling-lifetime-probe.mjs"
+        }
+      },
+      "semanticContractHashes": {
+        "AGENTS.md": "1196982d7a09b2ab8f730b1c5acb2961269ccad1f0289e96ccd27bd0f1b785fe",
+        "docs/data-limitations.md": "7a3aac84ab5ab4a7fb22f50f509c864bf1f0a7bdb0332e8e790e5b8544098363"
+      },
+      "independentReview": {
+        "reviewer": "/root/evidence_review",
+        "reviewedAt": "2026-10-26T07:11:07.193Z",
+        "decision": "approved on final candidate; finite-coverage and instrumentation qualifications retained",
+        "productionFixAuthor": false,
+        "report": "phase5-review.md#independent-review",
+        "reconciliation": {
+          "executionInputs": 260,
+          "jobs": 86,
+          "logs": 86,
+          "receiptFiles": 81,
+          "loadedInstances": 320,
+          "executedInstances": 303,
+          "safeguards": 239
+        },
+        "qualifications": {
+          "startupOnlyInstances": {
+            "count": 17,
+            "disabledCounterControls": 3,
+            "preparationCoordinators": 2,
+            "runnerControlCoordinators": 5,
+            "familyCoordinators": 6,
+            "rawVM": 1,
+            "credit": "No traced runtime execution credit for these instances; raw VM has separate semantic assertions."
+          },
+          "safeguardMode": "Named witnesses with fallback; not full-suite-per-fault mode.",
+          "lateCrash": "property-reception-prepares-managed-state has 13 intended assertion failures before Mocha exit 7; crash/unexecuted tests add no credit.",
+          "earlierCandidate": "Candidate 1 failed its unsupported Function receiver fixture; no integrated acceptance credit. Migration changed only that fixture.",
+          "interruptedRunner": "58 recorded jobs retained from v1; unrecorded jobs rerun on unchanged candidate/environment using v2. No unrecorded results accepted.",
+          "stack50": "Two current-pin normal/traced supplemental jobs close the original transcript-only provenance gap; not added to the 86-job inventory."
+        }
+      }
+    }
+  },
+  "evidenceReuse": {
+    "rationale": "All production/test/fixture/loader/package input bytes, semantic contracts, auxiliary probe bytes and relevant Node/Mocha/host environment match. Only test/README.md differs in the original manifest: documentation/probe-link consolidation, never executed. No production or test correction invalidated the original self-contained result/diagnostic/coverage summaries. Original date and candidate remain attached.",
+    "verifiedAt": "2026-10-26T15:46:56.331Z",
+    "documentationDelta": {
+      "path": "test/README.md",
+      "original": "a4f3cd6b332eba82fb8a5a539e849bd4e494c29740804465b29eb067f790dca9",
+      "current": "2d56a2442fa4b98210865ecdd5be179c0f8e2619bad97e21522bda2ec7437126",
+      "basis": "The original consolidation record identifies this changed documentation; its content is test guidance and retained-probe links, not an execution input."
+    },
+    "rawLogPolicy": "Unavailable original raw-log/receipt hashes remain provenance. Reuse relies on retained self-contained result summaries, intended diagnostics, coverage sets and ordered instrumentation summaries. No unavailable artifact is a required dependency."
+  },
+  "freshRuns": [
+    {
+      "label": "rerun-normal",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "./node_modules/mocha/bin/mocha.js",
+        "test/**/*.test.js",
+        "--timeout",
+        "60000",
+        "--reporter",
+        "dot"
+      ],
+      "env": {},
+      "started": "2026-10-26T15:35:10.584Z",
+      "seconds": 234.844,
+      "exitCode": 0,
+      "timedOut": false,
+      "inputDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "inputsUnchanged": true,
+      "logSHA256": "f699c78cc7a0fb2721ad96bdc7956f524530fbc93b9bb7fc02f48fe7bac26217",
+      "result": [
+        "5454 passing; 0 failures; 0 pending"
+      ],
+      "counts": {
+        "passing": 5454,
+        "failing": 0,
+        "pending": 0
+      },
+      "instrumentation": {
+        "loaded": 0,
+        "executed": 0,
+        "instances": []
+      },
+      "candidateRef": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "evidenceTreatment": "newly executed"
+    },
+    {
+      "label": "rerun-traced",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "./node_modules/mocha/bin/mocha.js",
+        "test/**/*.test.js",
+        "--timeout",
+        "60000",
+        "--reporter",
+        "dot"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--import=${TRACE_RUNTIME_URL}",
+        "CASCADA_TRACE_RECEIPT_FILE": "${OUTPUT}/fresh-traced.receipts.jsonl"
+      },
+      "started": "2026-10-26T15:35:10.620Z",
+      "seconds": 258.789,
+      "exitCode": 0,
+      "timedOut": false,
+      "inputDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "inputsUnchanged": true,
+      "logSHA256": "f699c78cc7a0fb2721ad96bdc7956f524530fbc93b9bb7fc02f48fe7bac26217",
+      "result": [
+        "5454 passing; 0 failures; 0 pending"
+      ],
+      "receiptSHA256": "ab9fb1ca202224940de74ca3263426596e8cfce17a95719c191c5830848e5ec9",
+      "counts": {
+        "passing": 5454,
+        "failing": 0,
+        "pending": 0
+      },
+      "instrumentation": {
+        "loaded": 240,
+        "executed": 223,
+        "instances": [
+          {
+            "instance": 1,
+            "pid": 37840,
+            "parent": 18428,
+            "script": "C:\\Projects\\cascada-chain-resolution\\node_modules\\mocha\\bin\\mocha.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 2,
+            "pid": 3880,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\queue-storage-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 3,
+            "pid": 33344,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 4,
+            "pid": 21780,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 5,
+            "pid": 23124,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-range-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 6,
+            "pid": 18352,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-range-work.js",
+            "executed": false
+          },
+          {
+            "instance": 7,
+            "pid": 38564,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 8,
+            "pid": 24968,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 9,
+            "pid": 41880,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-failure-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 10,
+            "pid": 29780,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-failure-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 11,
+            "pid": 30712,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-reflection-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 12,
+            "pid": 41832,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-reflection-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 13,
+            "pid": 32436,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-surface.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 14,
+            "pid": 10548,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-surface.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 15,
+            "pid": 32404,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-view-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 16,
+            "pid": 27948,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-view-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 17,
+            "pid": 31584,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-view-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 18,
+            "pid": 5708,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-range-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 19,
+            "pid": 28484,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-range-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 20,
+            "pid": 20700,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-range-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 21,
+            "pid": 24752,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-validation-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 22,
+            "pid": 15436,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-validation-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 23,
+            "pid": 17808,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-validation-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 24,
+            "pid": 30516,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-remap-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 25,
+            "pid": 33392,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-remap-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 26,
+            "pid": 36212,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-remap-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 27,
+            "pid": 29724,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\deferred-validation-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 28,
+            "pid": 33576,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\deferred-validation-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 29,
+            "pid": 12960,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\deferred-validation-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 30,
+            "pid": 18944,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-capture-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 31,
+            "pid": 28692,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-capture-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 32,
+            "pid": 41668,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-capture-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 33,
+            "pid": 37328,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 34,
+            "pid": 17600,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 35,
+            "pid": 23572,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\call-selection-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 36,
+            "pid": 38056,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\call-selection-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 37,
+            "pid": 18676,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\capture-fatal.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 38,
+            "pid": 18100,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\capture-fatal.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 39,
+            "pid": 39248,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\discarded-argument-leaves.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 40,
+            "pid": 22832,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\discarded-argument-leaves.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 41,
+            "pid": 9616,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-owner-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 42,
+            "pid": 13672,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-owner-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 43,
+            "pid": 16076,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\flat-completion.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 44,
+            "pid": 34020,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\flat-completion.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 45,
+            "pid": 34288,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\inspection-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 46,
+            "pid": 40452,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\inspection-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 47,
+            "pid": 39124,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\mutation-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 48,
+            "pid": 25084,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\mutation-failure-retention.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 49,
+            "pid": 21952,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\path-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 50,
+            "pid": 35992,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\path-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 51,
+            "pid": 19624,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-authority.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 52,
+            "pid": 22664,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-authority.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 53,
+            "pid": 40836,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-output-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 54,
+            "pid": 19412,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-output-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 55,
+            "pid": 41740,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-output-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 56,
+            "pid": 37304,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\prepared-boundaries.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 57,
+            "pid": 10664,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\prepared-boundaries.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 58,
+            "pid": 7292,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\public-surface-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 59,
+            "pid": 10696,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\public-surface-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 60,
+            "pid": 36220,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiver-identity.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 61,
+            "pid": 33944,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiver-identity.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 62,
+            "pid": 8996,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\registration-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 63,
+            "pid": 36096,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\registration-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 64,
+            "pid": 31280,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\result-contract.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 65,
+            "pid": 25884,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\result-contract.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 66,
+            "pid": 30168,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\terminal-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 67,
+            "pid": 4908,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\terminal-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 68,
+            "pid": 22956,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\outward-registration-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 69,
+            "pid": 25784,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\outward-registration-release.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 70,
+            "pid": 31996,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\completed-work-retention.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 71,
+            "pid": 19568,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\completed-work-retention.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 72,
+            "pid": 11976,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": false
+          },
+          {
+            "instance": 73,
+            "pid": 32940,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 74,
+            "pid": 33540,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 75,
+            "pid": 26500,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 76,
+            "pid": 23756,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 77,
+            "pid": 38964,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 78,
+            "pid": 32892,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 79,
+            "pid": 30320,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 80,
+            "pid": 22264,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 81,
+            "pid": 1124,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 82,
+            "pid": 7400,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 83,
+            "pid": 28680,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 84,
+            "pid": 22960,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 85,
+            "pid": 24356,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 86,
+            "pid": 35500,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 87,
+            "pid": 24952,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 88,
+            "pid": 32792,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 89,
+            "pid": 40668,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 90,
+            "pid": 32352,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 91,
+            "pid": 41288,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 92,
+            "pid": 34512,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 93,
+            "pid": 23168,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 94,
+            "pid": 7024,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 95,
+            "pid": 9348,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 96,
+            "pid": 40152,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 97,
+            "pid": 41432,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 98,
+            "pid": 24980,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 99,
+            "pid": 15628,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 100,
+            "pid": 39616,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 101,
+            "pid": 28140,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 102,
+            "pid": 8080,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 103,
+            "pid": 26628,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 104,
+            "pid": 23772,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 105,
+            "pid": 27448,
+            "parent": 11976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 106,
+            "pid": 19896,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": false
+          },
+          {
+            "instance": 107,
+            "pid": 41156,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 108,
+            "pid": 4688,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 109,
+            "pid": 2352,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 110,
+            "pid": 15912,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 111,
+            "pid": 16212,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 112,
+            "pid": 27224,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 113,
+            "pid": 39980,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 114,
+            "pid": 40076,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 115,
+            "pid": 33872,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 116,
+            "pid": 30664,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 117,
+            "pid": 32908,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 118,
+            "pid": 39568,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 119,
+            "pid": 40572,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 120,
+            "pid": 1856,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 121,
+            "pid": 31728,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 122,
+            "pid": 34920,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 123,
+            "pid": 15488,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 124,
+            "pid": 34468,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 125,
+            "pid": 2684,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 126,
+            "pid": 40016,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 127,
+            "pid": 37868,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 128,
+            "pid": 36616,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 129,
+            "pid": 19268,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 130,
+            "pid": 34040,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 131,
+            "pid": 21140,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 132,
+            "pid": 16896,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 133,
+            "pid": 24552,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 134,
+            "pid": 37924,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 135,
+            "pid": 29516,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 136,
+            "pid": 35172,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 137,
+            "pid": 36708,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 138,
+            "pid": 26092,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 139,
+            "pid": 17448,
+            "parent": 19896,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 140,
+            "pid": 2492,
+            "parent": 37840,
+            "script": null,
+            "executed": false
+          },
+          {
+            "instance": 141,
+            "pid": 23324,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\classification-declaration-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 142,
+            "pid": 19536,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\detached-cleanup-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 143,
+            "pid": 34536,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\owner-finalization-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 144,
+            "pid": 35088,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\enter-direct-import.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 145,
+            "pid": 30396,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\continuation-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 146,
+            "pid": 35132,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\outward-completion-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 147,
+            "pid": 29156,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": false
+          },
+          {
+            "instance": 148,
+            "pid": 25768,
+            "parent": 29156,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 149,
+            "pid": 39192,
+            "parent": 29156,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 150,
+            "pid": 6108,
+            "parent": 29156,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 151,
+            "pid": 36300,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": false
+          },
+          {
+            "instance": 152,
+            "pid": 34008,
+            "parent": 36300,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 153,
+            "pid": 30436,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": false
+          },
+          {
+            "instance": 154,
+            "pid": 4620,
+            "parent": 30436,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 155,
+            "pid": 27824,
+            "parent": 30436,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 156,
+            "pid": 28776,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": false
+          },
+          {
+            "instance": 157,
+            "pid": 7568,
+            "parent": 28776,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 158,
+            "pid": 11844,
+            "parent": 28776,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 159,
+            "pid": 16976,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 160,
+            "pid": 17976,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": false
+          },
+          {
+            "instance": 161,
+            "pid": 29788,
+            "parent": 17976,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 162,
+            "pid": 1124,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+            "executed": false
+          },
+          {
+            "instance": 163,
+            "pid": 2148,
+            "parent": 1124,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 164,
+            "pid": 18556,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+            "executed": false
+          },
+          {
+            "instance": 165,
+            "pid": 30632,
+            "parent": 18556,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 166,
+            "pid": 23460,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+            "executed": false
+          },
+          {
+            "instance": 167,
+            "pid": 33856,
+            "parent": 23460,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 168,
+            "pid": 11840,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+            "executed": false
+          },
+          {
+            "instance": 169,
+            "pid": 1104,
+            "parent": 11840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 170,
+            "pid": 38948,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+            "executed": false
+          },
+          {
+            "instance": 171,
+            "pid": 14972,
+            "parent": 38948,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 172,
+            "pid": 11352,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+            "executed": false
+          },
+          {
+            "instance": 173,
+            "pid": 30192,
+            "parent": 11352,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 174,
+            "pid": 28496,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\publication-pairs.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 175,
+            "pid": 4500,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 176,
+            "pid": 5656,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\conflict-matrix.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 177,
+            "pid": 37964,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 178,
+            "pid": 33400,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 179,
+            "pid": 23908,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 180,
+            "pid": 1856,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\import-retention.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 181,
+            "pid": 11640,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\entry-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 182,
+            "pid": 24792,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 183,
+            "pid": 14044,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 184,
+            "pid": 2600,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 185,
+            "pid": 19716,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 186,
+            "pid": 34468,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 187,
+            "pid": 29408,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 188,
+            "pid": 36616,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 189,
+            "pid": 40924,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 190,
+            "pid": 20796,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 191,
+            "pid": 23712,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 192,
+            "pid": 36388,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\invocation-completion-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 193,
+            "pid": 624,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 194,
+            "pid": 9116,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\join-internal-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 195,
+            "pid": 26400,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\managed-capture-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 196,
+            "pid": 1876,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 197,
+            "pid": 33884,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-structural-publication.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 198,
+            "pid": 17972,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-interactions.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 199,
+            "pid": 40788,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-destinations.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 200,
+            "pid": 14128,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-point-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 201,
+            "pid": 37620,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-enumeration-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 202,
+            "pid": 21756,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\identity-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 203,
+            "pid": 35248,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\entry-history-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 204,
+            "pid": 2448,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 205,
+            "pid": 17124,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-lifecycle.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 206,
+            "pid": 33344,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-copy-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 207,
+            "pid": 22480,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-copy-work.js",
+            "executed": false
+          },
+          {
+            "instance": 208,
+            "pid": 19444,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 209,
+            "pid": 19556,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+            "executed": false
+          },
+          {
+            "instance": 210,
+            "pid": 6108,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 211,
+            "pid": 27812,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\argument-preparation-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 212,
+            "pid": 34004,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\suspended-mutator-fatal.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 213,
+            "pid": 18104,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\publication-rejection-audit.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 214,
+            "pid": 40928,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "runExternalAction"
+          },
+          {
+            "instance": 215,
+            "pid": 14600,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 216,
+            "pid": 35620,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\construction-retention.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 217,
+            "pid": 37740,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 218,
+            "pid": 34944,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 219,
+            "pid": 2876,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 220,
+            "pid": 24448,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\native-error-data.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 221,
+            "pid": 23100,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-branch-poison.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 222,
+            "pid": 38584,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\stable-receiving-categories.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 223,
+            "pid": 10336,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 224,
+            "pid": 29156,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 225,
+            "pid": 4908,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 226,
+            "pid": 3600,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 227,
+            "pid": 19920,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 228,
+            "pid": 1276,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 229,
+            "pid": 31836,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 230,
+            "pid": 2824,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\length-fork-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 231,
+            "pid": 31644,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\completed-work-retention.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 232,
+            "pid": 23436,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 233,
+            "pid": 25056,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 234,
+            "pid": 36404,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 235,
+            "pid": 35156,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 236,
+            "pid": 40628,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 237,
+            "pid": 25928,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 238,
+            "pid": 37920,
+            "parent": 37840,
+            "script": null,
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 239,
+            "pid": 22832,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\snapshot-internal-failure.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          },
+          {
+            "instance": 240,
+            "pid": 40088,
+            "parent": 37840,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\snapshot-identity-lifetime.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          }
+        ]
+      },
+      "candidateRef": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "evidenceTreatment": "newly executed"
+    }
+  ],
+  "gateInventory": [
+    {
+      "gate": "Normal full suite",
+      "treatment": "newly executed",
+      "jobs": [
+        "rerun-normal"
+      ]
+    },
+    {
+      "gate": "Traced full suite and actual child runtime execution",
+      "treatment": "newly executed",
+      "jobs": [
+        "rerun-traced"
+      ],
+      "qualification": "240 ordered loaded instances, 223 actual runtime executions; 17 expected startup-only instances retain raw-VM/disabled-control/coordinator qualifications."
+    },
+    {
+      "gate": "Strict B22 work regression and sensitivity controls; default lifetime/work cases; generated-runner continuation/restart and receiving-differential production faults",
+      "treatment": "newly executed",
+      "jobs": [
+        "rerun-normal",
+        "rerun-traced"
+      ],
+      "qualification": "Detailed standalone measurements remain reused below; test counts are not summed across overlapping gates."
+    },
+    {
+      "gate": "All eight 1,600-seed families",
+      "treatment": "reused with justification",
+      "jobs": [
+        "scale-placement-sequences",
+        "scale-preparation-sequences",
+        "scale-nested-sequences",
+        "scale-array-sequences",
+        "scale-boundary-histories",
+        "scale-external-sequences",
+        "scale-pending-histories",
+        "scale-receiving"
+      ],
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "reuseRationale": "Unchanged generator/oracle/runtime/tool bytes and matching environment; all eight seed settings, success/failed/skipped totals and actual runtime instances reconciled."
+    },
+    {
+      "gate": "Complete conflict and publication-pair partitions",
+      "treatment": "reused with justification",
+      "jobs": [
+        "matrix-0",
+        "matrix-1",
+        "matrix-2",
+        "matrix-3",
+        "matrix-4",
+        "matrix-5",
+        "matrix-6",
+        "matrix-7",
+        "pairs-0",
+        "pairs-1",
+        "pairs-2",
+        "pairs-3",
+        "pairs-4",
+        "pairs-5",
+        "pairs-6",
+        "pairs-7"
+      ],
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "reuseRationale": "Unchanged definitions; independently derived 9/17 and 98/247 vocabularies, all eight partitions, exact products and 252 checked pair joint keys reconcile."
+    },
+    {
+      "gate": "Standalone lifetime/work/retention measurements and extra stack configurations",
+      "treatment": "reused with justification",
+      "jobs": [
+        "lifetime-array-failure-release-50",
+        "lifetime-array-reflection-release-50",
+        "lifetime-array-surface-50",
+        "lifetime-boundary-release-50",
+        "lifetime-call-selection-release-50",
+        "lifetime-capture-fatal-50",
+        "lifetime-discarded-argument-leaves-50",
+        "lifetime-external-owner-release-50",
+        "lifetime-flat-completion-50",
+        "lifetime-inspection-failure-retention-50",
+        "lifetime-mutation-failure-retention-50",
+        "lifetime-path-release-50",
+        "lifetime-preparation-authority-50",
+        "lifetime-outward-registration-release-50",
+        "lifetime-prepared-boundaries-50",
+        "lifetime-public-surface-release-50",
+        "lifetime-receiver-identity-50",
+        "lifetime-registration-release-50",
+        "lifetime-result-contract-50",
+        "lifetime-terminal-release-50",
+        "lifetime-completed-work-retention-10",
+        "lifetime-snapshot-identity-lifetime-10",
+        "lifetime-snapshot-identity-lifetime-50",
+        "lifetime-snapshot-identity-lifetime-1000",
+        "b22-direct",
+        "lifetime-construction-retention-50",
+        "lifetime-construction-retention-1000",
+        "direct-pending-copy-work",
+        "direct-array-range-work",
+        "direct-queue-storage-release",
+        "range-selected-release-10",
+        "range-selected-release-50",
+        "range-selected-release-1000",
+        "review-range-reproduction",
+        "review-copied-delivery-extra",
+        "review-copied-delivery-recovery",
+        "review-ready-controls",
+        "review-deep-copy-history",
+        "array-validation-retention-10",
+        "array-validation-retention-50",
+        "array-validation-retention-1000",
+        "array-remap-failure-retention-10",
+        "array-remap-failure-retention-50",
+        "array-remap-failure-retention-1000",
+        "deferred-validation-retention-10",
+        "deferred-validation-retention-50",
+        "deferred-validation-retention-1000",
+        "run04-lifetime-overflow",
+        "run04-lifetime-remaps",
+        "run04-lifetime-preparation-controls",
+        "run04-delivery-lifetime-probe",
+        "run04-delivery-presence",
+        "run04-delivery-recovery",
+        "run04-work-release",
+        "run04-work-histories",
+        "coordinator-probe-normal",
+        "coordinator-probe-traced",
+        "independent-probe-normal",
+        "independent-probe-traced"
+      ],
+      "supplementalJobs": [
+        "sibling-lifetime-normal",
+        "sibling-lifetime-traced",
+        "receiver-witness-normal",
+        "receiver-witness-traced",
+        "placement-capture-stack50-normal",
+        "placement-capture-stack50-traced"
+      ],
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "reuseRationale": "All retained fixtures/probes/loaders and semantic contracts match; normal-suite wrapper plus manual jobs/supplements reconcile required stack limits 10,50,1000 and live/healthy controls."
+    },
+    {
+      "gate": "Complete safeguard registry and B01–B22 sensitivity",
+      "treatment": "reused with justification",
+      "jobs": [
+        "safeguards"
+      ],
+      "candidateRef": "a7a0be3c88b020e71ba999f14c7cfbb3cef88223099ecf8c6d55f95e1d27ab1a",
+      "reuseRationale": "239 current exact edits/selectors, 106 groups, intended diagnostics and matching child receipts independently reconciled. Original clean normal baseline applies; new matching clean suites corroborate it. Named witnesses with fallback; no --full claim."
+    },
+    {
+      "gate": "Direct strict B22 legacy-copy diagnostic with completed semantic controls",
+      "treatment": "newly executed",
+      "jobs": [
+        "independent-b22-legacy-sensitivity"
+      ],
+      "candidateRef": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "qualification": "Expected exit1 only after all27 semantic samples and both retained controls complete. Exact intended work assertion and actual runtime receipt retained in sensitivity."
+    },
+    {
+      "gate": "Fresh contract-derived full source review and independent final review",
+      "treatment": "newly executed",
+      "candidateRef": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "reviewer": "/root/independent_review",
+      "decision": "approved at2026-10-26T15:51:25Z"
+    }
+  ],
+  "sourceReview": {
+    "mode": "implementation",
+    "scope": "full B01–B22 including unchanged code",
+    "reason": "Explicit user-requested manual rerun",
+    "model": "Codex, GPT-6; exact model build unknown",
+    "resourceLimit": "No explicit resource limit requested; two acceptance suite processes concurrently; supplementary probes bounded separately.",
+    "revision": "21ea2e311962d8c6b61f9b40b701012c1f1563ac",
+    "productionFixes": [],
+    "testChanges": [],
+    "rows": [
+      {
+        "id": "B01",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "receiveValue/prepareInput/PlacementConstruction → preserved versions/producers → retired forward-state reactivation; fresh late-segment/re-entry histories",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B02",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "all admission/preparation writers → private shells → transactional validateReceiver entries → successful commit only",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B03",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "separate receiver/argument canonical graphs → new stored native imported protection; failed adoption commits none, independent fresh result prepares itself",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B04",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "ManagedCapture physical visits → logical domain/cell partition → shells-before-edges assembly; snapshots renew incoming domains",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B05",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "data/Error capture → method/range selection → identity partition only when needed; native source phase ends at capture",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B06",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "classifyTypeFacts/declarations → execution-local admission → common receiving routes/internal copies → immutable category",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B07",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "ExternalAccess non-External delegation → common language walker; run native dispatch and mutations require actual External",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B08",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "shape/descriptors before descent → fixed poison for known unreadable slots → healthy siblings/Array masks retained",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B09",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "one weak failure map per preparation across discovery/segments; completed staging roots cleared; independent preparations retry",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B10",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "finite original compiler-tree discovery/discoveryBlocked transfers → transactional registration → selected authority recheck after wait",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B11",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "finishMutation distinguishes own failure from blocker; repair preserves original placement/recovery on blocked or failed restoration",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B12",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "native completion → receiver validation/publication independent of result preparation; weak exact receiver membership retained only as policy",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B13",
+        "reviewer": "/root/independent_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "public receiving guard → exact ActionThrowError action catch → boundary kind/context; fatal escape and pending outward bridge remain separate",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B14",
+        "reviewer": "/root/independent_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "ErrorQueryWork captures exact versions/external metadata → transactional index walk → Boolean short-circuit or complete collection → local close",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B15",
+        "reviewer": "/root/independent_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "contextualize only missing leaf sources → local cause/source/kind union with Object.is signed-zero source → complete-union forwarding",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B16",
+        "reviewer": "/root/boundary_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "PathOperation reserves before suspension → captured predecessors before membership → ordered native selection → private entry view frontiers",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B17",
+        "reviewer": "/root/lifetime_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "all 22 Array methods and String/conversion consumers: captured shape before discard; payload, scalar and comparator last uses separated",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B18",
+        "reviewer": "/root/lifetime_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "lazy placements/root version/path delivery/remap carriers clear spent bindings; source-free capture records discard success output while collection continues",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B19",
+        "reviewer": "/root/lifetime_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "complete value/presence/recovery/order/discovery transfer → independent destination authority → retirement clears reverse facts, preserves forward state",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B20",
+        "reviewer": "/root/lifetime_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "source-free domain/cells → iterative publication completion, compressed forwarding and union-by-size listeners → local closed comparisons detach",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B21",
+        "reviewer": "/root/lifetime_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "shared publication independent of local owner → live settlement before closed consumer check; fatal stops before shared work; pending outward rejects removable",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      },
+      {
+        "id": "B22",
+        "reviewer": "/root/lifetime_review",
+        "disposition": "Freshly reviewed; no additional supported defect established",
+        "trace": "backing producer and copied delivery share readiness with live destination authority; point range bounds and growth compaction count all maintained stores",
+        "evidence": "New full suites plus explicitly reused applicable acceptance/sensitivity gates; investigation supplements are not future gate dependencies."
+      }
+    ],
+    "simplification": "No measured source change or semantic revision justified; source access, receiver publication, result completion and destination authority remain distinct load-bearing lifetimes.",
+    "limits": [
+      "Finite generator vocabulary and schedules, selected reflection sites, supported host contracts",
+      "Future Promise-valued paths, compiler multi-reference coordination, deterministic collected-poison ordering and iterators retain roadmap scope",
+      "No claim that every same-domain unresolved identity comparison can finish early"
+    ]
+  },
+  "investigations": [
+    {
+      "label": "boundary-focused",
+      "treatment": "newly executed investigation; overlapping gate coverage",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "./node_modules/mocha/bin/mocha.js",
+        "test/receiving-paths.test.js",
+        "test/receiving-contracts.test.js",
+        "test/inspection-outcomes.test.js",
+        "test/managed-invocation.test.js",
+        "test/invocation-preparation.test.js",
+        "test/boundary-contracts.test.js",
+        "test/external-binding-diagnostics.test.js",
+        "test/external-paths.test.js",
+        "test/entry-identity-dependencies.test.js",
+        "--reporter",
+        "dot"
+      ],
+      "env": {
+        "clearInherited": [
+          "CASCADA_*",
+          "NODE_OPTIONS"
+        ],
+        "overrides": {}
+      },
+      "exitCode": 0,
+      "result": {
+        "passing": 738,
+        "failures": 0,
+        "mochaSeconds": 2
+      },
+      "logSHA256": "b74b53e78553a29c452915dbec086efa03ffa826cfd8a4d0ab54568e1cff1ee3"
+    },
+    {
+      "label": "boundary-late-segment-reentry",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "${EXTERNAL_SCRATCH}/boundary-hypotheses.mjs"
+      ],
+      "inputSHA256": "9e4d227b7004ef29c5b9980bdb2d404d1cf4830354ffd2be6f6d01d468c678c7",
+      "exitCode": 0,
+      "result": {
+        "cases": 32,
+        "failures": 0
+      },
+      "scenario": "16 classification/shape failure cases: native/ordered signals × direct/context discovery × late-segment settlement orders × failed reflection kind; exactly one failure inspection per preparation, one extra independent retry, exact original cause. 16 re-entry cases: import/method-result × native/ordered × fulfillment/rejection × root replacement/deletion; actual inactive relationships proved before re-entry, old query/export and self-cycle preserved, current payload9.",
+      "treatment": "newly executed investigation supplement; no required gate or future evidence reuse depends on the temporary script",
+      "env": {
+        "clearInherited": [
+          "CASCADA_*",
+          "NODE_OPTIONS"
+        ],
+        "overrides": {}
+      }
+    },
+    {
+      "label": "range-reflection-last-use",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--unhandled-rejections=strict",
+        "${EXTERNAL_SCRATCH}/range-reflection-hypothesis.mjs",
+        "${STACK_LIMIT}"
+      ],
+      "stackLimits": [
+        10,
+        50,
+        1000
+      ],
+      "inputSHA256": "fafb44142952d262c68e3ddd5c9d2bc5f0e3a69abb9834a2bf057c46bb61bd4a",
+      "exitCodes": [
+        0,
+        0,
+        0
+      ],
+      "result": {
+        "cases": 12,
+        "healthyControls": 6,
+        "reflectionFailures": 6,
+        "retainedReferences": 0
+      },
+      "scenario": "Native managed mutation adopts Proxy Arrays; fill/copyWithin descriptor failure occurs exactly once with retained exact unformatted prebuilt cause, alongside healthy values; source and three initial child refs collect after final root release over 30 GC/event-loop turns. Newly stored native Proxy is imported/protected; it cannot reach the hypothesized exclusive physical-write optimization.",
+      "treatment": "newly executed investigation supplement; no required gate or future evidence reuse depends on the temporary script",
+      "env": {
+        "clearInherited": [
+          "CASCADA_*",
+          "NODE_OPTIONS"
+        ],
+        "overrides": {}
+      }
+    },
+    {
+      "label": "independent-query-retirement",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "${EXTERNAL_SCRATCH}/independent-public-histories.mjs"
+      ],
+      "inputSHA256": "8f39254489ad5ff8d4e7b210c440d4acab8b8e51d424e86c9d5e5dff87cc6ccd",
+      "exitCode": 0,
+      "result": {
+        "cases": 16,
+        "failures": 0
+      },
+      "scenario": "Four deliveries × two cause delivery orders × root/wrapper. Healthy native Error exact and query healthy; capture hasError/getErrors/export then replace whole root and prove actual old cycle retirement. First poison completes Boolean query while collection/export wait for second. Final union has both exact causes with -0/+0 contexts; replacement stays healthy.",
+      "treatment": "newly executed investigation supplement; no required gate or future evidence reuse depends on the temporary script",
+      "env": {
+        "clearInherited": [
+          "CASCADA_*",
+          "NODE_OPTIONS"
+        ],
+        "overrides": {}
+      }
+    }
+  ],
+  "investigationQualifications": [
+    "An additional focused Mocha log reports1190 passes but its final exit handle was not retained; no independent gate credit. The same tests passed within both new full suites.",
+    "Initial boundary scratch oracle incorrectly expected whole-export success after replacing payload while self retained the rejected pre-write graph; corrected oracle requires that exact failure and independently checks current payload.",
+    "Initial range scratch assertion incorrectly expected native-adopted Proxy storage to be unprotected; successful adoption correctly marks it imported. No internal bypass was introduced to force the excluded route.",
+    "An initial evidence checker misread object/array summaries; it failed before being corrected and receives no runtime or acceptance credit.",
+    "Temporary investigation scripts/logs/reviewer reports remain outside the repository. Self-contained scenarios/results are retained here; required reproducibility comes from the unchanged normal harness/retained probes and saved gate commands, not unavailable scratch paths."
+  ],
+  "reconciliation": {
+    "contracts": "Both authoritative semantic contract hashes match original accepted evidence",
+    "currentInputCount": 277,
+    "currentInitialFinalDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+    "productionTestsUnchanged": true,
+    "allAuxiliaryHashesMatch": true,
+    "requiredGatesPending": [],
+    "outsideFullScope": [],
+    "sensitivity": {
+      "entries": 239,
+      "obligationGroups": 106,
+      "selectors": 266,
+      "retainedDiagnostics": 264,
+      "explicitNonDetectingSelectors": 2,
+      "matchingDiagnosticChildReceipts": 120
+    },
+    "currentGeneratorProducts": {
+      "matrixCases": 93636,
+      "matrixRuns": 280908,
+      "publicationPairs": 96824,
+      "pairRuns": 290472,
+      "modeledPairs": 63168,
+      "modeledFailures": 10490,
+      "pairJointKeys": 252
+    },
+    "verificationHelperSHA256": "8d2977a38997da841307bb2534f0c5543f82d53f5b315652d8e16f87f1018151",
+    "freshSensitivity": {
+      "jobs": 1,
+      "expectedDetections": 1,
+      "unexpectedFailures": 0,
+      "semanticSamples": 27,
+      "retainedControls": 2,
+      "actualRuntimeExecutions": 1
+    },
+    "rawFreshEvidenceIndependentVerification": {
+      "helperSHA256": "4986c4abaf02bb436b43e2b7e7799bea7e4da6fa14c8c995fc7997fa7dc35fe7",
+      "result": "Independent reconstruction matches both new raw logs,277 input hashes and all240 ordered traced instances/223 actual runtime hits;17 startup-only qualifications verified."
+    }
+  },
+  "reviewInputFingerprints": {
+    "atReviewStart": {
+      "AGENTS.md": "1196982d7a09b2ab8f730b1c5acb2961269ccad1f0289e96ccd27bd0f1b785fe",
+      "docs/data-limitations.md": "7a3aac84ab5ab4a7fb22f50f509c864bf1f0a7bdb0332e8e790e5b8544098363",
+      "docs/phase5-stabilization.md": "8b0db4fcda2d7189f3b782d7a4b486fba044c817d92c6e0ba9fc7ac712a62ba4",
+      "docs/prompts/audit.md": "2153a0d55085963799e8ec6a49bebf4b32b50ddcf4932f9b6318e884dd9ff376",
+      "docs/prompts/phase5-rerun.md": "b6698180248ad878b6e5f433f5bc5e5e84b1a9da0468e86e6c2ebccb0167771e"
+    },
+    "qualification": "Semantic contracts are unchanged. The stabilization specification later changes only current review status/provenance; execution-input manifest excludes these non-executed review/evidence/status documents."
+  },
+  "freshSensitivityRuns": [
+    {
+      "label": "independent-b22-legacy-sensitivity",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "--max-old-space-size=384",
+        "test/fixtures/pending-push-work.js",
+        "--legacy-copies"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--import=${TRACE_RUNTIME_URL}",
+        "CASCADA_TRACE_RECEIPT_FILE": "${OUTPUT}/independent-b22-legacy.receipts.jsonl"
+      },
+      "environmentPolicy": "All inherited CASCADA_* and NODE_OPTIONS cleared before recorded overrides",
+      "started": "2026-10-26T15:49:20.403Z",
+      "seconds": 0.428,
+      "exitCode": 1,
+      "expectedExitCode": 1,
+      "status": "expected sensitivity assertion detected after completed semantic controls",
+      "timedOut": false,
+      "inputsUnchanged": true,
+      "inputDigest": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "inputRefs": [
+        "candidate current 277-path manifest"
+      ],
+      "semanticControls": {
+        "samples": 27,
+        "routes": [
+          "push",
+          "assign",
+          "ready-push"
+        ],
+        "deliveries": [
+          "forward",
+          "reverse",
+          "reject-repair",
+          "reverse-reject-repair",
+          "ready"
+        ],
+        "sizes": [
+          16,
+          32,
+          64
+        ],
+        "allSettledLiveCapturesZero": true,
+        "allSettledCaptureMembershipsZero": true,
+        "retainedControls": [
+          "view",
+          "outputs"
+        ],
+        "intendedFirstMeasurement": {
+          "copiedEntries": 120,
+          "versions": 154,
+          "captures": 15,
+          "liveCaptures": 15,
+          "captureMemberships": 15,
+          "subscriptions": 94,
+          "handledSubscriptions": 62,
+          "outwardSubscriptions": 0,
+          "aggregateMembers": 0,
+          "views": 16,
+          "backings": 1,
+          "activations": 19,
+          "retirements": 16,
+          "parentRecords": 136,
+          "producerRecords": 0,
+          "ownerVisits": 0,
+          "parentLinks": 153,
+          "counterUpdates": 153,
+          "counterMemberships": 0,
+          "backingSlots": 17,
+          "maintainedEntries": 35,
+          "activeBackingOwners": 1,
+          "backingParentRecords": 0,
+          "producerVersions": 0,
+          "pendingProducerVersions": 0,
+          "producerParentRecords": 0,
+          "producerCounterMemberships": 0,
+          "currentVersions": 16,
+          "currentParentRecords": 16,
+          "logicalLength": 17
+        }
+      },
+      "instrumentation": {
+        "counterSubstitutionAnchors": 21,
+        "includesLegacyFault": true,
+        "orderedInstances": [
+          {
+            "instance": 1,
+            "pid": 20672,
+            "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+            "executed": true,
+            "firstRuntimeHit": "thenValue"
+          }
+        ],
+        "loaded": 1,
+        "executed": 1
+      },
+      "stdoutSHA256": "321371e41d14694f5daf9c751f4e0cb5fa000927332788e50f788df179a1bb6d",
+      "stderrSHA256": "d61c0e5186d77520e026fe2e440a790a1cea95451fcab26b7d828a6a3329cd70",
+      "receiptSHA256": "686212fc7faba11a73e97f32bc75ed843f151678d6e7f97c2c6f2142a251718d",
+      "orchestrationSHA256": "cdf5e7850c5374b0cbc74a381b06e2ad66d172a26b14310e11500107d65e79c5",
+      "candidateRef": "30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8",
+      "evidenceTreatment": "newly executed expected-failure sensitivity control",
+      "sensitivityReference": "phase5-sensitivity.json:nonRegistryEvidence.B22_STRICT_WORK.currentSensitivity"
+    }
+  ],
+  "closure": {
+    "status": "complete within declared full scope",
+    "remainingSupportedFindings": [],
+    "unexplainedRequiredEvidenceGaps": [],
+    "productionChanges": [],
+    "testChanges": [],
+    "documentationChanges": [
+      "docs/phase5-review.md",
+      "docs/phase5-acceptance.json",
+      "docs/phase5-sensitivity.json",
+      "docs/phase5-stabilization.md"
+    ],
+    "qualification": "Documentation hashes above pin the reviewed pre-closure records. Only final status/approval bookkeeping follows; the277 execution inputs remain unchanged. No earlier execution result is repinned."
   }
 }
