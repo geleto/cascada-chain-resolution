@@ -4,6 +4,8 @@ Status: **complete within the reviewed B01–B22 scope**, run **2026-10-26-02**,
 
 This file, [acceptance](phase5-acceptance.json), and [sensitivity](phase5-sensitivity.json) are the maintained baseline for subsequent manually requested runs. The [rerun procedure](prompts/phase5-rerun.md) defines how to refresh and consolidate them. [Reusable probes](phase5-probes/) remain executable inputs; no prior report or temporary log is required to reconstruct the current command inventory.
 
+The subsequently approved [Phase 6 registration policy](external-context-ordering.md#registration-membership) supersedes this baseline's permanent binding conflicts and duplicate-triggered revocation. It keeps the first valid binding and rejects a later conflicting context atomically. The retained review, acceptance and sensitivity records describe the earlier runtime; new-policy implementation and verification remain Phase 6 work.
+
 ## Candidate and provenance
 
 This run was requested on 2026-10-26 using `docs/prompts/phase5-rerun.md`, without a narrower scope or explicit resource limit. Initial revision: `21ea2e311962d8c6b61f9b40b701012c1f1563ac`; the initial working tree was clean. Node v24.14.1, Mocha 11.3.0, win32 x64, Windows release 10.0.26200 match the retained environment. Current execution-input digest: `30cc4cb3581d7d498270eb00e700f55a952b9449a05dcd843f370ee67ee2aca8`, covering 277 paths, including all retained auxiliary probes and the data contract. Initial/final execution inputs are identical. Review/evidence/specification edits are documentation only. Working manifests, logs, probes and orchestration stayed outside the repository.

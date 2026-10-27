@@ -176,7 +176,7 @@ Choose relevant dimensions rather than blindly applying this list. Consider empt
 - Root, intermediate, and final placements; in-range and out-of-range indexes.
 - Managed data, observation-only external data, registered external scopes, and mixed connecting branches.
 - Fresh and already-admitted result data, lazy descendants, aliases encountered in different orders, and small cycles.
-- Healthy state, ordinary Error data, scope poison with recovery, and permanent binding conflict.
+- Healthy state, ordinary Error data, scope poison with recovery, rejected duplicate context imports, and late first registration during an alias operation. Distinguish the approved Phase 6 policy from the preceding runtime's permanent-conflict behavior; do not treat historical acceptance as validation of the new policy.
 - Independent settlement orders and issuance before earlier results settle.
 
 Do not take the full Cartesian product blindly. Cover meaningful pairs and the higher-order combinations implicated by failures. State which combinations were exercised, excluded by contract, or left untested, following the support boundary above.
@@ -194,7 +194,7 @@ Check two proof obligations explicitly:
 - **Completion:** before declaring success, exposing committed effects, or releasing recovery state, can unfinished validation or publication still invalidate the operation? Preserve responsibility, causal context, and publication authority through required work and any handoffs. Distinguish it from pending data or independent work that the contract permits to outlive completion; do not solve the problem by waiting for everything.
 - **Retirement:** before removing metadata, overlays, retained state, or redundant copies, does the remaining representation expose the same logical state and preserve every live capture and publication obligation? Completion alone does not prove that fallback storage is current. Necessary current state is not historical garbage.
 
-Test recovery for repairable failures and release at the correct last-access point. Permanent conflicts and terminal failures need not have a public repair transition; work waiting on an unresolved input need not finish. State which retained resources remain necessary and which unrelated work must still proceed.
+Test recovery for repairable failures and release at the correct last-access point. Ordinary import Errors without a baseline and other terminal failures need not have a public repair transition; work waiting on an unresolved input need not finish. State which retained resources remain necessary and which unrelated work must still proceed.
 
 Use never-settling inputs to check that completed or unrelated work does not retain their gates, reservations, or resources unnecessarily. Assert positive progress of independent work and the required ordering of dependent work, using explicit completion signals rather than arbitrary sleeps. No audit should manufacture a cancellation or forced-settlement requirement absent from the contract.
 

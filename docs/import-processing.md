@@ -89,7 +89,7 @@ Cached reception restores a prepared root's inactive relationships from authorit
 
 New imported managed identities carry imported protection, so mutation copies before changing host storage independently of parent counts or temporary leases. Copies are runtime-owned; reused imported children keep their origin. Frozen, sealed, and writable imported managed objects therefore have the same logical behavior.
 
-Application code must not mutate managed data after passing it to Cascada. External identities remain exact leaves. Initial context discovery reuses one segment-local identity-to-location map to detect duplicate locations and commit registrations after validation. Binding state follows [external-context-ordering.md](external-context-ordering.md#identity-binding-map). A regular Chain's inert admission cannot disqualify a later context, and an abandoned segment cannot invalidate an existing binding.
+Application code must not mutate managed data after passing it to Cascada. External identities remain exact leaves. Initial context discovery reuses one segment-local identity-to-location map to detect duplicate locations. Under the approved Phase 6 revision, validate proposals against both that map and existing execution bindings before committing any admission, topology or registration. Any duplicate rejects the entire new context import; earlier valid bindings remain unchanged and otherwise fresh proposed resources remain unregistered. Binding state follows [external-context-ordering.md](external-context-ordering.md#registration-membership). A regular Chain's inert admission cannot disqualify a later context, and an abandoned segment cannot invalidate an existing binding.
 
 ## Modules
 

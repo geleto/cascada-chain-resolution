@@ -163,6 +163,7 @@ describe("generated operation sequences", () => {
             ...product(["delivery"], ["native", "ordered"]),
             ...product(["phase"], ["before-release", "after-release"]),
             "managed-set:data", "managed-get:data",
+            ...product(["managed-write"], ["0", "1", "2"], ["direct", "entered"]),
         ]
         for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)
     })

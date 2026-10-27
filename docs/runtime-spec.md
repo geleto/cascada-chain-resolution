@@ -595,9 +595,9 @@ Every managed mutation, including controlled writes, preserves its selected scop
 
 ### `repairPath(chain, path, operationContext)`
 
-Clear the selected managed placement's scope poison to expose its pre-operation value/version, and repairable own poison in a covered external subtree without native rollback. Use ordinary managed ordering and required external reservations. Successful repair returns undefined without invoking a native method. Healthy or absent managed targets need no managed change; ordinary Error data without a retained baseline returns that same Error and blocks repair-and-call. Strict-ancestor own poison and permanent binding conflict remain blockers. Restoring a managed baseline does not erase independent earlier failures or ordinary Error data within it. Repair-and-call clears first and starts a new managed baseline from the repaired state.
+Clear the selected managed placement's scope poison to expose its pre-operation value/version, and repairable own poison in a covered external subtree without native rollback. Under the approved Phase 6 revision, use ordinary managed ordering and versioned external metadata without a host reservation of repair's own. Successful repair returns undefined without invoking a native method. Healthy or absent managed targets need no managed change; ordinary Error data without a retained baseline returns that same Error and blocks repair-and-call. Strict-ancestor own poison remains a selection blocker. A rejected context import has no recovery baseline; repair preserves its ordinary Error and cannot create authority. Restoring a managed baseline does not erase independent earlier failures or ordinary Error data within it. Repair-and-call clears first and starts a new managed baseline from the repaired state.
 
-Registered external scopes may be nested. Resolve selection through static source provenance and the deepest relevant tree node, not a first-boundary-only rule. Repair creates no registration, identity transfer, or native rollback. See [scope transitions](error-handling.md#scope-transitions).
+Registered external scopes may be nested. Resolve native selection through static source provenance and the deepest relevant tree node, not a first-boundary-only rule. Under Phase 6, canonical metadata queries and repair also accept computed keys. Repair creates no registration, identity transfer, or native rollback. See [scope transitions](error-handling.md#scope-transitions).
 
 ### `export(chain, path, operationContext)`
 
@@ -626,6 +626,8 @@ traversal failures and rejected internal readiness become fatal `FatalError`.
 Rejected data Promises retain the source boundary that introduced them.
 
 ### `hasError(chain, path, operationContext)`
+
+**Approved Phase 6 external metadata revision, not yet implemented:** contextual metadata-only hasError/getErrors and repair permit computed canonical registered targets. Queries capture the ordered poison view; repair preserves state on failure and clears covered repairable poison without changing canonical bindings. The first valid registration remains valid; any later context claiming that identity fails its own import atomically before committing admission, topology or registrations. Rejected contexts add no poison or shared conflict state to earlier contexts. Collection of the original canonical location does not permit rebinding; registration membership needs no back-link that retains or resolves that location. Actual native access still requires static provenance and live authority. The [metadata protocol](external-context-ordering.md#poison-and-repair) defines these boundaries and their pending publication lifetimes.
 
 Returns a Boolean indicating reachable poison or a recoverable failure to inspect the issue-time branch.
 

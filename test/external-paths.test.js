@@ -558,6 +558,84 @@ describe("public external paths", () => {
         assert.deepEqual(r.lookupPath(chain, ["group", "list"], ctx), [3])
     })
 
+    for (const action of ["assign", "delete", "call"]) for (const entered of [false, true]) for (const pending of [false, true]) {
+        it(`mutates a computed managed child beside a pending native sibling: ${action}, entered=${entered}, pending=${pending}`, async () => {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            const held = Promise.withResolvers()
+            const delivery = Promise.withResolvers()
+            const ordinary = { n: 1, list: [1] }
+            const api = r.externalState({ work() { return held.promise } })
+            const chain = new r.ContextChain({ box: { group: {
+                api, ordinary: pending ? delivery.promise : ordinary,
+            } } }, ctx, { box: { group: { api: {} } } })
+            let native, mutation, observed
+            const issue = owner => {
+                const prefix = entered ? ["group"] : ["box", "group"]
+                native = r.run(owner, [...prefix, "api"], "work", [], ctx, { mutationScopeDepth: prefix.length + 1 })
+                const path = [...prefix, "ordinary", action === "call" ? "list" : "n"]
+                mutation = action === "assign" ? r.assignPath(owner, path, 2, ctx, path.length, prefix.length) :
+                    action === "delete" ? r.deletePath(owner, path, ctx, path.length, prefix.length) :
+                    r.run(owner, path, "push", [2], ctx, { mutationScopeDepth: path.length, firstDynamicSegment: prefix.length })
+                observed = r.export(owner, [...prefix, "ordinary"], ctx)
+                return observed
+            }
+            const entry = entered ? r.enter(chain, ["box"], ctx, true, issue) : issue(chain)
+            delivery.resolve(ordinary)
+            // Managed publication is independent of the earlier native call,
+            // including inside the entry's private reservation view.
+            assert.deepEqual(await observed, action === "assign" ? { n: 2, list: [1] } :
+                action === "delete" ? { list: [1] } : { n: 1, list: [1, 2] })
+            assert.equal(await mutation, action === "call" ? 2 : undefined)
+            held.resolve()
+            await Promise.all([native, entry])
+            assert.equal(r.getErrors(chain, [], ctx), null)
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
+    it("keeps computed managed failure local while rejecting an explicit mixed scope", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }
+        const api = r.externalState({ read() { return 1 } })
+        const chain = new r.ContextChain({ group: { api, ordinary: [1], sibling: 2 } }, ctx, { group: { api: {} } })
+        const failure = r.run(chain, ["group", "ordinary"], "missing", [], ctx,
+            { mutationScopeDepth: 2, firstDynamicSegment: 1 })
+        assert.equal(failure.kind, r.ERROR_KIND.MissingFunction)
+        assert.equal(r.lookupPath(chain, ["group", "ordinary"], ctx), failure)
+        assert.equal(r.lookupPath(chain, ["group", "sibling"], ctx), 2)
+        assert.equal(r.run(chain, ["group", "api"], "read", [], ctx, {}), 1)
+        const mixed = r.run(chain, ["group"], "missing", [], ctx,
+            { mutationScopeDepth: 1, firstDynamicSegment: 0 })
+        assert.equal(mixed.kind, r.ERROR_KIND.PropertyValidation)
+        assert.equal(r.lookupPath(chain, ["group"], ctx), mixed)
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("repairs only the selected computed managed scope", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }
+        const api = r.externalState({ fail() { throw new Error("native failure") } })
+        const chain = new r.ContextChain({ group: { api, ordinary: [1] } }, ctx, { group: { api: {} } })
+        const nativeFailure = r.run(chain, ["group", "api"], "fail", [], ctx, { mutationScopeDepth: 2 })
+        const ordinaryFailure = r.run(chain, ["group", "ordinary"], "missing", [], ctx, { mutationScopeDepth: 2 })
+        assert.equal(r.lookupPath(chain, ["group", "ordinary"], ctx), ordinaryFailure)
+        assert.equal(r.run(chain, ["group", "ordinary"], "push", [2], ctx,
+            { mutationScopeDepth: 2, firstDynamicSegment: 1, repair: true }), 2)
+        assert.deepEqual(r.export(chain, ["group", "ordinary"], ctx), [1, 2])
+        assert.equal(r.getErrors(chain, ["group", "api"], ctx), nativeFailure)
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("does not repair a computed path's poisoned strict ancestor", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }
+        const chain = new r.ContextChain({ group: { ordinary: [1] } }, ctx)
+        const failure = r.run(chain, ["group"], "missing", [], ctx, { mutationScopeDepth: 1 })
+        assert.equal(r.run(chain, ["group", "ordinary"], "push", [2], ctx,
+            { mutationScopeDepth: 2, firstDynamicSegment: 1, repair: true }), failure)
+        assert.equal(r.lookupPath(chain, ["group"], ctx), failure)
+        r.repairPath(chain, ["group"], ctx)
+        assert.deepEqual(r.export(chain, ["group", "ordinary"], ctx), [1])
+        verifyRefCounts(ctx, chain._state)
+    })
+
     it("does not hold a computed prefix for an independent removed-element result", async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const pending = Promise.withResolvers()

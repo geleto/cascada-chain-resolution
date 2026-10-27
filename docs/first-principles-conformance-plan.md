@@ -2,6 +2,8 @@
 
 ## Purpose
 
+**Later registration revision:** the approved [Phase 6 policy](external-context-ordering.md#registration-membership) supersedes every permanent-conflict, duplicate-triggered revocation and conflict-repair rule below. The first valid binding remains valid; a later duplicate rejects its entire context import before any staged changes commit. These completed-phase descriptions retain the previous implementation and verification history, not the new target. Late-first-registration alias checks and no rebinding after collection remain required.
+
 This file retains the completed implementation phases through 9F-C and their verification requirements. All remaining work has moved to the [runtime evolution plan](runtime-evolution-plan.md). Pending phase bodies are removed here so there is one active plan.
 
 Historical permissions below do not override the current [reporting contract](data-limitations.md#deterministic-error-reporting). Import source contexts follow first actual successful preparation; that explicit diagnostic exception does not extend to kind, validation, values or effects. Collected poison order remains temporarily unspecified; deterministic ordering is future work. Fatal crash diagnostics need not be deterministic, and first-encountered shutdown remains authoritative. The later [receiving corrections](runtime-evolution-plan.md#approved-receiving-rule-stable-categories) supersede historical route-dependent categories, raw-Error poisoning and whole-segment structural rejection below. Current contracts and acceptance live in that plan and the authoritative data limitations.

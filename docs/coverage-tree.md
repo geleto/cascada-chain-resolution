@@ -134,14 +134,14 @@
     - Repair
       - Managed baseline restoration and failed-publication preservation
       - Ordered external subtree clearing without native rollback
-      - Ancestor poison, permanent conflict, and readonly repair restrictions
+      - Ancestor poison and readonly repair restrictions; migrate permanent-conflict cases to atomic duplicate-context rejection under Phase 6
       - Repair-and-call clearing before new mutation preparation
   - Error queries and graph presence indexing
     - Error query results
       - Existence proofs and early hasError completion
       - Complete getErrors collection over captured Promise frontiers
       - Terminal managed guards and opaque external identities
-      - Ordered contextual external poison and binding-conflict queries
+      - Ordered contextual external poison queries; rejected duplicate imports leave the original context metadata unchanged under Phase 6
       - Recoverable query reflection failure versus internal traversal fatality
     - Lazy presence index
       - Atomic downward-closed index construction and abandonment

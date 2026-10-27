@@ -290,7 +290,13 @@ function generateCommand(random, scopes, { readonly = false, managed = false, ne
     const scope = pick(scopes)
     const child = scope === "api" ? pick(CHILDREN) : scope
     const roll = randomInteger(random, 20)
-    if (managed && roll < 3) return { kind: pick(["managed-set", "managed-set", "managed-get"]), key: pick(["k", "m"]), value: randomInteger(random, 50) }
+    if (managed && roll < 3) {
+        const command = { kind: pick(["managed-set", "managed-set", "managed-get"]), key: pick(["k", "m"]), value: randomInteger(random, 50) }
+        // Vary source provenance without changing the seeded program stream.
+        // The independent model gives all three routes identical write semantics.
+        if (command.kind === "managed-set") command.dynamicFrom = command.value % 3
+        return command
+    }
     if (top && roll >= 16) return generateSpecial(random, variant)
     if (roll < 5 || readonly && roll < 12) {
         if (random() < 0.3) return { kind: pick(["peek", "get-value"]), scope: child }
@@ -447,7 +453,11 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
             result = r.assignPath(owner, path, value, operationContext, depth, command.dynamicFrom ?? path.length)
         } else if (kind === "repair") result = r.repairPath(owner, command.scope === "root" ? [] : registered(command.scope), operationContext)
         else if (kind === "errors") result = r.getErrors(owner, command.scope === "root" ? [] : registered(command.scope), operationContext)
-        else if (kind === "managed-set") result = r.assignPath(owner, relative(["data", command.key]), command.value, operationContext)
+        else if (kind === "managed-set") {
+            const path = relative(["data", command.key])
+            result = r.assignPath(owner, path, command.value, operationContext, path.length, command.dynamicFrom)
+            if (want === "u") coverage.add(`managed-write:${command.dynamicFrom}:${owner === chains[command.context] ? "direct" : "entered"}`)
+        }
         else if (kind === "managed-get") result = r.lookupPath(owner, relative(["data", command.key]), operationContext)
         else if (kind === "dynamic-peek") result = r.lookupPath(owner, ["api", command.scope, "items", "length"], operationContext, command.dynamicFrom)
         else if (kind === "dynamic-mutate") {
