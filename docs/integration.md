@@ -204,14 +204,22 @@ The compiler must supply all potential mutable receiver/container routes, includ
 
 All public path APIs accept `firstDynamicSegment` as their final optional
 argument; `run` carries it alongside `mutationScopeDepth` and the required
-`repair` Boolean. The default is `path.length`, meaning a fully static path.
-For captured prefix and suffix paths, concatenate provenance as
+`repair` Boolean. The default is `path.length`, declaring a fully static path
+for String/Number inputs. Under Phase 6, the existing routing/consumption walk
+also ends that prefix at the first non-String/Number input, before normalization
+or subscription. A Promise key therefore remains dynamic with omitted or later
+declared provenance, including synchronous fulfillment. Explicit computed ready
+keys retain their declared restriction. This narrows the existing route fact
+without probing thenability or scanning an unused suffix; invalid input is
+reported only when consumed.
+For captured prefix and suffix paths, concatenate their narrowed provenance as
 `prefixDynamic < prefix.length ? prefixDynamic : prefix.length + suffixDynamic`.
 Truncation to length `k` uses `Math.min(firstDynamicSegment, k)`.
 Entered Chains retain canonical prefix provenance internally, so rebasing the
 remaining suffix cannot grant authority lost through an earlier computed key.
 Compiler-generated keys may currently be ready Strings or Numbers; Promise key
-consumption is implemented separately in [Phase 6](runtime-evolution-plan.md#phase-6-support-promise-valued-path-segments).
+consumption is implemented separately in [Phase 6](runtime-evolution-plan.md#phase-6-support-promise-valued-path-segments),
+with supported consumers defined by its [landable slices](runtime-evolution-plan.md#landable-slices-and-interim-support).
 
 Repair-only uses `repairPath(chain, path, operationContext, firstDynamicSegment)`.
-It invokes no native method and clears selected managed placement poison to reveal its baseline, plus repairable poison in the covered external tree. Healthy or absent managed targets need no managed change; ordinary Error data without a retained baseline returns its original Error and suppresses repair-and-call. Repair-and-call uses run with mutation and repair: true; clear first, then prepare and invoke under the same required ordering. Each managed mutation rolls back its own failed private changes. Compiler-generated enter controls access, not a transaction; higher-level guard/recover owns rollback across multiple commands. Preserve ordinary Error replacement and independent result failures.
+It invokes no native method and restores selected managed placement poison to its baseline, together with an unconditional empty version of covered external metadata. Do not test for poison first or await native outcomes whose poison that reset overwrites. Keep completion/Error reporting for unresolved selection and required publication; returning undefined still means repair completed, not merely that it was issued. Actual native reservations remain active for conflicting host work. Healthy or absent managed targets need no managed change; ordinary Error data without a retained baseline returns its original Error and suppresses repair-and-call. Repair-and-call uses run with mutation and repair: true. Preflight only structural route, mutation scope and readonly capability, commit repair, then use ordinary method-name/dispatch, argument and invocation checks under the original ordering. A later call failure publishes new poison against the repaired baseline; a failed repair preserves old state and suppresses the call. Each managed mutation rolls back its own failed private changes. Compiler-generated enter controls access, not a transaction; higher-level guard/recover owns rollback across multiple commands. Preserve ordinary Error replacement and independent result failures.
