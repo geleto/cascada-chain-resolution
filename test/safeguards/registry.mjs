@@ -1342,6 +1342,28 @@ export const SAFEGUARDS = [
 
     // --- Recovery -------------------------------------------------------------
     {
+        id: "repair-call-consumes-recovery",
+        guards: "Repair-and-call consumes the restored placement before receiver dispatch and baseline protection; standalone repair does not wait for that value.",
+        faults: [edit("src/path-operation.js", "consumeRestored: true", "consumeRestored: false")],
+        witnesses: ["consumes restored receivers in issue order: plain static, native",
+            "protects the restored Array baseline: fill, ordered fulfilled"],
+    },
+    {
+        id: "restored-blocker-preserves-recovery",
+        guards: "A call blocked by the restored guard preserves that guard's recovery instead of adding another layer.",
+        faults: [edit("src/mutations.js", "                if (errorUtils.isPoisonError(baseline.value))\n" +
+            "                    return { mutatedValue: baseline.value, result: baseline.value, placement: baseline, published: true }\n")],
+        witnesses: ["preserves a restored guard without another recovery layer: pending=false, combined=true",
+            "preserves a restored guard without another recovery layer: pending=true, combined=true"],
+    },
+    {
+        id: "repair-scope-preflight-preserves-state",
+        guards: "A repair-and-call rejected by the fixed managed scope leaves its guard and native metadata unchanged.",
+        faults: [edit("src/path-operation.js", "this.repair && scopeFailure ? scopeFailure : transformProperty(target", "transformProperty(target")],
+        witnesses: ["rejects an invalid repair scope before clearing either store: static, guards=1",
+            "rejects an invalid repair scope before clearing either store: computed, guards=2"],
+    },
+    {
         id: "recovery-forces-copy",
         guards: "A value retained as a recovery baseline is copied before another owner writes it.",
         faults: [edit("src/meta.js", "if (meta?.imported || meta?.readLeaseCount || meta?.preservationParents?.size) return true",

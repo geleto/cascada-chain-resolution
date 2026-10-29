@@ -52,7 +52,7 @@ function createMutationOutcome(mutatedValue, result, operationContext, published
     return { mutatedValue, result, published, releasePublication: publication.release }
 }
 
-function transformProperty(target, operationContext, transform, { replace = false, repair = false, beforeWait } = {}) {
+function transformProperty(target, operationContext, transform, { replace = false, repair = false, consumeRestored = false, beforeWait } = {}) {
     let { parent, key } = target
     let baseline = replace || target.sourceVersion
         ? propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
@@ -68,12 +68,26 @@ function transformProperty(target, operationContext, transform, { replace = fals
     function apply(placement) {
         originalPlacement = placement
         baseline = placement
-        let current = baseline.value
-        if (!replace && errorUtils.isPoisonError(current)) {
-            if (!repair || !baseline.recovery) return { mutatedValue: current, result: current, placement: baseline, published: false }
+        placement = undefined
+        if (!replace && errorUtils.isPoisonError(baseline.value)) {
+            if (!repair || !baseline.recovery)
+                return { mutatedValue: baseline.value, result: baseline.value, placement: baseline, published: false }
             baseline = baseline.recovery
-            current = baseline.value
+            // Repair alone republishes the captured baseline without consuming
+            // it. A consuming mutation needs its ready value and baseline lease
+            // before dispatch, even when recovery introduced another Promise.
+            if (consumeRestored) return propertyVersions.resolvePlacement(baseline, operationContext, restored => {
+                baseline = restored
+                restored = undefined
+                if (errorUtils.isPoisonError(baseline.value))
+                    return { mutatedValue: baseline.value, result: baseline.value, placement: baseline, published: true }
+                return applyCurrent()
+            })
         }
+        return applyCurrent()
+    }
+    function applyCurrent() {
+        let current = baseline.value
         if (!errorUtils.isPoisonError(current) && !languageValues.isPending(current, operationContext)) {
             languageValues.admitReadyValue(current, operationContext)
             leased = metadata.incrementReadLease(current, operationContext)

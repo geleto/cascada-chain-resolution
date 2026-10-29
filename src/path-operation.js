@@ -166,15 +166,18 @@ class PathOperation extends OperationOwner {
                 this.scopeDepth + (this.chain._contextOrigin?.depth ?? 0)
             let node = externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth))
             let holder
-            const outcome = transformProperty(target, operationContext, (value, state) => {
+            const scopeFailure = node && scopeSelected && !replaceScope
+                ? properties.propertyValidationError("A managed mutation scope cannot contain mutable external locations", operationContext)
+                : undefined
+            // Structural rejection must not restore the scope just to fail its
+            // call. Ordinary mutations still publish their own scope failure.
+            const outcome = this.repair && scopeFailure ? scopeFailure : transformProperty(target, operationContext, (value, state) => {
                 return steps.continueGraphTransition(this.externalEffect?.readiness, operationContext, () => {
                     try {
                         const blocker = this.externalBlocker(false)
                         if (blocker) return blocker
                         if (this.routeFailure) return this.routeFailure
-                        if (this.repair && scopeSelected) externalTree.clearPoison(node)
-                        if (node && scopeSelected && !replaceScope)
-                            return properties.propertyValidationError("A managed mutation scope cannot contain mutable external locations", operationContext)
+                        if (scopeFailure) return scopeFailure
                         if (!replaceScope && metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External)
                             return this.routeFailure = externalLocationError(operationContext)
                         const suffix = route.path.slice(depth)
@@ -194,7 +197,8 @@ class PathOperation extends OperationOwner {
                         return transform(value, state, privateChain, suffix, node)
                     } finally { value = state = undefined }
                 })
-            }, { replace: replaceScope && depth === requestedDepth, repair: this.repair && scopeSelected, beforeWait: this.beforeWait })
+            }, { replace: replaceScope && depth === requestedDepth, repair: this.repair && scopeSelected,
+                consumeRestored: true, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(outcome, operationContext, published => {
                 // The destination has accepted the capture. Detach this private
                 // placement so later delivery cannot repopulate a spent holder.

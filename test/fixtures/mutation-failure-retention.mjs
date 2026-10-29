@@ -29,7 +29,7 @@ function installInvalidChild(cause, weak) {
     }
 }
 
-function issue(route, cause) {
+async function issue(route, cause) {
     const ctx = { execution: new r.Execution(), errorContext: route }, weak = []
     let error
     if (route === "method selection") {
@@ -41,11 +41,22 @@ function issue(route, cause) {
         const chain = new r.Chain(r.import(source, ctx), ctx)
         error = r.run(chain, [], "read", [], ctx, {})
         weak.push(new WeakRef(source), new WeakRef(prototype))
-    } else if (route === "receiver validation") {
+    } else if (route === "receiver validation" || route === "recovered receiver validation") {
         const source = { change: installInvalidChild(cause, weak) }
-        const chain = new r.Chain(source, ctx)
-        error = r.run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 })
+        const recovered = route === "recovered receiver validation", pending = Promise.withResolvers()
+        const chain = new r.Chain(recovered ? { then: pending.promise } : source, ctx)
+        if (recovered) {
+            r.assignPath(chain, ["then"], () => 0, ctx)
+        }
+        const path = recovered ? ["then"] : []
+        error = r.run(chain, path, "change", [], ctx, { mutationScopeDepth: path.length, repair: recovered })
+        if (recovered) { pending.resolve(source); error = await error }
         weak.push(new WeakRef(source))
+    } else if (route === "repair scope preflight") {
+        const api = r.externalState({}), source = { P: { api } }, argument = { value: 1 }
+        const chain = new r.ContextChain(source, ctx, { P: { api: {} } })
+        error = r.run(chain, ["P"], "missing", [argument], ctx, { mutationScopeDepth: 1, repair: true })
+        weak.push(new WeakRef(chain), new WeakRef(source), new WeakRef(source.P), new WeakRef(api), new WeakRef(argument))
     } else if (route === "native classification" || route === "native availability") {
         const child = route === "native classification"
             ? new Proxy({ then: 0 }, { getPrototypeOf() { fail(cause) } })
@@ -90,7 +101,8 @@ function issue(route, cause) {
     }
     assert(r.isPoisonError(error), route)
     assert.equal(error.errorContext, ctx.errorContext)
-    if (route !== "conversion") {
+    if (route === "repair scope preflight") assert.equal(error.kind, r.ERROR_KIND.PropertyValidation)
+    else if (route !== "conversion") {
         if (cause) assert.equal(error.cause, cause, route)
         else assert(Error.isError(error.cause), route)
     } else assert.equal(error.kind, r.ERROR_KIND.ScalarConversionFailed)
@@ -124,12 +136,13 @@ function pendingWriteControl(native) {
 }
 
 const states = []
+states.push(["repair scope preflight", await issue("repair scope preflight")])
 for (const fresh of [false, true])
-for (const route of ["method selection", "receiver validation", "native classification", "native availability", "Array keys",
+for (const route of ["method selection", "receiver validation", "recovered receiver validation", "native classification", "native availability", "Array keys",
     "Array view descriptor", "conversion", "native write", "native delete", "storage write", "storage delete",
     "storage extensibility", "storage descriptor"]) {
     const cause = fresh ? undefined : new Error("prebuilt boundary failure")
-    states.push([`${route}, fresh=${fresh}`, issue(route, cause)])
+    states.push([`${route}, fresh=${fresh}`, await issue(route, cause)])
 }
 const healthy = healthyControl()
 const pending = [pendingWriteControl(false), pendingWriteControl(true)]
