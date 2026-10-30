@@ -271,8 +271,66 @@ function snapshotAndQueryControls(program) {
     assert.equal(execution.fatalError, null)
 }
 
+// Keys and imported data have independent producers. A later write must not
+// enter either earlier capture, even when the selected data arrives last.
+export async function jointPathHistory(program, route, dataDelivery, keyDelivery, fault) {
+    const ctx = context(new r.Execution(), "joint reception")
+    const position = route === "snapshot" ? "root" : ["intermediate", "target", "nested", "sibling"][program.seed % 4]
+    const array = Boolean(program.seed & 4), selectedKey = array ? 0 : "leaf", aliasKey = array ? 2 : "alias"
+    const healthy = new Error("healthy joint data")
+    const leaf = { value: program.value, healthy }
+    const branch = array ? [leaf, , leaf] : { leaf, alias: leaf }, root = { branch, outside: 19 }
+    const delivered = position === "root" ? root : position === "intermediate" ? branch :
+        position === "target" ? leaf : position === "nested" ? program.value : { other: 23 }
+    const data = source(dataDelivery, delivered)
+    if (position === "intermediate") root.branch = data.value
+    if (position === "target") branch[selectedKey] = branch[aliasKey] = data.value
+    if (position === "nested") leaf.value = data.value
+    if (position === "sibling") root.unrelated = data.value
+    const key1 = source(keyDelivery, selectedKey), key2 = source(keyDelivery, "value")
+    const received = receive(route, position === "root" ? data.value : root, ctx)
+    const chain = new r.Chain(received.value, ctx)
+    const before = r.export(chain, ["branch", key1.value], context(ctx.execution, "joint capture"), 1)
+    const selected = r.lookupPath(chain, ["branch", key1.value, key2.value], context(ctx.execution, "joint selected"), 1)
+    const changed = program.value + program.delta
+    r.assignPath(chain, ["branch", selectedKey, "value"], changed, context(ctx.execution, "joint later write"))
+    const after = r.lookupPath(chain, ["branch", selectedKey, "value"], ctx)
+    const alias = r.lookupPath(chain, ["branch", aliasKey, "value"], ctx)
+    if (position !== "root") assert.equal(r.lookupPath(chain, ["outside"], ctx), 19, "joint path leaves unrelated sibling available")
+    const waitsForData = position !== "sibling" && pendingDelivery(dataDelivery)
+    const waitsForKeys = pendingDelivery(keyDelivery)
+    assert.equal(r.isPending(before, ctx), waitsForData || waitsForKeys, "joint export consumes only its required data and key")
+    assert.equal(r.isPending(selected, ctx), waitsForData || waitsForKeys, "joint lookup retains independent key/data waits")
+    let captured = !r.isPending(before, ctx), read = !r.isPending(selected, ctx)
+    const beforeDone = Promise.resolve(before).then(value => { captured = true; return value })
+    const readDone = Promise.resolve(selected).then(value => { read = true; return value })
+    const signals = { data, key1, key2 }, available = {
+        data: !pendingDelivery(dataDelivery), key1: !waitsForKeys, key2: !waitsForKeys,
+    }
+    // The off-path input deliberately stays pending until both results finish.
+    const schedule = position === "sibling" ? ["key1", "key2", "data"] :
+        [["data", "key2", "key1"], ["key1", "data", "key2"], ["key2", "key1", "data"]][program.seed % 3]
+    for (const name of schedule) {
+        signals[name].settle(); available[name] = true
+        await turn()
+        const neededData = position === "sibling" || available.data
+        assert.equal(captured, available.key1 && neededData, "joint export completion follows its own captured prerequisites")
+        assert.equal(read, available.key1 && available.key2 && neededData, "joint lookup completion follows both keys and selected data")
+    }
+    const output = await beforeDone, value = await readDone
+    if (fault === "joint-capture") output.value = changed
+    assert.equal(output.value, program.value, "joint earlier export excludes the later write")
+    assert.equal(value, program.value, "joint earlier scalar excludes the later write")
+    assert.equal(await after, changed, "joint later publication includes its write")
+    assert.equal(await alias, program.value, "joint later write preserves the other alias")
+    assert.equal(output.healthy, healthy, "joint capture preserves healthy Error identity")
+    assert.equal(leaf.value, position === "nested" ? data.value : program.value, "joint reception never writes imported storage")
+    assert.equal(ctx.execution.fatalError, null)
+    return `${route}:${position}:${dataDelivery}:${keyDelivery}:${array ? "array" : "record"}:${schedule.join("-")}`
+}
+
 export async function runReceivingProgram(program) {
-    const coverage = [], healthyReplay = new Map(), poisonReplay = new Map()
+    const coverage = [], jointCoverage = [], healthyReplay = new Map(), poisonReplay = new Map()
     const stages = routes.flatMap(route => deliveries.flatMap(delivery =>
         ["healthy", "poison", "direct-rejection"].map(outcome => ({ route, delivery, outcome }))))
         .concat(deliveries.map(delivery => ({ route: "independent-result", delivery })), [{ route: "snapshot-query-controls" }])
@@ -310,7 +368,12 @@ export async function runReceivingProgram(program) {
     }
     stage()
     snapshotAndQueryControls(program)
-    return { coverage, histories: routes.length * deliveries.length * 3 + deliveries.length,
+    for (const route of routes) for (const data of deliveries.slice(0, 4)) for (const keys of deliveries.slice(0, 4)) {
+        reportGeneratedStage({ seed: program.seed, route, data, keys, outcome: "joint-path" })
+        try { jointCoverage.push(await jointPathHistory(program, route, data, keys)) }
+        catch (cause) { throw new Error(`joint receiving seed=${program.seed} route=${route} data=${data} keys=${keys}`, { cause }) }
+    }
+    return { coverage, jointCoverage, jointHistories: jointCoverage.length, histories: routes.length * deliveries.length * 3 + deliveries.length,
         controls: ["ready-only-snapshot", "scope-query", "healthy-Error", "independent-result-effect"] }
 }
 
@@ -328,20 +391,24 @@ export async function runSensitivity() {
 }
 
 export async function runReceivingDifferential(seeds = 8) {
-    const coverage = new Set(), controls = new Set()
-    let histories = 0
+    const coverage = new Set(), jointCoverage = new Set(), controls = new Set()
+    let histories = 0, jointHistories = 0
     const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases: receivingPrograms(seeds),
         runCase: runReceivingProgram, onPass(result) {
             histories += result.histories
+            jointHistories += result.jointHistories
             for (const key of result.coverage) coverage.add(key)
+            for (const key of result.jointCoverage) jointCoverage.add(key)
             for (const key of result.controls) controls.add(key)
         } })
-    return { programs: totals.passed, histories, coverage: [...coverage].sort(), controls: [...controls].sort(), ...totals }
+    return { programs: totals.passed, histories, jointHistories, jointCoverage: [...jointCoverage].sort(),
+        coverage: [...coverage].sort(), controls: [...controls].sort(), ...totals }
 }
 
 export async function runProductionWitness(name) {
     const program = receivingPrograms(1)[0]
-    if (name === "poison") await poisonHistory(program, "import", "ready")
+    if (name === "joint-data") await jointPathHistory(receivingPrograms(3)[2], "import", "ordered", "native")
+    else if (name === "poison") await poisonHistory(program, "import", "ready")
     else await healthyHistory(program, "import", name === "completion" ? "ordered" : "ready")
     return { witness: name, passed: true }
 }

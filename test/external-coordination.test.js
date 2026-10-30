@@ -59,6 +59,7 @@ describe("external binding commit", () => {
 
     it("abandons pending import work without invalidating an existing registration", async () => {
         const { ctx, identities: [existing], boundaries: [boundary] } = fixture()
+        const revision = ctx.execution._externalRegistrationRevision
         const duplicate = external()
         const pending = Promise.withResolvers()
         const root = { existing, pending: pending.promise, rawError: new Error("staged"), first: duplicate, second: duplicate }
@@ -73,6 +74,12 @@ describe("external binding commit", () => {
             assert.equal(ctx.execution._metadata.has(value), false)
             assert.equal(ctx.execution._externalIdentities.has(value), false)
         }
+        assert.equal(ctx.execution._externalRegistrationRevision, revision, "rejected staging never advances registration revision")
+        const retried = new runtime.Chain(runtime.import(late, ctx), ctx)
+        assert.equal(runtime.lookupPath(retried, ["identity"], ctx), late.identity,
+            "an independent preparation can admit values abandoned by the rejected context")
+        assert.equal(ctx.execution._metadata.has(late), true)
+        assert.equal(ctx.execution._externalRegistrationRevision, revision)
     })
 
     for (const regularFirst of [false, true]) {

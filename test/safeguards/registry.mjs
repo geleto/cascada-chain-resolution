@@ -873,7 +873,7 @@ export const SAFEGUARDS = [
         guards: "A settled delivery releases its receiving callback and captured former source.",
         faults: [edit("src/input-preparations.js", "finally { onValue = undefined }",
             "finally {}")],
-        witnesses: ["checks registration-release at stack limit 1000"],
+        witnesses: ["checks completed-work-retention at stack limit 1000"],
     },
     {
         id: "capture-avoids-native-map-receiver",

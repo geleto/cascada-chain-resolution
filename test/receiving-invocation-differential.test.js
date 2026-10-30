@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { runSensitivity } from "./fixtures/receiving-invocation-differential.mjs"
+import { jointPathHistory, receivingPrograms, runSensitivity } from "./fixtures/receiving-invocation-differential.mjs"
 import { receivingFaults } from "./fixtures/receiving-invocation-faults.mjs"
 import { enabled as traceEnabled } from "./trace-state.js"
 
@@ -10,7 +10,11 @@ describe("receiving and invocation differential", function () {
     it("detects wrong values, aliases, missing poison, effects and completion", async () => {
         assert.deepEqual(await runSensitivity(), ["value", "alias", "effect", "completion", "poison"])
     })
-    it("witnesses five executed production faults and rejects a no-op loader", () => {
+    it("detects a later write leaking into an earlier joint capture", async () => {
+        await assert.rejects(() => jointPathHistory(receivingPrograms(1)[0], "import", "ordered", "native", "joint-capture"),
+            /joint earlier export excludes the later write/)
+    })
+    it("witnesses six executed production faults and rejects a no-op loader", () => {
         const run = (fault, enabled) => spawnSync(process.execPath, [...process.execArgv,
             "--unhandled-rejections=strict", "--import", "./test/safeguards/fault-hook.mjs",
             fileURLToPath(new URL("./fixtures/receiving-invocation-differential.mjs", import.meta.url))], {
@@ -41,6 +45,13 @@ describe("receiving and invocation differential", function () {
         const result = JSON.parse(child.stdout)
         assert.equal(result.programs, seeds)
         assert.equal(result.histories, seeds * 95)
+        assert.equal(result.jointHistories, seeds * 96)
+        for (const route of ["import", "method-result", "host-result", "observation", "snapshot", "managed-result"])
+        for (const position of route === "snapshot" ? ["root"] : ["intermediate", "target", "nested", "sibling"])
+        for (const data of ["ready", "synchronous", "native", "ordered"])
+        for (const keys of ["ready", "synchronous", "native", "ordered"])
+        for (const shape of ["record", "array"])
+            assert(result.jointCoverage.some(key => key.startsWith(`${route}:${position}:${data}:${keys}:${shape}:`)), "missing checked joint path/data position, shape and delivery")
         assert.equal(result.failed, 0)
         assert.equal(result.skipped, 0)
         for (const route of ["import", "method-result", "host-result", "observation", "snapshot", "managed-result"])

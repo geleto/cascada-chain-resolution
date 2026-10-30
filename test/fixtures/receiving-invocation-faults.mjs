@@ -3,6 +3,14 @@
 // complete caller audit and do not change source files on disk.
 const receipt = name => `console.error("receiving differential fault executed: ${name}")`
 export const receivingFaults = [
+    { name: "joint-data", assertion: /joint earlier scalar excludes the later write/, edit: {
+        file: "src/property-versions.js",
+        find: "        const value = promiseVersion.value",
+        replace: `        let value = promiseVersion.value
+        if (operationContext.errorContext === "joint selected" && typeof value === "number") {
+            ${receipt("joint-data")}; value++
+        }`,
+    } },
     { name: "value", assertion: /\["(?:left|right)"\]\["k"\]: exact leaf/, edit: {
         file: "src/property-versions.js",
         find: "function prepareInputPlacement(value, operationContext, kind, contextSetup) {",
