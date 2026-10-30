@@ -27,6 +27,20 @@ const product = (...lists) => lists.reduce((combinations, list) =>
 const harnessModes = ["harness:observed", "harness:verified", "harness:bare"]
 
 describe("generated operation sequences", () => {
+    it("keeps Promise-key outcomes invariant across delivery with identical provenance", function () {
+        this.timeout(60000)
+        const { programs, witnesses, runs, coverage } = runFixture("promise-key-differential.js", 55000)
+        assert.equal(witnesses, 2)
+        assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6 + witnesses)
+        assert.equal(runs, programs * 3)
+        for (const key of [
+            ...product(["operation"], ["lookup", "expr", "export", "assign", "delete", "call", "mutate", "hasError", "getErrors", "repair", "repaircall", "enter"]),
+            ...product(["delivery"], ["native", "ordered", "sync"]),
+            ...product(["failed-key"], ["assign", "delete"], ["invalid", "rejected"], ["native", "ordered"], ["getErrors", "repair"]),
+            "key:invalid", "key:rejected", "provenance:dynamic",
+        ]) assert(coverage.includes(key), `missing ${key}`)
+    })
+
     it("models publication, blocked poison and recovery independently", () => {
         const model = modelPublications([
             { kind: "assign", path: ["a", "x", "q"], value: { type: "num", n: 2 }, scope: 3 },
@@ -107,6 +121,7 @@ describe("generated operation sequences", () => {
             ...product(["observe"], ["direct", "entry", "snapshot"], ["before-release", "after-release", "after-settle"]),
             ...product(["delivery"], ["native", "ordered"]),
             "length", "read", "settle", "owners:1", "owners:2", "owner:0", "owner:1", "multi-owner:pending-mutation",
+            ...product(["keys"], ["ready", "synchronous", "native", "ordered"]),
         ]
         for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)
         // Conflict steps combine one hold, one queued command, and one no-op entry.
@@ -127,6 +142,7 @@ describe("generated operation sequences", () => {
             ...product(["lookup"], ["before-release", "after-release"]),
             ...product(["payload"], ["ready", "promise", "thenable"]),
             ...product(["container"], ["plain", "imported", "view"]),
+            ...product(["keys"], ["ready", "synchronous", "native", "ordered"]),
             ...product(["conflict"], ["set", "delete"], ["set", "delete"], ["ready", "nested"]),
         ]
         for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)
@@ -153,14 +169,21 @@ describe("generated operation sequences", () => {
             ...product(["contained"], ["call:add", "call:fail", "call:read", "call:reset", "call:snapshot", "entry",
                 "errors", "get-value", "peek", "repair", "set-value", "managed-set", "managed-get"]),
             ...product(["repair", "errors"], ["root", "api", "db", "config"]),
+            ...product(["repair-call"], ["api", "db", "config", "direct", "entered"]),
+            ...product(["repair-call-state"], ["healthy", "own-poison", "child-poison", "managed-poison"]),
+            ...product(["repair-call-broader:healthy"], ["direct", "entered"]),
+            "repair-call-broader:own-poison:direct", "repair-call-broader:child-poison:direct",
+            ...product(["repair-call-outcome"], ["argument", "throw", "rejection", "success", "blocked"]),
             "alias-peek", "alias-call", "alias-mutate", "alias-assign", "alias-repair",
             "ext-call", "ext-peek", "ext-mutate", "ext-repair", "competing-call",
             ...product(["variant"], ["alias", "observationOnly", "second", "competing:db", "competing:api"]),
             ...product(["context"], ["A", "B"]),
             ...product(["blocked-or-failed"], ["call", "errors", "peek", "repair", "set-value", "dynamic-mutate",
-                "alias-mutate", "alias-peek", "ext-mutate", "competing-call", "managed-set", "managed-get"]),
-            ...product(["under-root-poison"], ["call", "entry", "errors", "repair", "set-value", "managed-set", "dynamic-mutate"]),
+                "alias-mutate", "alias-peek", "ext-mutate", "competing-call"]),
+            ...product(["under-api-guard"], ["call", "entry", "errors", "repair", "set-value", "managed-set", "dynamic-mutate"]),
             ...product(["delivery"], ["native", "ordered"]),
+            ...product(["keys"], ["ready", "synchronous", "deferred"]),
+            ...product(["native-keys", "snapshot-keys"], ["ready", "synchronous", "deferred"]),
             ...product(["phase"], ["before-release", "after-release"]),
             "managed-set:data", "managed-get:data",
             ...product(["managed-write"], ["0", "1", "2"], ["direct", "entered"]),

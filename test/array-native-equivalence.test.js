@@ -4,6 +4,23 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 
+describe("Array structure after pending key selection", () => {
+    for (const reverse of [false, true]) it(`publishes consecutive selected lengths without self-waits, reverse=${reverse}`, async () => {
+        const ctx = { execution: new Execution(), errorContext: "selected length" }
+        const source = new Chain({ item: Promise.resolve([1, , 3]) }, ctx), first = Promise.withResolvers(), second = Promise.withResolvers()
+        const retained = new Chain(lookupPath(source, [], ctx), ctx)
+        assignPath(source, ["item", first.promise], 0, ctx)
+        assignPath(source, ["item", second.promise], 4, ctx)
+        const repaired = runtime.repairPath(source, [Promise.resolve("item")], ctx)
+        const snapshot = runtime.export(source, ["item"], ctx)
+        for (const key of reverse ? [second, first] : [first, second]) key.resolve("length")
+        await repaired
+        assert.deepEqual(await snapshot, Array(4))
+        assert.deepEqual(await runtime.export(retained, ["item"], ctx), [1, , 3])
+        verifyRefCounts(ctx, source._state, retained._state)
+    })
+})
+
 import { ARRAY_METHODS } from "../src/array-methods.js"
 import { logicalProperty, logicalKeys, deferred } from "./support.js"
 import {

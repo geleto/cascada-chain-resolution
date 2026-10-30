@@ -58,7 +58,7 @@ function prepareInput(
     let resultErrors = policy.methodResult ? failures?.errors ?? new Set() : undefined
     const admissions = new Map()
     const containers = new Map()
-    const registrations = externalMutationTreeSetup ? new Map() : undefined
+    const registrations = externalMutationTreeSetup ? new Set() : undefined
     let value
     try {
         value = walk(root)

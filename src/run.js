@@ -13,8 +13,7 @@ import {
 
 function run(chain, path, method, args, operationContext, facts, delivery) {
     const operation = new invocation.InvocationWork(chain, path, operationContext, facts, method, [...args])
-    path = operation.route.path
-    args = undefined
+    path = args = undefined
     const mutation = operation.mutation
     const result = invocation.invokeMethod(
         operation,
@@ -25,15 +24,15 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
                 return invokeWithReceiver(receiver, state.present)
             }
             operation.beforeWait = beforeWait
-            const native = access => access.selectReceiver(access.path.length,
+            const native = access => access.selectReceiver(access.end,
                 errorUtils.ERROR_KIND.InvocationFailed, invokeWithReceiver)
             if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
-            return operation.mutate((scope, state, privateChain, suffix) => {
-                if (suffix.length === 0) return invokeMutation(scope, state)
-                const outcome = runMutation(privateChain, suffix, operationContext, invokeMutation)
+            return operation.mutate((scope, state, working, start) => {
+                if (start === operation.route.path.length) return invokeMutation(scope, state)
+                const outcome = runMutation(working, start, operation, invokeMutation)
                 return internalSteps.continueGraphTransition(outcome, operationContext, outcome =>
                     errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
-                        ? outcome : captureMutationResult(privateChain, outcome.result, operationContext))
+                        ? outcome : captureMutationResult(working, outcome.result, operationContext))
             })
         },
         delivery,
@@ -41,11 +40,11 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
     return mutation ? operation.finishMutation(result) : operation.finish(result)
 }
 
-function runMutation(chain, path, operationContext, invokeMutation) {
+function runMutation(scope, start, operation, invokeMutation) {
+    const { operationContext } = operation
     return walkMutationPath(
-        chain,
-        path,
-        operationContext,
+        scope.holder,
+        operation,
         target => {
             if (
                 target.propertyKind !==
@@ -60,7 +59,7 @@ function runMutation(chain, path, operationContext, invokeMutation) {
                 return error
             }
             return transformProperty(target, operationContext, invokeMutation)
-        },
+        }, { start, publication: scope.publication },
     )
 }
 

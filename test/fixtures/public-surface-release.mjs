@@ -40,6 +40,7 @@ const cases = {
     "lookup-error-value": (ctx, c) => r.lookupPath(c, ["bad"], ctx),
     "lookup-pending-reject": (ctx, c) => r.lookupPath(c, ["rejecting"], ctx),
     "lookup-invalid-segment": (ctx, c) => r.lookupPath(c, [{}], ctx),
+    "lookup-pending-invalid-segment": (ctx, c) => r.lookupPath(c, [Promise.resolve({})], ctx),
     "expression-invalid": (ctx, c) => r.lookupPathForExpression(c, ["box"], ctx),
     "expression-through-scalar": (ctx, c) => r.lookupPathForExpression(c, ["box", "n", "x"], ctx),
     // export / queries
@@ -56,6 +57,10 @@ const cases = {
     "assign-pending-callable-then": (ctx, c) => r.assignPath(c, ["box", "then"], Promise.resolve(() => {}), ctx),
     "assign-through-scalar": (ctx, c) => r.assignPath(c, ["box", "n", "x"], 1, ctx),
     "assign-invalid-segment": (ctx, c) => r.assignPath(c, ["box", {}], 1, ctx),
+    "assign-pending-invalid-segment": (ctx, c) => {
+        r.assignPath(c, ["box", Promise.resolve({})], 1, ctx)
+        return r.lookupPath(c, ["box"], ctx)
+    },
     "assign-array-invalid-key": (ctx, c) => r.assignPath(c, ["list", "nope"], 1, ctx),
     "assign-rejecting-rhs": (ctx, c) => r.assignPath(c, ["box", "x"], Promise.reject(prebuilt), ctx),
     "delete-through-scalar": (ctx, c) => r.deletePath(c, ["box", "n", "x"], ctx),
@@ -127,6 +132,7 @@ const expected = {
   "lookup-error-value": "OperationInputFailed",
   "lookup-pending-reject": "OperationInputFailed",
   "lookup-invalid-segment": "InvalidPathSegment",
+  "lookup-pending-invalid-segment": "InvalidPathSegment",
   "expression-invalid": "InvalidExpressionValue",
   "expression-through-scalar": "ScalarLookup",
   "export-error-value": "OperationInputFailed",
@@ -141,6 +147,7 @@ const expected = {
   "assign-pending-callable-then": "undefined",
   "assign-through-scalar": "ScalarLookup",
   "assign-invalid-segment": "InvalidPathSegment",
+  "assign-pending-invalid-segment": "InvalidPathSegment",
   "assign-array-invalid-key": "PropertyValidation",
   "assign-rejecting-rhs": "undefined",
   "delete-through-scalar": "ScalarLookup",

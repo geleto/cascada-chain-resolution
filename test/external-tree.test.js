@@ -1,7 +1,7 @@
-import { externalLocationPaths } from "./support.js"
+import { captureRoute } from "../src/path-context.js"
+import { externalLocationPaths, findBranch } from "./support.js"
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import * as externalTree from "../src/external-mutation-tree.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 
 const context = () => ({ execution: new runtime.Execution(), errorContext: "context tree" })
@@ -31,18 +31,21 @@ describe("compiler-guided context tree", () => {
         assert.deepEqual(paths(chain), [["db"]])
     })
 
-    it("updates previously healthy ancestor queries when contexts compete for an identity", () => {
+    it("rejects later contexts without changing earlier ancestor queries", () => {
         const ctx = context(), identity = external()
         const create = () => new runtime.ContextChain({ parent: { identity } }, ctx, { parent: { identity: {} } })
         const first = create()
         assert.equal(runtime.hasError(first, [], ctx), false)
         assert.equal(runtime.getErrors(first, ["parent"], ctx), null)
         const second = create(), third = create()
-        const failure = runtime.getErrors(first, [], ctx)
-        assert.equal(failure.kind, runtime.ERROR_KIND.ExternalLocationConflict)
-        for (const chain of [first, second, third]) for (const path of [[], ["parent"], ["parent", "identity"]]) {
-            assert.equal(runtime.hasError(chain, path, ctx), true)
-            assert.equal(runtime.getErrors(chain, path, ctx), failure)
+        assert.equal(runtime.getErrors(first, [], ctx), null)
+        for (const chain of [second, third]) {
+            const failure = runtime.getErrors(chain, [], ctx)
+            assert.equal(failure.kind, runtime.ERROR_KIND.ExternalLocationConflict)
+            for (const path of [[], ["parent"], ["parent", "identity"]]) {
+                assert.equal(runtime.hasError(chain, path, ctx), true)
+                assert.equal(runtime.getErrors(chain, path, ctx), failure)
+            }
         }
     })
 
@@ -69,7 +72,7 @@ describe("compiler-guided context tree", () => {
                 },
             }))
             fail = true
-            const rejected = new runtime.ContextChain({ existing, native }, ctx, { existing: {}, native: { child: {} } })
+            const rejected = new runtime.ContextChain({ existing, native }, ctx, { native: { child: {} }, existing: {} })
             const failure = runtime.lookupPath(rejected, [], ctx)
             assert.equal(failure.kind, runtime.ERROR_KIND.ImportReflectionFailed)
             assert.equal(failure.cause, cause)
@@ -90,7 +93,7 @@ describe("compiler-guided context tree", () => {
         assert.equal(ctx.execution._externalIdentities.has(root), false)
         const requested = new runtime.ContextChain(root, ctx, {})
         assert.deepEqual(paths(requested), [[]])
-        assert.equal(ctx.execution._externalIdentities.get(root).binding.deref(), requested._externalMutationTree)
+        assert.equal(runtime.lookupPath(requested, ["missing"], ctx), undefined)
     })
 
     it("discovers requested native descendants and prunes managed endpoints", () => {
@@ -126,9 +129,9 @@ describe("compiler-guided context tree", () => {
         const chain = new runtime.ContextChain({ api: owner }, ctx, { api: { db: {}, config: {} } })
         assert.deepEqual(paths(chain), [["api"], ["api", "db"], ["api", "config"]])
         assert.equal(reads, 2)
-        assert.equal(externalTree.tracePath(chain._externalMutationTree, ["api", "db"]).externalBoundary,
-            externalTree.tracePath(chain._externalMutationTree, ["api", "config"]).externalBoundary)
-        assert.equal(externalTree.findBranch(chain._externalMutationTree, ["api", "db"]), chain._externalMutationTree.api.db)
+        assert.equal(captureRoute(chain, ["api", "db"]).externalBoundary,
+            captureRoute(chain, ["api", "config"]).externalBoundary)
+        assert.equal(captureRoute(chain, ["api", "db"]).nodes[2], chain._externalMutationTree.api.db)
     })
 
     it("keeps all String property names separate from record metadata and tree queries", () => {
@@ -140,11 +143,10 @@ describe("compiler-guided context tree", () => {
         const chain = new runtime.ContextChain(root, ctx, request)
         assert.deepEqual(paths(chain), keys.map(key => [key, "resource"]))
         for (const key of keys) {
-            const branch = externalTree.findBranch(chain._externalMutationTree, [key])
-            const record = externalTree.findBranch(branch, ["resource"])
-            assert.equal(record[TREE_NODE].entry, ctx.execution._externalIdentities.get(root[key].resource))
-            assert.equal(record[TREE_NODE].entry.binding.deref(), record)
-            assert.equal(externalTree.findBranch(branch, ["resource", "context"]), undefined)
+            const branch = findBranch(chain._externalMutationTree, [key])
+            const record = findBranch(branch, ["resource"])
+            assert.equal(record[TREE_NODE].identity, root[key].resource)
+            assert.equal(findBranch(branch, ["resource", "context"]), undefined)
         }
     })
 
@@ -153,9 +155,9 @@ describe("compiler-guided context tree", () => {
         const request = { api: { db: {} } }
         const first = new runtime.ContextChain({ api: { db: external() } }, ctx, request)
         const second = new runtime.ContextChain({ api: { db: external() } }, ctx, request)
-        const firstRecord = externalTree.findBranch(first._externalMutationTree, ["api", "db"])
-        const secondRecord = externalTree.findBranch(second._externalMutationTree, ["api", "db"])
-        assert.notEqual(firstRecord[TREE_NODE].entry, secondRecord[TREE_NODE].entry)
+        const firstRecord = findBranch(first._externalMutationTree, ["api", "db"])
+        const secondRecord = findBranch(second._externalMutationTree, ["api", "db"])
+        assert.notEqual(firstRecord[TREE_NODE].identity, secondRecord[TREE_NODE].identity)
         delete request.api.db
         request.api.other = {}
         assert.deepEqual(paths(first), [["api", "db"]])
@@ -169,21 +171,15 @@ describe("compiler-guided context tree", () => {
         const first = new runtime.ContextChain(root, ctx, request)
         const second = new runtime.ContextChain(root, ctx, request)
         const isolated = new runtime.ContextChain(root, context(), request)
-        const a = first._externalMutationTree.resource
-        const b = second._externalMutationTree.resource
-        assert.notEqual(a, b)
-        assert.equal(a[TREE_NODE].entry, b[TREE_NODE].entry)
-        assert.equal(a[TREE_NODE].entry.binding.kind, runtime.ERROR_KIND.ExternalLocationConflict)
-        assert.notEqual(a[TREE_NODE].entry, isolated._externalMutationTree.resource[TREE_NODE].entry)
-        assert.equal(isolated._externalMutationTree.resource[TREE_NODE].entry.binding.deref(),
-            isolated._externalMutationTree.resource)
+        assert.equal(runtime.getErrors(first, [], ctx), null)
+        assert.equal(runtime.getErrors(second, [], ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
+        assert.deepEqual(paths(isolated), [["resource"]])
     })
 
     it("rejects explicit duplicate locations through finite cycle routes without changing prior bindings", () => {
         const ctx = context()
         const resource = external()
         const previous = new runtime.ContextChain({ resource }, ctx, { resource: {} })
-        const originalBinding = ctx.execution._externalIdentities.get(resource).binding
         const root = { resource }
         root.self = root
         const request = { resource: {}, self: { self: { resource: {} } } }
@@ -194,7 +190,7 @@ describe("compiler-guided context tree", () => {
         assert.equal(failure.errorContext, ctx.errorContext)
         assert.equal(failed._externalMutationTree, undefined)
         assert.equal(ctx.execution._metadata.has(root), false)
-        assert.equal(ctx.execution._externalIdentities.get(resource).binding, originalBinding)
+        assert.equal(runtime.getErrors(previous, [], ctx), null)
         assert.deepEqual(request, originalRequest)
     })
 

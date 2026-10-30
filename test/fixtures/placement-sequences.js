@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
-import { OrderedThenable } from "../ordered-thenable.js"
+import { OrderedThenable, ready } from "../ordered-thenable.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
 
 // Model only language state and rollback. Promise delivery changes availability,
@@ -34,7 +34,7 @@ assert.throws(() => check({ n: 2 }, { value: { n: 1 }, poisoned: false }))
 assert.throws(() => check({ n: 1 }, { value: { n: 1 }, poisoned: true }))
 assert.throws(() => check([1, undefined, 2], { value: [1, , 2], poisoned: false }))
 
-const seedCount = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16)
+const seedCount = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 32)
 const traces = new Set()
 const cases = []
 for (let index = 0; index < seedCount; index++) {
@@ -65,6 +65,10 @@ const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases,
             sources.push({ source, value })
             return delivery === "native" ? source.promise : source
         }
+        function path(...segments) {
+            const mode = trace.length % 3
+            return segments.map(key => mode === 0 ? key : mode === 1 ? ready(key) : input(key, true))
+        }
         function capture(route) {
             const expected = structuredClone(state)
             if (route === "fork") {
@@ -74,7 +78,7 @@ const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases,
                 snapshots.push({ fork, expected })
                 return
             }
-            const result = route === "capture" ? r.lookupPath(chain, ["item"], ctx) : r.export(chain, ["item"], ctx)
+            const result = route === "capture" ? r.lookupPath(chain, path("item"), ctx) : r.export(chain, path("item"), ctx)
             const retained = route === "capture" ? new r.Chain(result, ctx) : undefined
             if (retained) {
                 const checked = keep(r.export(retained, [], ctx)).then(actual => check(actual, expected))
@@ -102,16 +106,16 @@ const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases,
                 let result
                 if (kind === "capture" || kind === "fork") capture(kind)
                 else {
-                    if (kind === "replace") result = r.assignPath(chain, ["item"], input(fresh(command.value, array), command.delayed), ctx)
-                    else if (kind === "write") result = r.assignPath(chain, ["item", key], input(command.value, command.delayed), ctx)
-                    else if (kind === "length") result = r.assignPath(chain, ["item", "length"], input(command.value % 5, command.delayed), ctx)
-                    else if (kind === "delete") result = r.deletePath(chain, ["item", key], ctx)
-                    else if (kind === "repair") result = r.repairPath(chain, ["item"], ctx)
-                    else if (kind === "fail") result = r.run(chain, ["item"], "missingMethod", [], ctx, { mutationScopeDepth: 1 })
-                    else if (kind === "noop") result = r.deletePath(chain, ["item", array ? 20 : "absent"], ctx, 1)
+                    if (kind === "replace") result = r.assignPath(chain, path("item"), input(fresh(command.value, array), command.delayed), ctx)
+                    else if (kind === "write") result = r.assignPath(chain, path("item", key), input(command.value, command.delayed), ctx)
+                    else if (kind === "length") result = r.assignPath(chain, path("item", "length"), input(command.value % 5, command.delayed), ctx)
+                    else if (kind === "delete") result = r.deletePath(chain, path("item", key), ctx)
+                    else if (kind === "repair") result = r.repairPath(chain, path("item"), ctx)
+                    else if (kind === "fail") result = r.run(chain, path("item"), "missingMethod", [], ctx, { mutationScopeDepth: 1 })
+                    else if (kind === "noop") result = r.deletePath(chain, path("item", array ? 20 : "absent"), ctx, 1)
                     else {
                         const value = input(command.value, command.delayed)
-                        result = r.enter(chain, ["item"], ctx, true, inside => r.assignPath(inside, [key], value, ctx))
+                        result = r.enter(chain, path("item"), ctx, true, inside => r.assignPath(inside, [key], value, ctx))
                     }
                     keep(result)
                     state = apply(state, command, array)

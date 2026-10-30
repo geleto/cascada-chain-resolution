@@ -29,20 +29,26 @@ function prepareExternalMutationTree(root, requests, operationContext, factsOf, 
             const node = Object.create(null)
             const record = node[TREE_NODE] = { parent, depth: parent ? parent[TREE_NODE].depth + 1 : 0 }
             if (external) {
-                if (registrations.has(value)) return errors.validationError(
+                if (registrations.has(value) || operationContext.execution._externalIdentities.has(value)) return errors.validationError(
                     "External identity has multiple context locations", operationContext,
                     errors.ERROR_KIND.ExternalLocationConflict)
                 record.identity = value
-                registrations.set(value, node)
+                registrations.add(value)
             }
+            let childCount = 0
             for (const key of Object.keys(request)) {
                 const placement = external ? errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(value, key)) :
                     readManagedPlacement(value, key)
                 if (!placement || !placement.enumerable || !("value" in placement)) continue
                 const child = visit(placement.value, request[key], node, external)
                 if (errors.isPoisonError(child)) return child
-                if (child) node[key] = child
+                if (child) {
+                    child[TREE_NODE].index = childCount++
+                    node[key] = child
+                }
             }
+            record.span = 1
+            while (record.span < childCount) record.span *= 2
             return external || Object.keys(node).length ? node : undefined
         } finally { value = undefined }
     }
@@ -63,110 +69,15 @@ function isDirectlyAvailable(value, operationContext) {
 
 function commitExternalLocations(registrations, operationContext) {
     const identities = operationContext.execution._externalIdentities
-    for (const [identity, node] of registrations) {
-        let entry = identities.get(identity)
-        // A first binding is reachable only while its context is: a live sibling
-        // identity must not keep a dropped context's tree and resources alive.
-        if (!entry) identities.set(identity, entry = { binding: new WeakRef(node) })
-        else if (!errors.isPoisonError(entry.binding)) {
-            const previous = entry.binding.deref()
-            entry.binding = errors.validationError(
-                "External identity is registered in competing contexts", operationContext,
-                errors.ERROR_KIND.ExternalLocationConflict)
-            if (previous) updatePoisonPresence(previous)
-        }
-        node[TREE_NODE].entry = entry
-        updatePoisonPresence(node)
-    }
-}
-
-function findBranch(node, path) {
-    for (const key of path) {
-        if (!node || (typeof key !== "string" && typeof key !== "number")) return undefined
-        node = node[key]
-    }
-    return node
-}
-
-// Capture the first native crossing, the scope covering the requested prefix,
-// and the deepest crossed scope. The final node exists only for an exact route.
-function tracePath(node, path, scopeDepth = path.length) {
-    let boundary, scope, crossed
-    for (let depth = 0; node; depth++) {
-        if (node[TREE_NODE].identity) {
-            boundary ??= node
-            crossed = node
-            if (depth <= scopeDepth) scope = node
-        }
-        if (depth === path.length) break
-        const key = path[depth]
-        node = typeof key === "string" || typeof key === "number" ? node[key] : undefined
-    }
-    return { externalTreeNode: node, externalBoundary: boundary, externalScope: scope, deepestExternalScope: crossed }
-}
-
-function bindingError(node) {
-    const binding = node[TREE_NODE].entry?.binding
-    return errors.isPoisonError(binding) ? binding : null
-}
-
-function hasPoison(node) {
-    const record = node[TREE_NODE]
-    return Boolean(record.ownPoison || bindingError(node) || record.poisonedChildren?.size)
-}
-
-function updatePoisonPresence(node) {
-    const parent = node[TREE_NODE].parent
-    if (!parent) return
-    const record = parent[TREE_NODE]
-    const before = hasPoison(parent)
-    if (hasPoison(node)) (record.poisonedChildren ??= new Set()).add(node)
-    else record.poisonedChildren?.delete(node)
-    if (before !== hasPoison(parent)) updatePoisonPresence(parent)
-}
-
-function poisonScope(node, error) {
-    node[TREE_NODE].ownPoison ??= error
-    updatePoisonPresence(node)
-}
-
-function scopeBlocker(node, includeSelected = true) {
-    if (!node) return null
-    const conflict = bindingError(node)
-    if (conflict) return conflict
-    for (let parent = node[TREE_NODE].parent; parent; parent = parent[TREE_NODE].parent) {
-        const failure = bindingError(parent) ?? parent[TREE_NODE].ownPoison
-        if (failure) return failure
-    }
-    if (!includeSelected || !hasPoison(node)) return null
-    const found = collectPoison(node)
-    return found.size ? errors.combineErrors(found) : null
+    for (const identity of registrations) identities.add(identity)
+    if (registrations.size) operationContext.execution._externalRegistrationRevision++
 }
 
 function truncatesLocations(node, length) {
     return node && Object.keys(node).some(key => isArrayIndex(key) && Number(key) >= length)
 }
 
-function collectPoison(node, errorsFound = new Set()) {
-    if (!node) return errorsFound
-    const record = node[TREE_NODE]
-    const conflict = bindingError(node)
-    if (conflict) errorsFound.add(conflict)
-    if (record.ownPoison) errorsFound.add(record.ownPoison)
-    for (const child of record.poisonedChildren ?? []) collectPoison(child, errorsFound)
-    return errorsFound
-}
-
-function clearPoison(node) {
-    if (!node) return
-    const record = node[TREE_NODE]
-    record.ownPoison = undefined
-    for (const child of [...record.poisonedChildren ?? []]) clearPoison(child)
-    updatePoisonPresence(node)
-}
-
 export {
-    TREE_NODE, bindingError, clearPoison, collectPoison,
-    commitExternalLocations, findBranch, poisonScope, prepareExternalMutationTree,
-    scopeBlocker, tracePath, truncatesLocations,
+    TREE_NODE, commitExternalLocations, prepareExternalMutationTree,
+    truncatesLocations,
 }

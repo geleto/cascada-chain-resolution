@@ -29,7 +29,7 @@ class CapturedGraph {
         for (const node of this.records ?? []) {
             node.shape?.length?.release?.()
             node.entries.clear()
-            node.shape = node.prototype = node.copy = undefined
+            node.identity = node.shape = node.prototype = node.copy = undefined
         }
         this.records = this.identities = undefined
         this.roots.length = 0

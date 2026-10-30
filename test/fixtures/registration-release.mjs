@@ -29,7 +29,7 @@ await collect()
 assert.equal(dropped.weak.deref(), undefined, "Registry retains a dropped context's sibling")
 assert(live.weak.deref(), "A live context still owns its registered siblings")
 assert.equal(r.run(live.holder, ["survivor"], "read", [], live.ctx, {}), 1)
-assert(conflictOnly.refs.every(ref => !ref.deref()), "Permanent conflict retains discarded context resources")
+assert(conflictOnly.refs.every(ref => !ref.deref()), "Rejected import Error retains discarded context resources")
 
 // Collection cannot turn the surviving identity back into observation-only
 // state or grant it a new canonical binding in the same execution.
@@ -45,7 +45,7 @@ assert.equal(r.repairPath(next, ["survivor"], nextCtx), conflict)
 
 const second = new r.ContextChain({ survivor: live.survivor }, live.ctx, { survivor: {} })
 const liveConflict = r.getErrors(second, [], live.ctx)
-assert.equal(r.getErrors(live.holder, [], live.ctx), liveConflict,
-    "Conflict must update the first live context's ancestor summary")
+assert.equal(r.getErrors(live.holder, [], live.ctx), null,
+    "Rejected registration must preserve the original context")
 assert.equal(liveConflict.kind, r.ERROR_KIND.ExternalLocationConflict)
-console.log("Registration collection, live-context and permanent-conflict controls passed")
+console.log("Registration collection, live-context and rejected-registration controls passed")

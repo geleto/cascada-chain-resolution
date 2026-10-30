@@ -9,22 +9,16 @@ import { externalCapabilityEscapeError, validateExternalAccess } from "./externa
 import { captureExternalValue, snapshotExternalValue } from "./external-snapshot.js"
 import { readCallableThen } from "./thenable-subscription.js"
 import { walkObservationValue } from "./path-operation.js"
+import { consumeSegment } from "./path-context.js"
 
 class ExternalAccess {
-    constructor(identity, path, boundary, operation) {
+    constructor(identity, start, boundary, operation) {
         this.identity = identity
-        this.path = path
+        this.start = start
+        this.end = operation.route.path.length
         this.boundary = boundary
         this.operation = operation
         this.operationContext = operation.operationContext
-    }
-
-    // Metadata-only operations consume path keys without reading native state.
-    validatePath() {
-        for (const segment of this.path) {
-            const key = properties.normalizePathSegment(segment, this.operationContext)
-            if (errors.isPoisonError(key)) return key
-        }
     }
 
     read(forExport = false, capture = value => value) {
@@ -40,7 +34,7 @@ class ExternalAccess {
     // Resolve the selected value without consuming its interior. Expression
     // extraction can reject a container before import or snapshot preparation.
     readValue(onValue) {
-        const value = this.walkPrefix(this.path.length)
+        const value = this.walkPrefix(this.end)
         if (errors.isPoisonError(value)) return value
         return this.consumeResult(value, errors.ERROR_KIND.ExternalPropertyReadFailed,
             ready => {
@@ -52,12 +46,8 @@ class ExternalAccess {
     }
 
     call(receiver, method, args, capture) {
-        const blocker = this.operation.externalBlocker()
-        if (blocker) {
-            receiver = args = undefined
-            return this.operation.mutation ? { mutatedValue: undefined, result: blocker } : blocker
-        }
-        const failure = this.validateIdentity(receiver, externalTree.findBranch(this.boundary, this.path))
+        const failure = this.validateRetainedIdentities()
+        this.authorityIdentities = undefined
         if (failure) { receiver = args = undefined; return failure }
         let callable
         const invoke = () => {
@@ -95,17 +85,15 @@ class ExternalAccess {
 
     changeProperty(deleting, value) {
         let receiver
-        try {
-            const blocker = this.operation.externalBlocker()
-            if (blocker) return { mutatedValue: undefined, result: blocker }
-            receiver = this.selectReceiver(this.path.length - 1, errors.ERROR_KIND.UnsupportedMutation)
-            if (errors.isPoisonError(receiver)) return receiver
-            const key = properties.normalizePathSegment(this.path.at(-1), this.operationContext)
+        const change = key => {
             if (errors.isPoisonError(key)) return key
-            if (externalTree.findBranch(this.boundary, this.path)) return properties.propertyValidationError(
+            const authority = this.validateRetainedIdentities()
+            this.authorityIdentities = undefined
+            if (authority) return authority
+            if (this.operation.route.nodes[this.end]) return properties.propertyValidationError(
                 "Registered external locations cannot be replaced or deleted", this.operationContext)
             const kind = deleting ? errors.ERROR_KIND.ExternalPropertyDeleteFailed : errors.ERROR_KIND.ExternalPropertyWriteFailed
-            const branch = !deleting && key === "length" && externalTree.findBranch(this.boundary, this.path.slice(0, -1))
+            const branch = !deleting && key === "length" && this.operation.route.nodes[this.end - 1]
             if (branch) {
                 const array = this.native(kind, () => Array.isArray(receiver))
                 if (errors.isPoisonError(array)) return array
@@ -131,11 +119,19 @@ class ExternalAccess {
             return changed ? { mutatedValue: this.identity, result: undefined } : errors.validationError(
                 deleting ? "External property deletion was refused" : "External property assignment was refused",
                 this.operationContext, kind)
-        } finally { receiver = value = undefined }
+        }
+        return this.selectReceiver(this.end - 1, errors.ERROR_KIND.UnsupportedMutation, selected => {
+            receiver = selected
+            if (errors.isPoisonError(receiver)) return receiver
+            return consumeSegment(this.operation, this.end - 1, key => {
+                try { return change(key) }
+                finally { receiver = value = undefined }
+            })
+        })
     }
 
     selectReceiver(depth, kind, onSelected = value => value) {
-        if (depth < 0) return errors.validationError(
+        if (depth < this.start) return errors.validationError(
             "A registered external binding cannot be replaced or deleted", this.operationContext,
             errors.ERROR_KIND.PropertyValidation)
         return this.walkPrefix(depth, kind, (ready, present, access) => {
@@ -166,9 +162,10 @@ class ExternalAccess {
     }
 
     walkPrefix(depth, receiverErrorKind, onResolved = value => value) {
-        const walk = (value, index, node) => {
+        const walk = (value, index) => {
+            let node = this.operation.route.nodes[index]
             try {
-                for (; index < depth; index++) {
+                if (index < depth) {
                     if (errors.isPoisonError(value)) return value
                     const accessFailure = this.validateIdentity(value, node)
                     if (accessFailure) return accessFailure
@@ -186,23 +183,29 @@ class ExternalAccess {
                     const languageValue = facts?.type !== metadata.TYPE.External
                     if (languageValue && this.operation.mutation) return this.mutationReceiverError(receiverErrorKind)
                     if (languageValue) {
-                        return walkObservationValue(value, this.path.slice(index, depth),
-                            this.operationContext, onResolved, undefined, errors.ERROR_KIND.ExternalPropertyReadFailed, {
-                                owner: this.operation,
-                                snapshot: Boolean(this.boundary), type: facts?.type,
-                                onExternal: (value, suffix) => walk(value, depth - suffix.length, undefined),
+                        return walkObservationValue(value, this.operation,
+                            (value, present) => onResolved(value, present), undefined, errors.ERROR_KIND.ExternalPropertyReadFailed, {
+                                start: index, end: depth,
+                                snapshotAccess: this.boundary ? this : undefined, type: facts?.type,
+                                onExternal: walk,
                             })
                     }
-                    const key = properties.normalizePathSegment(this.path[index], this.operationContext)
-                    if (errors.isPoisonError(key)) return key
-                    node = node?.[key]
-                    value = this.native(errors.ERROR_KIND.ExternalPropertyReadFailed, () => value[key])
+                    let receiver = value
+                    return consumeSegment(this.operation, index, key => {
+                        try {
+                            if (errors.isPoisonError(key)) return key
+                            const authority = this.validateRetainedIdentities()
+                            if (authority) return authority
+                            const next = this.native(errors.ERROR_KIND.ExternalPropertyReadFailed, () => receiver[key])
+                            return walk(next, index + 1)
+                        } finally { receiver = undefined }
+                    })
                 }
                 return onResolved(errors.isPoisonError(value) ? value : this.validateIdentity(value, node) ??
                     (receiverErrorKind ? this.requireReady(value) : undefined) ?? value, true, this)
             } finally { value = node = undefined }
         }
-        return walk(this.identity, 0, this.boundary)
+        return walk(this.identity, this.start)
     }
 
     factsOf(value) {
@@ -222,6 +225,22 @@ class ExternalAccess {
         if (node?.[externalTree.TREE_NODE].identity || this.operationContext.execution._externalIdentities.has(value)) {
             return validateExternalAccess(value, node?.[externalTree.TREE_NODE].identity ? node : undefined, this.operationContext)
         }
+        if (metadata.isObjectLike(value)) (this.authorityIdentities ??= new Set()).add(value)
+    }
+
+    validateRetainedIdentities() {
+        // Each newly crossed identity is checked by validateIdentity. Revisit
+        // the retained prefix only when a successful registration changed it.
+        const revision = this.operationContext.execution._externalRegistrationRevision
+        if (this.authorityRevision === revision) return
+        this.authorityRevision = revision
+        let identity, identities = this.authorityIdentities
+        try {
+            for (identity of identities ?? []) {
+                const failure = validateExternalAccess(identity, undefined, this.operationContext)
+                if (failure) return failure
+            }
+        } finally { identity = identities = undefined }
     }
 
     native(kind, action) { return errors.runExternalBoundary(this.operationContext, kind, action) }

@@ -25,21 +25,18 @@ function prepareAssignment(placement, key, operationContext) {
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignManagedPath(
-    chain,
-    path,
+    scope,
+    start,
     placement,
     operation,
 ) {
     const { operationContext } = operation
     const value = placement.value
     return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        const preparedPath = [...path]
         if (errorUtils.isFatalError(value)) throw value
         return walkMutationPath(
-            chain,
-            preparedPath,
-            operationContext,
+            scope.holder,
+            operation,
             target => {
                 if (
                     target.propertyKind ===
@@ -75,7 +72,7 @@ function assignManagedPath(
                     return error
                 }
                 return assignArrayLength(target)
-            },
+            }, { start, publication: scope.publication },
         )
     })
 
@@ -102,7 +99,7 @@ function assignManagedPath(
             errorUtils.isPoisonError(array) ? array : undefined)
 
         function resize(length) {
-            const branch = externalTree.findBranch(chain._externalMutationTree, path.slice(0, -1))
+            const branch = operation.route.nodes[operation.route.path.length - 1]
             if (externalTree.truncatesLocations(branch, length))
                 return languageProperties.propertyValidationError("Array length cannot remove a fixed external namespace", operationContext)
             return errorUtils.catchExternalThrow(
@@ -141,17 +138,15 @@ function resolveTruncatedArrayTransitions(array, start, operationContext) {
 
 // --- deletePath :  delete a.k ----------------------------------------------
 function deleteManagedPath(
-    chain,
-    path,
-    operationContext,
+    scope,
+    start,
+    operation,
 ) {
+    const { operationContext } = operation
     return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        const preparedPath = [...path]
         return walkMutationPath(
-            chain,
-            preparedPath,
-            operationContext,
+            scope.holder,
+            operation,
             target => {
                 if (
                     target.propertyKind !==
@@ -174,7 +169,7 @@ function deleteManagedPath(
                 if (languageValues.isPending(presence, operationContext)) target.publication.addPending(presence)
                 else target.publication.record(presence)
             },
-            { deletesTarget: true },
+            { start, deletesTarget: true, publication: scope.publication },
         )
     })
 }
@@ -194,7 +189,8 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
     // A property write consumes its container, not the old final value.
     const operation = new PathOperation(chain, path, operationContext, depth, false, dynamic, Math.max(0, path.length - 1))
     const external = Boolean(operation.route.externalScope)
-    path = operation.route.path
+    const end = operation.route.path.length
+    path = undefined
     if (!deleting && !operation.routeFailure && !external) {
         placement = propertyVersions.prepareInputPlacement(value, operationContext, errorUtils.ERROR_KIND.AssignmentValueFailed)
         operation.retainInput(placement)
@@ -215,11 +211,11 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
                     operationContext, value => access.write(value), undefined, operation)
             } finally { outward = undefined }
         }))
-        : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix, node) => {
+        : operation.finishMutation(operation.mutate((scope, state, working, start) => {
             try {
-                if (externalTree.findBranch(node, suffix)) return languageProperties.propertyValidationError(
+                if (operation.route.nodes[end]) return languageProperties.propertyValidationError(
                     "A mutable external namespace cannot be replaced or deleted", operationContext)
-                if (suffix.length === 0) {
+                if (start === end) {
                     if (deleting) return state.key !== undefined
                         ? { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false }, published: state.present }
                         : { mutatedValue: null, result: undefined, published: true }
@@ -228,11 +224,11 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
                             { mutatedValue: assigned.value, placement: assigned, result: undefined, published: true })
                 }
                 const action = deleting
-                    ? deleteManagedPath(privateChain, suffix, operationContext)
-                    : assignManagedPath(privateChain, suffix, placement, operation)
+                    ? deleteManagedPath(working, start, operation)
+                    : assignManagedPath(working, start, placement, operation)
                 return internalSteps.continueGraphTransition(action, operationContext, result => {
                     if (errorUtils.isPoisonError(result)) return result
-                    return captureMutationResult(privateChain, result, operationContext)
+                    return captureMutationResult(working, result, operationContext)
                 })
             } finally { placement = undefined }
         }, replaceScope, deleting))

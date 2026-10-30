@@ -6,10 +6,12 @@ import { getRefCounter } from "../src/refcounts.js"
 import { readLanguageProperty } from "../src/language-properties.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
 import { walkObservationPath } from "../src/path-operation.js"
-import { TREE_NODE, findBranch } from "../src/external-mutation-tree.js"
+import { captureRoute } from "../src/path-context.js"
+import { TREE_NODE } from "../src/external-mutation-tree.js"
 import { validationError, ERROR_KIND } from "../src/error.js"
 
 export { expect }
+export const findBranch = (tree, path) => path.reduce((node, key) => node?.[key], tree)
 // Graph-failure fixtures use explicit poison; ordinary native Errors are data.
 export function poison(message) {
     return validationError(message, { errorContext: "test poison" }, ERROR_KIND.OperationInputFailed)
@@ -27,7 +29,8 @@ export function readPath(chain, path, operationContext) {
     return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const owner = new OperationOwner(operationContext)
-        const result = walkObservationPath(chain, [...(chain._rootPath ?? []), ...path], operationContext, value => value, undefined, undefined, { owner })
+        owner.route = captureRoute(chain, path)
+        const result = walkObservationPath(chain, owner, value => value)
         return internalSteps.continueOperation(result, operationContext, value => { owner.close(); return value })
     })
 }

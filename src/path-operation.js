@@ -1,15 +1,16 @@
-import { Chain } from "./chain.js"
+import { MetadataCapture, MetadataSelection, empty, nativeMutation } from "./external-metadata.js"
+import { initializeHolder } from "./parent-placements.js"
 import * as errors from "./error.js"
 import * as externalTree from "./external-mutation-tree.js"
 import * as steps from "./internal-step.js"
 import * as metadata from "./meta.js"
 import * as versions from "./property-versions.js"
 import * as properties from "./language-properties.js"
-import { OperationOwner } from "./operation-lifecycle.js"
-import { capturePathOrigin, captureRoute } from "./path-context.js"
+import { OperationOwner, releaseOnClose } from "./operation-lifecycle.js"
+import { captureRoute, consumeSegment } from "./path-context.js"
 import { ArrayView } from "./array-view.js"
 import * as languageValues from "./language-values.js"
-import { captureMutationResult, transformProperty, walkMutationPath } from "./mutations.js"
+import { transformProperty, walkMutationPath } from "./mutations.js"
 import { IdentityPublication } from "./captured-identity.js"
 import { ExternalAccess } from "./external-access.js"
 import { externalLocationError, ExternalEffect, validateExternalAccess } from "./external-operation.js"
@@ -17,43 +18,58 @@ import { captureSnapshotPlacement } from "./external-snapshot.js"
 import { mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 
 class PathOperation extends OperationOwner {
-    constructor(chain, path, operationContext, mutationScopeDepth, repair = false, firstDynamicSegment = path.length, receiverDepth = path.length) {
+    constructor(chain, path, operationContext, mutationScopeDepth, repair = false, firstDynamicSegment = path.length, receiverDepth = path.length, metadataOnly = false) {
         super(operationContext)
         chain._assertOperationContext(operationContext)
         this.chain = chain
         // Native failure ownership stops at the last statically selected scope.
         this.route = captureRoute(chain, path, firstDynamicSegment,
-            Math.min(mutationScopeDepth ?? path.length, firstDynamicSegment, receiverDepth))
+            metadataOnly ? path.length : Math.min(mutationScopeDepth ?? path.length, firstDynamicSegment, receiverDepth))
+        this.metadataOnly = metadataOnly
+        this.receiverDepth = receiverDepth + (chain._rootPath?.length ?? 0)
         if (mutationScopeDepth !== undefined) mutationScopeDepth += chain._rootPath?.length ?? 0
         this.mutation = mutationScopeDepth !== undefined
-        const crossed = this.route.deepestExternalScope
-        if (crossed && this.route.dynamicDepth < crossed[externalTree.TREE_NODE].depth) {
-            this.routeFailure = errors.validationError(
-                "Mutable external identities require a static context path", operationContext,
-                errors.ERROR_KIND.ExternalLocationConflict)
-        }
-        this.repair = repair && !this.routeFailure
-        this.scopeDepth = this.routeFailure && this.mutation ? Math.min(mutationScopeDepth, this.route.firstDynamicSegment) : mutationScopeDepth
+        const crossed = this.lastExternalNode()
+        if (crossed) this.advanceRoute(crossed, crossed[externalTree.TREE_NODE].depth - this.route.origin)
+        this.repair = repair
+        this.scopeDepth = mutationScopeDepth
         if (this.mutation && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
         // Claim external order before managed gates can suspend path capture.
         // Capture still proceeds now; waiting first could capture a later gate.
-        const node = this.route.externalScope ?? (this.mutation
-            ? externalTree.findBranch(chain._externalMutationTree, this.route.path.slice(0, this.scopeDepth))
-            : undefined)
-        this.reserveExternal(node)
+        const node = this.route.externalScope
+        if (chain._externalMutationTree && (node || metadataOnly))
+            this.metadata = new MetadataCapture(chain._externalMutationTree, chain._externalMetadataView, this)
+        const selected = this.route.nodes.at(-1) ?? crossed
+        if (metadataOnly && repair && selected)
+            this.metadataSelection = new MetadataSelection(this.metadata, selected)
+        if (node) {
+            if (this.mutation && !metadataOnly && (!repair || !this.routeFailure)) {
+                if (repair) {
+                    this.metadataSelection = new MetadataSelection(this.metadata, node, false)
+                    this.nativeMutation = nativeMutation()
+                } else this.nativeMutation = this.metadata.mutation(node)
+            }
+            if (!metadataOnly && !this.routeFailure)
+                this.externalEffect = new ExternalEffect(node, this.mutation, chain._externalReservationView, operationContext)
+        }
     }
 
-    // Error queries also select external subtree metadata. Reserve that
-    // coverage at issuance, before starting managed path capture.
-    reserveExternal(node) {
-        const subtree = this.mutation || !this.routeFailure
-        // A forbidden selection reaches only its static prefix. A query's
-        // fallback node cannot grant coverage of the dynamically chosen child.
-        if (!subtree) node = this.route.externalScope
-        if (node && !this.externalEffect) {
-            this.selectedExternalNode = node
-            this.externalEffect = new ExternalEffect(node, this.mutation, this.chain._externalReservationView, this.operationContext, subtree)
+    advanceRoute(node, depth) {
+        if (!this.metadataOnly && depth <= this.receiverDepth && node?.[externalTree.TREE_NODE].identity &&
+            node[externalTree.TREE_NODE].depth > this.route.dynamicDepth)
+            this.routeFailure ??= externalLocationError(this.operationContext)
+        if (this.metadataOnly && this.metadataSelection?.node) {
+            const selected = this.metadataSelection.node
+            if (node && node[externalTree.TREE_NODE].depth > selected[externalTree.TREE_NODE].depth)
+                this.metadataSelection.narrow(node)
+            else if (!node && !selected[externalTree.TREE_NODE].identity) this.metadataSelection.narrow(undefined)
         }
+    }
+
+    lastExternalNode() { return this.route.nodes.findLast(node => node?.[externalTree.TREE_NODE].identity) }
+
+    metadataNode() {
+        return this.metadataOnly ? this.route.nodes[this.route.path.length] ?? this.lastExternalNode() : this.route.externalScope
     }
 
     retainInput(placement) {
@@ -66,33 +82,51 @@ class PathOperation extends OperationOwner {
         // versions and the reserved route, never the source Chain again.
         this.chain = undefined
         const boundary = this.route.externalBoundary
-        const depth = boundary ? boundary[externalTree.TREE_NODE].depth - (chain._contextOrigin?.depth ?? 0) : Infinity
+        const depth = boundary ? boundary[externalTree.TREE_NODE].depth - this.route.origin : Infinity
         if (this.mutation && this.route.externalScope) {
             // Finish managed selection and recovery before starting native work.
             // Native availability and reservations cannot extend its publication.
             const selected = walkMutationPath(
-                chain, this.route.path.slice(0, depth), this.operationContext, target => {
+                chain._state, this, target => {
                     // The fixed native binding can itself have managed placement
-                    // recovery. Restore only the selected placement, never a poisoned
-                    // strict ancestor, before repairing its native metadata or calling.
-                    if (this.repair && depth === this.route.path.length) {
+                    // recovery. The declared repair scope selects that placement;
+                    // a deeper receiver does not turn it into a strict ancestor.
+                    if (this.repair && depth === this.scopeDepth) {
                         return this.repairPlacement(target)
                     }
                     return steps.continueGraphTransition(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
                         this.operationContext, value => ({ mutatedValue: value, result: undefined }))
-                }, { observeTarget: !this.repair, preserveOnFailure: this.repair, beforeWait: this.beforeWait })
+                }, { end: depth, observeTarget: !this.repair, preserveOnFailure: this.repair, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(selected, this.operationContext, outcome => {
+                if (errors.isPoisonError(outcome.result)) return outcome.result
                 const value = errors.isPoisonError(outcome) ? outcome : outcome.mutatedValue
                 return errors.isPoisonError(value) ? onValue(value) :
-                    this.reachExternal(value, this.route.path.slice(depth), onExternal)
+                    this.reachExternal(value, depth, onExternal)
             })
         }
-        return walkObservationPath(chain, this.route.path, this.operationContext, onValue,
-            onFailure, reflectionKind, { onExternal: (identity, suffix) =>
-                this.reachExternal(identity, suffix, onExternal), externalDepth: depth, owner: this })
+        return walkObservationPath(chain, this, onValue,
+            onFailure, reflectionKind, { onExternal: (identity, index) =>
+                this.metadataOnly && (this.route.nodes[index]?.[externalTree.TREE_NODE].identity || index === this.route.path.length)
+                    ? steps.continueGraphTransition(this.selectRoute(index, true), this.operationContext,
+                        failure => failure ?? onValue(undefined, true, this.route.path.length), undefined, this) :
+                    this.reachExternal(identity, index, onExternal), externalDepth: depth })
     }
 
-    reachExternal(identity, suffix, action) {
+    selectRoute(index, consumeSuffix = false) {
+        if (index === this.route.path.length) return consumeSuffix && this.repair
+            ? this.metadata?.blockers(this.metadataNode(), false) : undefined
+        if (!consumeSuffix && (!this.route.nodes[index] || this.routeFailure)) return
+        const select = () => consumeSegment(this, index, key => errors.isPoisonError(key) ? key :
+            this.selectRoute(index + 1, consumeSuffix))
+        // Native mutation checks its fixed scope once before this walk.
+        // Metadata repair can narrow its scope, making earlier own poison a
+        // strict-ancestor blocker before the next key is consumed.
+        return this.mutation && !this.metadataOnly ? select() : steps.continueGraphTransition(
+            this.metadata?.blockers(this.route.nodes[index], !this.repair, false), this.operationContext,
+            blocker => blocker ?? select(), undefined, this)
+    }
+
+    reachExternal(identity, start, action) {
         const { operationContext } = this
         let { externalBoundary: boundary, externalScope: scope } = this.route
         if (this.routeFailure && !this.mutation && !scope) return this.routeFailure
@@ -100,125 +134,136 @@ class PathOperation extends OperationOwner {
         if (failure) return failure
         if (this.mutation && !scope) return externalLocationError(operationContext)
         this.reachedExternal = true
-        if (this.externalEffect?.readiness) this.beforeWait?.()
-        return steps.continueGraphTransition(this.externalEffect?.readiness, operationContext, () => {
-            try {
-                if (!this.open) return undefined
-                const failure = this.externalBlocker(!this.repair && (this.mutation || !this.routeFailure))
-                if (failure) return this.mutation ? { mutatedValue: undefined, result: failure } : failure
-                // Invalid observations stop before the child: preserve the reached
-                // prefix's own poison, without collecting any descendant Errors.
-                if (this.routeFailure) return scope?.[externalTree.TREE_NODE].ownPoison ?? this.routeFailure
-                const access = this.externalAccess = new ExternalAccess(identity, suffix, boundary, this)
-                if (this.repair) {
-                    const failure = access.validatePath()
-                    if (failure) return failure
-                    externalTree.clearPoison(scope)
+        const select = blocker => {
+            if (blocker) {
+                identity = boundary = scope = undefined
+                return { mutatedValue: undefined, result: blocker }
+            }
+            return steps.continueGraphTransition(this.selectRoute(start), operationContext, invalid => {
+                if (invalid && (!this.mutation || this.repair)) {
+                    identity = boundary = scope = undefined
+                    return invalid
                 }
-                return action(access)
-            } finally { identity = boundary = scope = undefined }
-        })
+                const rejected = this.routeFailure && (!this.mutation || this.repair)
+                // Mutation already consumed its fixed scope. A failed repair
+                // route must additionally preserve that scope's own old poison.
+                const blocker = !this.mutation || (this.repair && rejected) ? this.metadata?.blockers(scope,
+                    !this.repair || Boolean(this.routeFailure), !rejected) : undefined
+                if (!rejected && this.externalEffect?.readiness) this.beforeWait?.()
+                return steps.collectInputs([rejected ? undefined : this.externalEffect?.readiness, blocker], operationContext, ([, blocker]) => {
+                    try {
+                        if (!this.open) return undefined
+                        if (blocker) return this.mutation ? { mutatedValue: undefined, result: blocker } : blocker
+                        if (invalid) return invalid
+                        // Invalid observations stop before the child: preserve the reached
+                        // prefix's own poison, without collecting any descendant Errors.
+                        if (this.routeFailure) return this.routeFailure
+                        const access = this.externalAccess = new ExternalAccess(identity, start, boundary, this)
+                        if (this.repair) {
+                            this.commitRepairMetadata()
+                        }
+                        // Blockers and publishers retain their selected states.
+                        // Native work no longer needs the issuance snapshot.
+                        this.metadata?.close()
+                        return action(access)
+                    } finally { identity = boundary = scope = undefined }
+                }, this)
+            }, undefined, this)
+        }
+        // An ordinary mutation consumes its whole declared scope; repair-and-
+        // call ignores the subtree it can clear, but still checks ancestors.
+        return this.mutation ? steps.continueGraphTransition(
+            this.metadata?.blockers(scope, !this.repair), operationContext, select, undefined, this) : select()
     }
 
-    externalBlocker(includeSubtree = true) {
-        return externalTree.scopeBlocker(this.selectedExternalNode, includeSubtree)
+    commitRepairMetadata() {
+        this.metadataSelection?.finish(true, this.nativeMutation?.state ?? empty)
+        this.metadataSelection = undefined
     }
 
     repairPlacement(target) {
-        return transformProperty(target, this.operationContext, (value, state) =>
-            steps.continueGraphTransition(this.externalEffect?.readiness, this.operationContext, () => {
-                const failure = this.externalBlocker(false) ?? this.routeFailure
-                const placement = failure ? state.originalPlacement : state.baseline
-                return { mutatedValue: placement.value, result: failure, placement }
-            }), { repair: true, beforeWait: this.beforeWait })
+        return transformProperty(target, this.operationContext, (value, state) => {
+            // Key validation can retain this callback in an unformatted Error stack.
+            value = undefined
+            return steps.continueGraphTransition(this.metadata?.blockers(this.metadataNode(), false), this.operationContext, blocker => {
+                // Native repair validates its fixed route before restoration.
+                // Keep that wait inside the placement transition so later work
+                // cannot pass it or replace the baseline selected for recovery.
+                const selection = blocker ?? (this.metadataOnly ? undefined :
+                    steps.continueGraphTransition(this.selectRoute(this.scopeDepth), this.operationContext,
+                        invalid => invalid ?? (this.routeFailure ? this.metadata?.blockers(this.metadataNode(), true, false) : undefined),
+                        undefined, this))
+                return steps.continueGraphTransition(selection, this.operationContext, rejected => {
+                    try {
+                        const failure = rejected ?? this.routeFailure
+                        const placement = failure ? state.originalPlacement : state.baseline
+                        return { mutatedValue: placement.value, result: failure, placement }
+                    } finally { state = undefined }
+                }, undefined, this)
+            })
+        }, { repair: true, beforeWait: this.beforeWait })
     }
 
     mutate(transform, replaceScope = false, deleting = false) {
-        const { chain, route, operationContext } = this
-        if (this.routeFailure && this.route.externalScope) return this.observe(value => value, () => this.routeFailure)
-        const requestedDepth = this.scopeDepth
-        if (!route.externalBoundary && route.firstDynamicSegment < requestedDepth) {
-            const depth = route.firstDynamicSegment
-            return this.mutateSelected(chain, route, depth, (value, state, selected, suffix) =>
-                steps.continueGraphTransition(this.mutateSelected(selected, captureRoute(selected, suffix, 0),
-                    requestedDepth - depth, transform, replaceScope, deleting), operationContext, outcome => {
-                    if (this.routeFailure) return this.routeFailure
-                    return captureMutationResult(selected,
-                        errors.isPoisonError(outcome) ? outcome : outcome.result, operationContext)
-                }))
-        }
-        return this.mutateSelected(chain, route, requestedDepth, transform, replaceScope, deleting)
-    }
-
-    mutateSelected(chain, route, requestedDepth, transform, replaceScope = false, deleting = false) {
-        const { operationContext } = this
-        return walkMutationPath(chain, route.path.slice(0, requestedDepth), operationContext, target => {
+        let { chain, route } = this
+        const { operationContext, scopeDepth: requestedDepth } = this
+        const result = walkMutationPath(chain._state, this, target => {
             if (target.propertyKind !== properties.ORDINARY_PROPERTY) {
                 const failure = properties.propertyValidationError("A mutation scope cannot be an intrinsic length property", operationContext)
                 target.replaceReceiver(failure)
                 return failure
             }
             const depth = target.pathDepth ?? requestedDepth
-            // A computed path may capture its static failure prefix before
-            // selecting the actual scope. Validate authority only at that
-            // scope, comparing depths in the shared context coordinates.
-            const scopeSelected = depth + (chain._contextOrigin?.depth ?? 0) ===
-                this.scopeDepth + (this.chain._contextOrigin?.depth ?? 0)
-            let node = externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth))
+            let node = route.nodes[depth]
             let holder
-            const scopeFailure = node && scopeSelected && !replaceScope
+            // A mixed managed scope is invalid before any deeper crossing.
+            // At the resource itself, the crossing's authority failure wins.
+            const scopeFailure = node && !replaceScope && (!node[externalTree.TREE_NODE].identity || !this.routeFailure)
                 ? properties.propertyValidationError("A managed mutation scope cannot contain mutable external locations", operationContext)
-                : undefined
+                : this.routeFailure
             // Structural rejection must not restore the scope just to fail its
             // call. Ordinary mutations still publish their own scope failure.
             const outcome = this.repair && scopeFailure ? scopeFailure : transformProperty(target, operationContext, (value, state) => {
-                return steps.continueGraphTransition(this.externalEffect?.readiness, operationContext, () => {
-                    try {
-                        const blocker = this.externalBlocker(false)
-                        if (blocker) return blocker
-                        if (this.routeFailure) return this.routeFailure
-                        if (scopeFailure) return scopeFailure
-                        if (!replaceScope && metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External)
-                            return this.routeFailure = externalLocationError(operationContext)
-                        const suffix = route.path.slice(depth)
-                        state.key = depth ? target.key : chain._rootKey
-                        let privateChain
-                        // Whole-scope producers already return their replacement.
-                        // Only a nested edit needs a private root for rollback.
-                        if (suffix.length) {
-                            privateChain = new Chain(undefined, operationContext)
-                            privateChain._publication = new IdentityPublication(operationContext)
-                            holder = privateChain._state
-                            versions.transferPlacement(state.baseline, holder, "value", operationContext)
-                            privateChain._externalMutationTree = node
-                            privateChain._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
-                            privateChain._rootKey = state.key
-                        }
-                        return transform(value, state, privateChain, suffix, node)
-                    } finally { value = state = undefined }
-                })
-            }, { replace: replaceScope && depth === requestedDepth, repair: this.repair && scopeSelected,
+                if (scopeFailure) return scopeFailure
+                if (!replaceScope && metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External)
+                    return externalLocationError(operationContext)
+                state.key = depth ? target.key : chain._rootKey
+                let working
+                // Whole-scope producers already return their replacement.
+                // Only a nested edit needs a private root for rollback.
+                if (depth < route.path.length) {
+                    holder = initializeHolder({}, operationContext)
+                    working = { holder, publication: new IdentityPublication(operationContext) }
+                    versions.transferPlacement(state.baseline, holder, "value", operationContext)
+                }
+                return transform(value, state, working, depth)
+            }, { replace: replaceScope && depth === requestedDepth, repair: this.repair,
                 consumeRestored: true, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(outcome, operationContext, published => {
                 // The destination has accepted the capture. Detach this private
                 // placement so later delivery cannot repopulate a spent holder.
                 if (holder) versions.releaseHolder(holder, operationContext)
                 // Spent selection state must not outlive the command through an unformatted Error.
-                holder = target = node = chain = route = transform = undefined
+                holder = target = node = undefined
                 return published
             })
-        }, { targetArrayStructure: true, deletesTarget: deleting && replaceScope,
-            preserveOnFailure: this.repair, beforeWait: this.beforeWait,
-            onExternalFailure: error => { this.routeFailure = error } })
+        }, { end: requestedDepth, targetArrayStructure: true, deletesTarget: deleting && replaceScope,
+            preserveOnFailure: this.repair, beforeWait: this.beforeWait })
+        return steps.continueGraphTransition(result, operationContext, outcome => {
+            chain = route = transform = undefined
+            return outcome
+        })
     }
 
     finishMutation(outcome) {
         return steps.continueGraphTransition(outcome, this.operationContext, outcome => {
             const failure = errors.isPoisonError(outcome) ? outcome : errors.isPoisonError(outcome.mutatedValue) ? outcome.mutatedValue : null
-            // Blocked operations return result-only outcomes. A later binding
-            // conflict cannot erase this operation's own mutation failure.
-            if (failure && this.reachedExternal && this.selectedExternalNode?.[externalTree.TREE_NODE].identity)
-                externalTree.poisonScope(this.selectedExternalNode, failure)
+            // Blocked operations return result-only outcomes and preserve the
+            // predecessor metadata captured at issuance.
+            this.metadataSelection?.finish(false)
+            this.metadataSelection = undefined
+            this.nativeMutation?.finish(this.reachedExternal && !(this.repair && this.routeFailure) ? failure : undefined)
+            this.nativeMutation = undefined
             // Publication ends source access and authority independently of
             // any pending result (for example an Array's removed element).
             this.chain = undefined
@@ -238,38 +283,39 @@ class PathOperation extends OperationOwner {
     completeExternalEffect() {
         this.externalEffect?.complete()
         this.externalEffect = undefined
+        this.metadata?.close()
         if (this.externalAccess) {
-            this.externalAccess.identity = this.externalAccess.path = this.externalAccess.boundary = undefined
+            this.externalAccess.authorityIdentities = undefined
+            this.externalAccess.identity = this.externalAccess.boundary = undefined
             this.externalAccess = undefined
         }
-        this.route = this.selectedExternalNode = undefined
+        this.route = undefined
     }
 
     release() {
         this.releaseInput?.()
-        this.chain = this.route = this.externalEffect = this.selectedExternalNode = this.releaseInput = this.beforeWait = undefined
+        this.metadata?.close()
+        this.metadata = undefined
+        this.chain = this.route = this.externalEffect = this.releaseInput = this.beforeWait = undefined
     }
 }
 
 function repairPath(chain, path, operationContext, firstDynamicSegment = path.length) {
-    const operation = new PathOperation(chain, path, operationContext, path.length, true, firstDynamicSegment)
-    if (operation.routeFailure) {
-        // Invalid source selection is a failed mutation of its known
-        // prefix, not permission to repair the dynamically chosen scope.
-        return operation.finishMutation(operation.mutate(() => operation.routeFailure))
-    }
-    if (operation.route.externalScope) return operation.finishMutation(operation.observe(
-        value => value, () => ({ mutatedValue: undefined, result: undefined })))
-    const node = operation.route.externalTreeNode
+    const operation = new PathOperation(chain, path, operationContext, path.length, true, firstDynamicSegment, path.length, true)
     // Restoration selects exactly the requested placement. It neither
     // creates working state nor widens an absent Array index to its owner.
-    const result = walkMutationPath(chain, operation.route.path, operationContext, target => {
+    const result = walkMutationPath(chain._state, operation, target => {
         if (target.propertyKind !== properties.ORDINARY_PROPERTY)
             return { mutatedValue: undefined, result: undefined }
         return operation.repairPlacement(target)
-    }, { preserveOnFailure: true })
+    }, { preserveOnFailure: true,
+        onExternal: depth => {
+            if (!operation.route.nodes[depth]?.[externalTree.TREE_NODE].identity) return
+            return steps.continueGraphTransition(operation.selectRoute(depth, true), operationContext,
+                failure => ({ mutatedValue: undefined, result: failure ?? undefined }), undefined, operation)
+        } })
     return operation.finishMutation(steps.continueGraphTransition(result, operationContext, outcome => {
-        if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) externalTree.clearPoison(node)
+        if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) operation.commitRepairMetadata()
         return outcome
     }))
 }
@@ -277,20 +323,20 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
 // Observational path resolution follows raw logical values.
 function walkObservationPath(
     chain,
-    path,
-    operationContext,
+    operation,
     onResolved,
     onUserCodeFailure = undefined,
     reflectionKind = errors.ERROR_KIND.LookupReflectionFailed,
     options = {},
 ) {
+    const { operationContext } = operation
     let placement
     try {
         return errors.catchExternalThrow(() => {
             placement = properties.readLanguagePlacement(chain._state, "value", operationContext)
             return versions.resolvePlacement(placement, operationContext, ready => {
                 try {
-                    return walkObservationValue(ready.value, path, operationContext, onResolved,
+                    return walkObservationValue(ready.value, operation, onResolved,
                         onUserCodeFailure, reflectionKind, options, ready.present)
                 } finally { ready = undefined }
             })
@@ -302,34 +348,58 @@ function walkObservationPath(
 // as a Chain root, without creating a temporary holder.
 function walkObservationValue(
     value,
-    path,
-    operationContext,
+    owner,
     onResolved,
     onUserCodeFailure = undefined,
     reflectionKind = errors.ERROR_KIND.LookupReflectionFailed,
-    { onExternal, externalDepth = Infinity, owner, snapshot = false, type } = {},
+    { start = 0, end = owner.route.path.length, onExternal, externalDepth = Infinity, snapshotAccess, type } = {},
     present = true,
 ) {
-    try { return runTraversal(() => walkValue(value, 0, present, type)) }
+    const { operationContext } = owner
+    let prefix, unregister
+    const release = () => {
+        if (prefix !== undefined) metadata.decrementReadLease(prefix, operationContext)
+        prefix = undefined
+        unregister?.()
+        unregister = undefined
+    }
+    const resolve = (value, present, index) => {
+        try { return onResolved(value, present, index) }
+        finally { release() }
+    }
+    try { return runTraversal(() => walkValue(value, start, present, type)) }
     finally { value = undefined }
 
     function walkFromParent(parent, index, type) {
-        const key = properties.normalizePathSegment(
-            path[index],
-            operationContext,
-        )
-        if (errors.isPoisonError(key)) {
-            languageValues.admitReadyValue(key, operationContext)
-            return onResolved(key, false)
+        const key = consumeSegment(owner, index, key => key)
+        if (prefix === undefined && languageValues.isPending(key, operationContext) &&
+            (!snapshotAccess || metadata.metaOf(parent, operationContext)) &&
+            metadata.incrementReadLease(parent, operationContext)) {
+            prefix = parent
+            unregister = releaseOnClose(owner, release)
         }
-        return readPlacement(parent, key, index + 1, type)
+        return steps.continueGraphTransition(key, operationContext, key => runTraversal(() => {
+            try {
+                if (errors.isPoisonError(key)) return resolve(key, false, index)
+                if (typeof parent === "string" && !properties.hasLanguageProperty(parent, key, operationContext))
+                    return resolve(errors.pathAccessError(parent, operationContext), false, index)
+                return readPlacement(parent, key, index + 1, type)
+            } finally { parent = undefined }
+        }), undefined, owner)
     }
 
     function readPlacement(parent, key, index, type) {
-        if (snapshot && typeof parent !== "string") {
+        // The next capture happens in this transition. A later pending key
+        // protects that child, independently of this spent prefix.
+        release()
+        if (snapshotAccess && typeof parent !== "string") {
+            // Raw host storage is protected by its native reservation, not a
+            // managed lease. A key wait may have crossed a new registration.
+            const failure = snapshotAccess.validateRetainedIdentities()
+            if (failure) return resolve(failure, false, index)
             const { value, present } = captureSnapshotPlacement(parent, key, operationContext, type)
             if (mayBeThenable(value, operationContext) && readCallableThen(value, operationContext))
-                return onResolved(errors.validationError("External snapshots require ready managed properties",
+                return resolve(errors.validationError("External snapshots require ready managed properties",
                     operationContext, errors.ERROR_KIND.InvalidExternalSnapshot), false)
             return walkValue(value, index, present)
         }
@@ -349,40 +419,27 @@ function walkObservationValue(
 
     function walkValue(value, index, present, type = metadata.metaOf(value, operationContext)?.type) {
         if (errors.isFatalError(value)) errors.failExecution(operationContext, value)
-        if (snapshot && type === undefined && metadata.isObjectLike(value))
+        if (snapshotAccess && type === undefined && metadata.isObjectLike(value))
             type = metadata.inspectAdmissionMetaFacts(value, operationContext).type
         if (onExternal && !errors.isPoisonError(value) &&
             (index === externalDepth || type === languageValues.TYPE.External))
-            return onExternal(value, path.slice(index))
+            { try { return onExternal(value, index) } finally { release() } }
         if (
-            index === path.length ||
+            index === end ||
             errors.isPoisonError(value)
         ) {
-            return onResolved(value, present)
+            return resolve(value, present, index)
         }
-        if (typeof value === "string") {
-            const key = properties.normalizePathSegment(
-                path[index],
-                operationContext,
-            )
-            if (errors.isPoisonError(key)) {
-                languageValues.admitReadyValue(key, operationContext)
-                return onResolved(key, false)
-            }
-            if (properties.hasLanguageProperty(value, key, operationContext)) {
-                return walkFromParent(value, index)
-            }
-        }
-        if (!metadata.isTraversableType(type)) {
+        if (typeof value !== "string" && !metadata.isTraversableType(type)) {
             const failure = errors.pathAccessError(value, operationContext)
             languageValues.admitReadyValue(failure, operationContext)
-            return onResolved(failure, false)
+            return resolve(failure, false, index)
         }
         return walkFromParent(value, index, type)
     }
 
     function runTraversal(traverse) {
-        if (owner && !owner.open) return undefined
+        if (!owner.open) return undefined
         return errors.catchExternalThrow(
             traverse,
             operationContext,

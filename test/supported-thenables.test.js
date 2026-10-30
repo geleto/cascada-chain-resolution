@@ -382,7 +382,7 @@ describe("supported thenables", () => {
         assert.equal(root.a, source)
         assert.equal(runtime.lookupPath(chain, ["a"], ctx), shared)
         assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["b", "resource"]])
-        assert.equal(ctx.execution._externalIdentities.get(shared.resource), chain._externalMutationTree.b.resource[TREE_NODE].entry)
+        assert.equal(shared.resource, chain._externalMutationTree.b.resource[TREE_NODE].identity)
     })
 
     it("adds no external authority after pending delivery", async () => {

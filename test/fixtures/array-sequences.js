@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
-import { OrderedThenable } from "../ordered-thenable.js"
+import { OrderedThenable, ready } from "../ordered-thenable.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
 
 // Seeded programs on one or two independently mutated Array owners: element entries, direct commands,
@@ -178,8 +178,8 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
         return held.promise
     }
     // Pending payloads use native Promises or ordered custom thenables.
-    const input = (value, rejected) => {
-        if (delivery === "native") {
+    const input = (value, rejected, timing = delivery) => {
+        if (timing === "native") {
             const held = Promise.withResolvers()
             held.promise.catch(() => {})
             holds.push({ release: () => rejected ? held.reject(new Error("rejected payload")) : held.resolve(value) })
@@ -189,7 +189,16 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
         holds.push({ release: () => rejected ? source.reject(new Error("rejected payload")) : source.resolve(value) })
         return source
     }
+    let keySequence = 0
+    const keys = path => {
+        if (!path.length) return path
+        const timing = ["ready", "synchronous", "native", "ordered"][keySequence++ % 4]
+        coverage.add(`keys:${timing}`)
+        return path.map((key, index) => index !== path.length - 1 || timing === "ready" ? key :
+            timing === "synchronous" ? ready(key) : input(key, false, timing))
+    }
     const element = (target, path, effect, value) => {
+        path = keys(path)
         if (effect === "set") return r.assignPath(target, path, value, ctx)
         if (effect === "pending") return r.assignPath(target, path, input(value), ctx)
         if (effect === "delete") return r.deletePath(target, path, ctx)
@@ -239,7 +248,7 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
             coverage.add(`entry:${step.effect}:${step.delayed ? "delayed" : "ready"}`)
             applyElement(slots, step.index, step.effect === "pending" ? "set" : step.effect, step.value)
             const act = inside => element(inside, [], step.effect, step.value)
-            keep(r.enter(chain, ["a", step.index], ctx, true, inside => step.delayed ? hold(chain).then(() => act(inside)) : act(inside)))
+            keep(r.enter(chain, keys(["a", step.index]), ctx, true, inside => step.delayed ? hold(chain).then(() => act(inside)) : act(inside)))
         } else if (step.kind === "direct") {
             coverage.add(`direct:${step.effect}`)
             applyElement(slots, step.index, step.effect === "pending" ? "set" : step.effect, step.value)
@@ -254,29 +263,29 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
                     : typeof nativeResult === "number" ? String(nativeResult)
                         : nativeResult === undefined ? "u" : failed(nativeResult) ? "ERR" : display(nativeResult.value)
             const call = step.route === "direct"
-                ? r.run(chain, ["a"], method, args, ctx, { mutationScopeDepth: 1 })
-                : r.enter(chain, ["a"], ctx, true, inside => r.run(inside, [], method, args, ctx, { mutationScopeDepth: 0 }))
+                ? r.run(chain, keys(["a"]), method, args, ctx, { mutationScopeDepth: 1 })
+                : r.enter(chain, keys(["a"]), ctx, true, inside => r.run(inside, [], method, args, ctx, { mutationScopeDepth: 0 }))
             keep(call, expected, `${step.route} ${method}(${args})`)
         } else if (step.kind === "length") {
             coverage.add("length")
             slots.length = step.length
-            keep(r.assignPath(chain, ["a", "length"], step.length, ctx))
+            keep(r.assignPath(chain, keys(["a", "length"]), step.length, ctx))
         } else if (step.kind === "observe") {
             coverage.add(`observe:${step.method}:${step.route}`)
             coverage.add(`observe:${step.route}:${after}`)
             const expected = expectedObservation(slots, step)
             const label = `${step.route} ${step.method}(${step.args.map(display)})`
-            if (step.route === "direct") keep(r.run(chain, ["a"], step.method, step.args, ctx, {}), expected, label)
-            else if (step.route === "entry") keep(r.enter(chain, ["a"], ctx, false, inside => hold(chain).then(() => r.run(inside, [], step.method, step.args, ctx, {}))), expected, label)
-            else snapshots.push({ snapshot: keep(r.lookupPath(chain, ["a"], ctx)), step, expected, label })
+            if (step.route === "direct") keep(r.run(chain, keys(["a"]), step.method, step.args, ctx, {}), expected, label)
+            else if (step.route === "entry") keep(r.enter(chain, keys(["a"]), ctx, false, inside => hold(chain).then(() => r.run(inside, [], step.method, step.args, ctx, {}))), expected, label)
+            else snapshots.push({ snapshot: keep(r.lookupPath(chain, keys(["a"]), ctx)), step, expected, label })
         } else if (step.kind === "conflict") {
             coverage.add(`conflict:${step.predecessor}:${step.first}:${step.nested ? "nested" : "ready"}`)
             for (const effect of [step.predecessor, step.first]) applyElement(slots, step.index, effect, step.value)
-            keep(r.enter(chain, ["a", step.index], ctx, true, inside => hold(chain).then(() => element(inside, [], step.predecessor, step.value))))
+            keep(r.enter(chain, keys(["a", step.index]), ctx, true, inside => hold(chain).then(() => element(inside, [], step.predecessor, step.value))))
             keep(element(chain, ["a", step.index], step.first, step.value))
             keep(step.nested
-                ? r.enter(chain, ["a"], ctx, true, inside => r.enter(inside, [step.index], ctx, true, () => undefined))
-                : r.enter(chain, ["a", step.index], ctx, true, () => undefined))
+                ? r.enter(chain, keys(["a"]), ctx, true, inside => r.enter(inside, keys([step.index]), ctx, true, () => undefined))
+                : r.enter(chain, keys(["a", step.index]), ctx, true, () => undefined))
         } else if (step.kind === "settle") {
             // Later commands issue after complete draining as well as during settlement.
             coverage.add("settle")
@@ -286,8 +295,8 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
             coverage.add("read")
             const want = values(slots)
             for (let index = 0; index < want.length + 2; index++)
-                keep(r.lookupPath(chain, ["a", index], ctx), index in want ? display(want[index]) : "u", `read a[${index}]`)
-            keep(r.lookupPath(chain, ["a", "length"], ctx), String(want.length), "read length")
+                keep(r.lookupPath(chain, keys(["a", index]), ctx), index in want ? display(want[index]) : "u", `read a[${index}]`)
+            keep(r.lookupPath(chain, keys(["a", "length"]), ctx), String(want.length), "read length")
         }
         coverage.add(`step:${after}`)
         verify()

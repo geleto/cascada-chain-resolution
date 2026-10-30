@@ -8,6 +8,26 @@ import { metaOf } from "../src/meta.js"
 import { OrderedThenable, ready } from "./ordered-thenable.js"
 import { enabled as traceEnabled } from "./trace-state.js"
 
+describe("selection publication identity", () => {
+    for (const write of [false, true]) it(`keeps captured identity decisions through two pending keys, write=${write}`, async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "selection identity" }
+        const source = new r.Chain({ a: { x: 1 }, b: 7 }, ctx), a = Promise.withResolvers(), x = Promise.withResolvers()
+        const earlier = new r.Chain(r.lookupPath(source, [], ctx), ctx)
+        if (write) r.assignPath(source, [a.promise, x.promise], 2, ctx)
+        else r.deletePath(source, [a.promise, x.promise], ctx)
+        const captured = new r.Chain([r.lookupPath(source, [], ctx)], ctx)
+        const comparison = r.run(captured, [], "includes", [r.lookupPath(earlier, [], ctx)], ctx, {})
+        a.resolve("a")
+        await new Promise(setImmediate)
+        r.assignPath(source, ["b"], 9, ctx)
+        x.resolve(write ? "x" : "absent")
+        assert.equal(await comparison, !write)
+        assert.deepEqual(await r.export(earlier, [], ctx), { a: { x: 1 }, b: 7 })
+        assert.deepEqual(await r.export(source, [], ctx), { a: { x: write ? 2 : 1 }, b: 9 })
+        verifyRefCounts(ctx, source._state, earlier._state, captured._state)
+    })
+})
+
 // Bounded command sequences use native property semantics as an independent
 // oracle. Each prefix is a separate scenario, so intermediate exports cannot
 // accidentally serialize pending work or change the scenario's sharing.
@@ -234,7 +254,7 @@ describe("pending structural publication", () => {
         assert.equal(result.error, undefined, result.error?.message)
         assert.equal(result.status, 0, result.stderr)
         const coverage = JSON.parse(result.stdout)
-        assert.equal(coverage.cases, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 4)
+        assert.equal(coverage.cases, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 32) * 4)
         assert.equal(coverage.distinctTraces, coverage.cases)
     })
 

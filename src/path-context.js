@@ -1,29 +1,56 @@
 import * as externalTree from "./external-mutation-tree.js"
+import { consumePathInput } from "./language-properties.js"
+import * as errors from "./error.js"
 
 function captureRoute(chain, path, firstDynamicSegment = path.length, scopeDepth = path.length) {
-    const prefix = chain._contextOrigin
-    // A reference keeps its unavailable or intrinsic suffix relative to the
-    // captured anchor. Rebasing never turns an earlier dynamic segment static.
-    const rootPath = chain._rootPath
-    if (rootPath) {
-        firstDynamicSegment += rootPath.length
-        scopeDepth += rootPath.length
-    }
+    const rootPath = chain._rootPath, inheritedDynamic = chain._firstDynamicSegment ?? Infinity
+    const origin = chain._externalMutationTree?.[externalTree.TREE_NODE].depth ?? 0
+    if (rootPath) { firstDynamicSegment += rootPath.length; scopeDepth += rootPath.length }
     path = rootPath ? [...rootPath, ...path] : [...path]
-    if (prefix && prefix.dynamicDepth < prefix.depth + (rootPath?.length ?? 0))
-        firstDynamicSegment = Math.min(firstDynamicSegment, Math.max(0, prefix.dynamicDepth - prefix.depth))
-    return {
-        ...externalTree.tracePath(chain._externalMutationTree, path, Math.min(scopeDepth, firstDynamicSegment)),
-        path,
-        firstDynamicSegment,
-        dynamicDepth: prefix && prefix.dynamicDepth < prefix.depth + (rootPath?.length ?? 0)
-            ? prefix.dynamicDepth : (prefix?.depth ?? 0) + firstDynamicSegment,
+    const route = { path, dynamicDepth: origin +
+        (inheritedDynamic < (rootPath?.length ?? 0) ? inheritedDynamic : firstDynamicSegment),
+        origin, nodes: [chain._externalMutationTree], consumed: 0 }
+    let node = chain._externalMutationTree, depth = 0
+    while (node) {
+        if (node[externalTree.TREE_NODE].identity) {
+            if (node[externalTree.TREE_NODE].depth <= route.dynamicDepth) route.externalBoundary ??= node
+            if (depth <= scopeDepth && node[externalTree.TREE_NODE].depth <= route.dynamicDepth) route.externalScope = node
+        }
+        if (depth === path.length) break
+        const key = path[depth]
+        if (typeof key !== "string" && typeof key !== "number") {
+            route.dynamicDepth = Math.min(route.dynamicDepth, origin + depth)
+            break
+        }
+        node = node[key]
+        route.nodes[++depth] = node
     }
+    return route
 }
 
-function capturePathOrigin(route, depth) {
-    // The exposed root may be below this backing root; preserve its provenance.
-    return { depth, dynamicDepth: route.dynamicDepth }
+function consumeSegment(owner, index, onKey) {
+    let route = owner.route
+    if (index < route.consumed) return onKey(route.path[index])
+    let input = route.path[index]
+    if (typeof input !== "string" && typeof input !== "number") {
+        route.dynamicDepth = Math.min(route.dynamicDepth, route.origin + index)
+    }
+    route.path[index] = undefined
+    const accept = key => {
+        try {
+            route.path[index] = key
+            route.consumed = index + 1
+            if (!errors.isPoisonError(key)) {
+                const node = route.nodes[index]?.[key]
+                route.nodes[index + 1] = node
+                owner.advanceRoute?.(node, index + 1)
+            }
+            return onKey(key)
+        } finally { route = owner = onKey = undefined }
+    }
+    try {
+        return consumePathInput(input, owner.operationContext, accept, owner)
+    } finally { input = undefined }
 }
 
-export { capturePathOrigin, captureRoute }
+export { captureRoute, consumeSegment }

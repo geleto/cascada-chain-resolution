@@ -6,7 +6,8 @@ class Execution {
     #reporter
 
     _metadata = new WeakMap()
-    _externalIdentities = new WeakMap()
+    _externalIdentities = new WeakSet()
+    _externalRegistrationRevision = 0
     _externalActionActive = false
 
     get fatalError() {

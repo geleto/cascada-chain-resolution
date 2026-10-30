@@ -11,11 +11,7 @@ import * as refcounts from "./refcounts.js"
 import { externalLocationError } from "./external-operation.js"
 import { createEmptyContainer, defineCopyProperty, prepareContainerStructureCopy } from "./placement-structure.js"
 import { PlacementConstruction } from "./parent-placements.js"
-
-function mustPreserveValue(value, attachmentRoot, operationContext) {
-    return attachmentRoot !== undefined ||
-        metadata.requiresCopyOnWrite(value, operationContext)
-}
+import { consumeSegment } from "./path-context.js"
 
 function shallowCopyPathContainer(source, operationContext) {
     const destination = createEmptyContainer(source, operationContext)
@@ -206,35 +202,46 @@ function includePublicationFailure(result, publishedValue, operationContext) {
     )
 }
 
-function captureMutationResult(chain, result, operationContext) {
-    const placement = propertyVersions.capturePlacement(chain._state, "value", operationContext)
-    chain._publication.finish()
-    return { mutatedValue: placement.value, placement, result, published: chain._publication.outcome() }
+function captureMutationResult(scope, result, operationContext) {
+    const placement = propertyVersions.capturePlacement(scope.holder, "value", operationContext)
+    scope.publication.finish()
+    return { mutatedValue: placement.value, placement, result, published: scope.publication.outcome() }
+}
+
+// Path failure replaces a placement with new poison, preserving the same
+// repairable value whether publication is immediate or through a key gate.
+// Keep only the baseline facts, not its former publication destination.
+function pathRecovery(next, recovery, baseline) {
+    return recovery ?? (errorUtils.isPoisonError(next) && !errorUtils.isPoisonError(baseline.value)
+        ? { value: baseline.value, present: baseline.present !== false, recovery: baseline.recovery }
+        : undefined)
 }
 
 // path identifies the complete mutation target. The walk starts at the private
 // holder, where an empty path targets its value key, and write-back
 // continuations install copied branches into their enclosing keys. External
 // selection observes the prefix, preparing writable parents only on failure.
+// Route and authority belong to the operation, independently of this holder.
 function walkMutationPath(
-    chain,
-    path,
-    operationContext,
+    rootState,
+    operation,
     onTarget,
     {
+        start = 0,
+        end = operation.route.path.length,
         deletesTarget = false,
-        onExternalFailure = undefined,
         observeTarget = false,
         beforeWait,
         targetArrayStructure = false,
         preserveOnFailure = false,
+        onExternal,
+        publication: parentPublication,
     } = {},
 ) {
-    let rootState = chain._state
+    const { operationContext } = operation
     const publication = new IdentityPublication(operationContext,
-        chain._publication ?? metadata.metaOf(rootState, operationContext)?.entryGate?.publication)
-    const targetPath = ["value", ...path]
-    let attachmentRoot
+        parentPublication ?? metadata.metaOf(rootState, operationContext)?.entryGate?.publication)
+    let preserveDescendants = false
     let pathSelectionComplete = false
     let operationResult
     let publicationValue
@@ -248,7 +255,7 @@ function walkMutationPath(
             return result
         } finally {
             // A returned Error may keep this walk's frames: drop its spent graph roots.
-            operationResult = publicationValue = attachmentRoot = rootState = chain = onTarget = onExternalFailure = beforeWait = undefined
+            operationResult = publicationValue = rootState = operation = onTarget = onExternal = beforeWait = undefined
         }
     })
 
@@ -316,12 +323,7 @@ function walkMutationPath(
             const publish = writeBack
             const version = placement.sourceVersion ?? propertyVersions.getPlacementVersion(placement.parent, placement.key, operationContext)
             const baseline = { value, present: placement.present !== false, recovery: version?.recovery }
-            const wasPoison = errorUtils.isPoisonError(value)
-            writeBack = (next, recovery) => {
-                if (errorUtils.isPoisonError(next) && !wasPoison) {
-                    publish(next, recovery ?? baseline)
-                } else publish(next, recovery)
-            }
+            writeBack = (next, recovery) => publish(next, pathRecovery(next, recovery, baseline))
         }
         try { return errorUtils.catchExternalThrow(
             () => walkReady(value, index, writeBack, placement),
@@ -342,18 +344,57 @@ function walkMutationPath(
         // fail before the next path segment is consumed.
         if (typeof value !== "string" && !languageValues.isTraversable(value, operationContext)) {
             const external = metadata.metaOf(value, operationContext)?.type === languageValues.TYPE.External
+            if (external && onExternal) {
+                const selected = onExternal(start + index - 1)
+                if (selected !== undefined) return complete(writeBack, value, selected)
+            }
             const failure = external ? externalLocationError(operationContext) : errorUtils.pathAccessError(value, operationContext)
-            if (external) onExternalFailure?.(failure)
             return fail(writeBack, failure)
         }
-        const key = languageProperties.normalizePathSegment(
-            targetPath[index],
-            operationContext,
-        )
+        const key = index > 0 ? consumeSegment(operation, start + index - 1, key => key) : "value"
+        if (!languageValues.isPending(key, operationContext)) return walkKey(value, index, writeBack, placement, key)
+        return waitForKey(value, index, writeBack, placement, key)
+    }
+
+    function waitForKey(value, index, writeBack, placement, key) {
+        beforeWait?.()
+        let captured = propertyVersions.capturePlacement(placement.parent, placement.key, operationContext, placement.sourceVersion)
+        const leased = metadata.incrementReadLease(value, operationContext)
+        let gate = propertyVersions.installPlacementGate(placement.parent, placement.key, operationContext, captured, placement.sourceVersion)
+        // Structural Array selection can target this receiver placement itself.
+        // Its private baseline must not consume the selection gate it will publish.
+        placement = { ...placement, sourceVersion: { ...captured, sourceVersion: undefined } }
+        publication.suspend()
+        writeBack(gate.promise)
+        const publish = (next, recovery) => {
+            recovery = pathRecovery(next, recovery, captured)
+            propertyVersions.transferPlacement({ ...captured, value: next, recovery, sourceVersion: undefined },
+                placement.parent, placement.key, operationContext, gate.version,
+                errorUtils.ERROR_KIND.AssignmentValueFailed, true, gate.structure)
+            gate.resolve()
+            gate = undefined
+        }
+        const result = internalSteps.continueGraphTransition(key, operationContext, key => {
+            try {
+                const result = errorUtils.catchExternalThrow(() => walkKey(value, index, publish, placement, key),
+                    operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed,
+                    failure => fail(publish, combinePathFailure(failure)))
+                if (gate) publish(captured.value, captured.recovery)
+                return result
+            } finally {
+                if (leased) metadata.decrementReadLease(value, operationContext)
+                value = placement = captured = writeBack = undefined
+            }
+        })
+        key = undefined
+        return result
+    }
+
+    function walkKey(value, index, writeBack, placement, key) {
         if (errorUtils.isPoisonError(key)) {
             return fail(writeBack, key)
         }
-        const atTarget = index === targetPath.length - 1
+        const atTarget = index === end - start
         if (atTarget && deletesTarget && languageValues.isTraversable(value, operationContext) &&
             languageProperties.classifyLanguageProperty(value, key, operationContext) === languageProperties.ORDINARY_PROPERTY &&
             !languageProperties.hasLanguageProperty(value, key, operationContext))
@@ -366,8 +407,8 @@ function walkMutationPath(
         )
         if (targetArrayStructure && index > 0 && isLogicalArray(value, operationContext) &&
             propertyKind !== languageProperties.ORDINARY_PROPERTY) {
-            return completeTarget({ ...placement, attachmentRoot, receiver: placement.parent,
-                propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: index - 1 }, parent => {
+            return completeTarget({ ...placement, receiver: placement.parent,
+                propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: start + index - 1 }, parent => {
                     // Failed publication may have copied the parent to hold poison.
                     writeBack(propertyVersions.capturePlacement(parent, placement.key, operationContext, placement.sourceVersion).value)
                 })
@@ -385,7 +426,6 @@ function walkMutationPath(
                 // its original Promise version may since have detached.
                 return completeTarget({
                     ...placement,
-                    attachmentRoot,
                     propertyKind,
                     receiver: value,
                 }, writeBack)
@@ -404,8 +444,8 @@ function walkMutationPath(
         let parent = value
         // Capture inherited protection before descent: failure-only copying
         // reconstructs upward and must not make the private holder look shared.
-        const preserveParent = mustPreserveValue(value, attachmentRoot, operationContext)
-        if (observeTarget && preserveParent) attachmentRoot ??= value
+        const preserveParent = preserveDescendants || metadata.requiresCopyOnWrite(value, operationContext)
+        if (observeTarget && preserveParent) preserveDescendants = true
         if (!observeTarget) {
             parent = prepareParent(value, key, atTarget, preserveParent)
             if (index > 0) publication.capture(parent)
@@ -414,7 +454,6 @@ function walkMutationPath(
             return completeTarget({
                 parent,
                 key,
-                attachmentRoot,
                 propertyKind,
                 receiver: parent,
             }, writeBack)
@@ -506,7 +545,7 @@ function walkMutationPath(
             const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth, operationContext)
             if (extended) {
                 inheritIdentity(value, extended, operationContext)
-                attachmentRoot ??= extended
+                preserveDescendants = true
                 refcounts.indexValueIfSourceIndexed(value, extended, operationContext)
                 return extended
             }
@@ -517,7 +556,7 @@ function walkMutationPath(
                 ? languageProperties.PROPERTY_MUTATION_MODE.Delete
                 : languageProperties.PROPERTY_MUTATION_MODE.Assign)) {
             const parent = shallowCopyPathContainer(value, operationContext)
-            attachmentRoot ??= parent
+            preserveDescendants = true
             return parent
         }
         return value

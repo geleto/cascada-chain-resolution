@@ -2,6 +2,34 @@ import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
+describe("reflection after pending path selection", () => {
+    for (const repair of [false, true]) it(`keeps resumed reflection and hidden recovery separate, repair=${repair}`, async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "pending reflection" }, key = Promise.withResolvers()
+        const cause = new Error("copy failed")
+        let armed = false
+        const value = new Proxy({ x: 1 }, { ownKeys(target) { if (armed) throw cause; return Reflect.ownKeys(target) } })
+        const source = new r.Chain({ a: value, sibling: 7 }, ctx)
+        if (repair) r.run(source, ["a"], "missing", [], ctx, { mutationScopeDepth: 1 })
+        const retained = new r.Chain(r.lookupPath(source, [], ctx), ctx)
+        const result = repair ? r.repairPath(source, [key.promise], ctx) : r.assignPath(source, [key.promise, "x"], 9, ctx)
+        armed = true
+        key.resolve("a")
+        await result
+        const current = await r.lookupPath(source, ["a"], ctx)
+        armed = false
+        if (!repair) {
+            assert.equal(current.cause, cause)
+            assert.equal(r.lookupPath(retained, ["a", "x"], ctx), 1)
+        } else {
+            assert.equal(current, value, "Repair restores the baseline without inspecting its interior")
+            assert.equal(r.getErrors(retained, ["a"], ctx).kind, r.ERROR_KIND.MissingFunction)
+        }
+        assert.equal(r.lookupPath(source, ["sibling"], ctx), 7)
+        assert.equal(ctx.execution.fatalError, null)
+        verifyRefCounts(ctx, source._state, retained._state)
+    })
+})
+
 const routes = [
     ["assign", (chain, ctx) => r.assignPath(chain, ["item", "x"], 2, ctx), true],
     ["delete", (chain, ctx) => r.deletePath(chain, ["item", "x"], ctx), true],

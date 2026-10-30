@@ -1,5 +1,5 @@
 import * as errors from "./error.js"
-import { TREE_NODE, bindingError } from "./external-mutation-tree.js"
+import { TREE_NODE } from "./external-mutation-tree.js"
 import { continueGraphTransition } from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 
@@ -14,12 +14,8 @@ function externalLocationError(operationContext) {
 }
 
 function validateExternalAccess(identity, node, operationContext) {
-    const entry = operationContext.execution._externalIdentities.get(identity)
-    if (node && entry !== node[TREE_NODE].entry)
-        throw new Error("External identity changed at its fixed context location")
-    if (node) return bindingError(node)
-    if (!entry) return null
-    return errors.isPoisonError(entry.binding) ? entry.binding : externalLocationError(operationContext)
+    return !node && operationContext.execution._externalIdentities.has(identity)
+        ? externalLocationError(operationContext) : null
 }
 
 // An entry's outside reservation covers this private view. The same conflict
@@ -42,12 +38,13 @@ function frontier(node, view) {
 // One reservation at issuance orders required effects even when managed path
 // capture is pending. Its completion Promise is allocated only for a waiter.
 class ExternalEffect {
-    constructor(node, mutation, view, operationContext, subtree = true) {
+    constructor(node, mutation, view, operationContext) {
         this.operationContext = operationContext
         this.node = node
+        this.mutation = mutation
         const predecessors = new Set()
         const selected = frontier(node, view)
-        for (const work of subtree ? selected.subtreeWrites : selected.writes) predecessors.add(work)
+        for (const work of selected.subtreeWrites) predecessors.add(work)
         if (mutation) for (const work of selected.subtreeReads) predecessors.add(work)
         for (let parent = node === view?.root ? undefined : node[TREE_NODE].parent; parent; parent = parent[TREE_NODE].parent) {
             const state = frontier(parent, view)
@@ -60,10 +57,7 @@ class ExternalEffect {
         if (mutation) for (const work of predecessors)
             if (work.node[TREE_NODE].depth >= node[TREE_NODE].depth) work.removeMemberships()
         const memberships = this.memberships = []
-        // Prefix validation consumes only this node's metadata. Its propagated
-        // membership orders mutations here and above; omitting the direct read
-        // membership leaves mutations below it independent.
-        if (subtree) memberships.push(mutation ? selected.writes : selected.reads)
+        memberships.push(mutation ? selected.writes : selected.reads)
         for (let ancestor = node; ancestor; ancestor = ancestor[TREE_NODE].parent) {
             const state = frontier(ancestor, view)
             memberships.push(mutation ? state.subtreeWrites : state.subtreeReads)
@@ -86,10 +80,10 @@ class ExternalEffect {
 
     complete() {
         if (!this.node) return
-        // A failed managed prefix can finish before native access. Keep its
-        // predecessor chain intact for later reservations that captured us.
+        // Reads leave predecessors in the frontier and can finish immediately.
+        // A mutation must preserve predecessors for work that captured it.
         const operationContext = this.operationContext
-        markPromiseHandled(continueGraphTransition(this.readiness, operationContext, () => {
+        markPromiseHandled(continueGraphTransition(this.mutation ? this.readiness : undefined, operationContext, () => {
             this.removeMemberships()
             this.completion?.resolve()
             this.completion = this.node = this.operationContext = undefined

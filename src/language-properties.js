@@ -3,6 +3,7 @@ import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
 import { capturePlacement, getPlacementVersion } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
+import { continueGraphTransition } from "./internal-step.js"
 
 const ORDINARY_PROPERTY = 0
 const ARRAY_LENGTH = 1
@@ -43,6 +44,7 @@ function validatePropertyValue(key, value, operationContext, kind = errorUtils.E
 }
 
 function normalizePathSegment(segment, operationContext) {
+    if (errorUtils.isPoisonError(segment)) return segment
     return typeof segment === "string"
         ? segment
         : typeof segment === "number"
@@ -52,6 +54,12 @@ function normalizePathSegment(segment, operationContext) {
                 operationContext,
                 errorUtils.ERROR_KIND.InvalidPathSegment,
             )
+}
+
+function consumePathInput(input, operationContext, onKey, owner) {
+    return continueGraphTransition(input, operationContext,
+        value => onKey(normalizePathSegment(value, operationContext)),
+        reason => onKey(errorUtils.createPoisonError(reason, operationContext, errorUtils.ERROR_KIND.PathSegmentFailed)), owner)
 }
 
 function isDataPlacement(descriptor) {
@@ -282,6 +290,7 @@ export {
     validatePropertyValue,
     enumerableLanguageKeyCandidates,
     normalizePathSegment,
+    consumePathInput,
     propertyValidationError,
     readLanguageProperty,
     readLanguagePlacement,

@@ -70,7 +70,7 @@ describe("Phase 5 independent execution interactions", () => {
         const managed = new r.ContextChain({ host }, second, { host: {} })
         // No native access is pending, and the first execution never mutates host.
         const conflict = new r.ContextChain({ host }, first, { host: {} })
-        assert.equal(r.getErrors(external, ["host"], first).kind, r.ERROR_KIND.ExternalLocationConflict)
+        assert.equal(r.getErrors(external, ["host"], first), null)
         assert.equal(r.getErrors(conflict, ["host"], first).kind, r.ERROR_KIND.ExternalLocationConflict)
         assert.equal(r.getErrors(managed, [], second), null)
         r.assignPath(managed, ["host", "value"], 8, second)

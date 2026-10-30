@@ -44,6 +44,7 @@ describe("external Array length action boundaries", () => {
             signal.resolve()
             await wait
             if (behavior === "reentry") {
+                await new Promise(setImmediate)
                 const fatal = execution.fatalError
                 assert(r.isFatalError(fatal))
                 assert.equal(fatal, observedFatal)

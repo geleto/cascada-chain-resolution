@@ -3,7 +3,7 @@ import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { TREE_NODE } from "../../src/external-mutation-tree.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
-import { OrderedThenable } from "../ordered-thenable.js"
+import { OrderedThenable, ready } from "../ordered-thenable.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
 import { ExternalErrorOracle } from "../external-error-oracle.js"
 
@@ -13,7 +13,7 @@ import { ExternalErrorOracle } from "../external-error-oracle.js"
 // again, an unselected alias of `db` in A's root, and an unregistered observation-only
 // identity `ext`. Commands call native methods, read and write native accessor properties,
 // fail and poison scopes, pass rejected arguments, select registered scopes through dynamic
-// keys, repair, query Errors, and run inside mutable, read-only, nested, and mixed entries.
+// keys, repair, repair-and-call, query Errors, and run inside mutable, read-only, nested, and mixed entries.
 //
 // The sequential model applies each command at issuance and an entry's contained commands at
 // the entry's position. Every native call logs its model sequence number: calls on
@@ -24,15 +24,21 @@ import { ExternalErrorOracle } from "../external-error-oracle.js"
 // reads, and uninstrumented runs; reads inside entries remain part of the scenario.
 
 const CHILDREN = ["db", "config"]
-const BINDING = 0 // Model id of the competing registration's permanent binding Error.
+const BINDING = 0 // Model id of the competing registration's rejected import Error.
 
-function createHost(log, context, errors) {
+function createHost(log, context, errors, reject) {
     const scope = name => context === "A" ? name : `${context}:${name}`
+    const fail = (name, seq, pending) => {
+        log.push({ seq, scope: scope(name), op: "fail", mutation: true })
+        const cause = errors.failure(seq, `${name} failed`)
+        if (pending) return reject(cause)
+        throw cause
+    }
     const child = name => r.externalState({
         items: [],
         stored: 0,
         add(value, seq) { log.push({ seq, scope: scope(name), op: "add", mutation: true }); this.items.push(value) },
-        fail(seq) { log.push({ seq, scope: scope(name), op: "fail", mutation: true }); throw errors.failure(seq, `${name} failed`) },
+        fail(seq, pending) { return fail(name, seq, pending) },
         read(seq) { log.push({ seq, scope: scope(name), op: "read", mutation: false }); return this.items.join(",") },
         get value() { return this.stored },
         set value(record) {
@@ -47,19 +53,19 @@ function createHost(log, context, errors) {
         db,
         config,
         reset(seq) { log.push({ seq, scope: scope("api"), op: "reset", mutation: true }); db.items.length = 0; config.items.length = 0 },
-        fail(seq) { log.push({ seq, scope: scope("api"), op: "fail", mutation: true }); throw errors.failure(seq, "api failed") },
+        fail(seq, pending) { return fail("api", seq, pending) },
         snapshot(seq) { log.push({ seq, scope: scope("api"), op: "snapshot", mutation: false }); return `${db.items.join(",")}|${config.items.join(",")}` },
     })
     return { api, db, config }
 }
 
-function contextState(competing) {
+function contextState() {
     return {
         items: { db: [], config: [] },
         stored: { db: 0, config: 0 },
         own: { api: null, db: null, config: null },
-        conflict: { api: competing === "api" ? BINDING : null, db: competing === "db" ? BINDING : null, config: null },
-        root: null, // Poison of the context's root placement.
+        guard: null, // Local managed poison on the canonical api placement.
+ // Poison of the context's root placement.
         data: {},
     }
 }
@@ -69,7 +75,7 @@ function contextState(competing) {
 // that creates poison records the Error kind it must create.
 class Model {
     constructor(variant) {
-        this.contexts = { A: contextState(variant.competing), B: contextState(false) }
+        this.contexts = { A: contextState(), B: contextState() }
         this.alias = null // Poison of A's alias placement.
         this.ext = null // Poison of A's placement holding the observation-only identity.
         this.seq = 0
@@ -80,20 +86,18 @@ class Model {
         return ids.length ? `E:${[...new Set(ids)].sort((a, b) => a - b).join(",")}` : "null"
     }
 
-    // A scope's own binding conflict comes first, then a strict ancestor's binding conflict or
-    // own poison; whole-parent work consumes the subtree union. Root placement poison blocks
-    // everything below it.
+    // A managed guard blocks descent; otherwise native scopes consume their
+    // own metadata or the selected subtree union.
     blockers(state, scope) {
-        if (state.root !== null) return [state.root]
-        if (state.conflict[scope] !== null) return [state.conflict[scope]]
+        if (state.guard !== null) return [state.guard]
         if (scope === "api") return this.subtree(state)
-        const ancestor = state.conflict.api ?? state.own.api
+        const ancestor = state.own.api
         if (ancestor !== null) return [ancestor]
         return state.own[scope] !== null ? [state.own[scope]] : []
     }
 
     subtree(state) {
-        return ["api", ...CHILDREN].flatMap(name => [state.conflict[name], state.own[name]]).filter(id => id !== null)
+        return ["api", ...CHILDREN].flatMap(name => [state.own[name]]).filter(id => id !== null)
     }
 
     poison(command, state, scope, kind) {
@@ -116,54 +120,54 @@ class Model {
         }
         if (kind === "managed-set") {
             // An assignment returns at issuance and may report a blocker only when ready.
-            if (state.root !== null) return [this.errors([state.root]), "u"]
             state.data[command.key] = command.value
             return "u"
         }
         if (kind === "managed-get") {
-            if (state.root !== null) return this.errors([state.root])
             return command.key in state.data ? `v:${state.data[command.key]}` : "u"
         }
-        if (kind === "repair") {
+        if (kind === "repair" || command.repair) {
+            if (command.repair) command.repairState = state.guard !== null ? "managed-poison" :
+                state.own[scope] !== null ? "own-poison" : scope === "api" && this.subtree(state).length ? "child-poison" : "healthy"
             // Root repair restores the root placement and clears covered external poison; it
-            // leaves other managed placements and binding conflicts unchanged.
+            // leaves other managed placements and other managed guards unchanged.
             if (scope === "root") {
-                state.root = null
                 for (const name of ["api", ...CHILDREN]) state.own[name] = null
                 return "u"
             }
-            if (state.root !== null) return this.errors([state.root])
-            const blocker = state.conflict[scope] ?? (scope === "api" ? null : state.conflict.api ?? state.own.api)
+            if (scope !== "api" && state.guard !== null) return this.errors([state.guard])
+            const blocker = scope === "api" ? null : state.own.api
+            if (scope === "api") state.guard = null
             if (blocker !== null) return this.errors([blocker])
             for (const name of scope === "api" ? ["api", ...CHILDREN] : [scope]) state.own[name] = null
-            return "u"
+            if (kind === "repair") return "u"
         }
         if (kind === "errors") {
+            if (scope === "api") return this.errors([...this.subtree(state), ...[state.guard].filter(id => id !== null)])
             if (scope !== "root") return this.errors(this.blockers(state, scope))
-            if (state.root !== null) return this.errors([state.root])
             const managed = command.context === "A" ? [this.alias, this.ext].filter(id => id !== null) : []
-            return this.errors([...this.subtree(state), ...managed])
+            return this.errors([...this.subtree(state), ...managed, ...[state.guard].filter(id => id !== null)])
         }
         if (kind.startsWith("alias-")) return this.applyAlias(command, state)
         if (kind.startsWith("ext-")) return this.applyExternalOnly(command, state)
         if (kind === "competing-call") return this.errors([BINDING])
         if (kind === "dynamic-peek") {
             if (command.dynamicFrom === 2) return this.applyCall({ ...command, kind: "peek" }, state)
-            if (state.root !== null) return this.errors([state.root])
             // The read reaches only its static prefix before the forbidden key: `api` when the
             // key follows it, nothing registered when the key selects `api` itself. An Error on
             // that prefix comes first; the dynamically selected child is never reached.
-            const prefix = command.dynamicFrom === 1 ? state.conflict.api ?? state.own.api : null
+            if (state.guard !== null) return this.errors([state.guard])
+            const prefix = command.dynamicFrom === 1 ? state.own.api : null
             if (prefix === null) return "L:ExternalLocationConflict"
             command.prefixPoisoned = true
             return this.errors([prefix])
         }
         if (kind === "dynamic-mutate") {
-            // An invalid dynamic selection fails its mutation at the static prefix: the root
-            // placement, or the registered `api` scope with its subtree blockers.
+            // A forbidden crossing poisons its reached placement or the static
+            // native owner. Unrelated managed siblings stay available.
             if (command.dynamicFrom === 0) {
-                if (state.root !== null) return this.errors([state.root])
-                state.root = seq
+                    if (state.guard !== null) return this.errors([state.guard])
+                state.guard = seq
                 command.creates = "ExternalLocationConflict"
                 return this.errors([seq])
             }
@@ -203,6 +207,7 @@ class Model {
 
     applyCall(command, state) {
         const { kind, scope, seq } = command
+        const receiver = command.receiver ?? scope
         const blockers = this.blockers(state, scope)
         if (blockers.length) return this.errors(blockers)
         if (kind === "peek") return `v:${state.items[scope].length}`
@@ -214,8 +219,8 @@ class Model {
             this.poison(command, state, scope, "OperationInputFailed")
             return this.errors([seq])
         }
-        this.effect(command, scope, method)
-        if (method === "add") { state.items[scope].push(command.value); return "u" }
+        this.effect(command, receiver, method)
+        if (method === "add") { state.items[receiver].push(command.value); return "u" }
         if (method === "reset") { state.items.db.length = 0; state.items.config.length = 0; return "u" }
         if (method === "fail") { this.poison(command, state, scope, "InvocationFailed"); return this.errors([seq]) }
         if (method === "read") return `v:${state.items[scope].join(",")}`
@@ -223,18 +228,17 @@ class Model {
     }
 
     // A read through an unselected alias reaches the registered identity itself and fails
-    // locally, reporting the identity's permanent binding Error when competing registrations
+    // locally, reporting the identity's rejected import Error when competing registrations
     // invalidated it: an existing Error comes before a new one. A mutation fails earlier, when
     // it selects the managed alias placement as the scope of a native effect, and poisons that
     // placement, which then blocks every alias access.
     applyAlias(command, state) {
         const { kind, seq } = command
         const result = id => kind === "alias-assign" ? [this.errors([id]), "u"] : this.errors([id])
-        if (state.root !== null) return result(state.root)
         if (kind === "alias-repair") { this.alias = null; return "u" }
         if (this.alias !== null) return result(this.alias)
         if (kind === "alias-peek" || kind === "alias-call") {
-            return state.conflict.db === null ? "L:ExternalLocationConflict" : this.errors([state.conflict.db])
+            return "L:ExternalLocationConflict"
         }
         this.alias = seq
         command.creates = "ExternalLocationConflict"
@@ -245,7 +249,6 @@ class Model {
     // poisons the managed placement holding it.
     applyExternalOnly(command, state) {
         const { kind, seq } = command
-        if (state.root !== null) return this.errors([state.root])
         if (kind === "ext-repair") { this.ext = null; return "u" }
         if (this.ext !== null) return this.errors([this.ext])
         if (kind === "ext-peek") return "v:2"
@@ -315,8 +318,19 @@ function generateCommand(random, scopes, { readonly = false, managed = false, ne
             rhs: pick(["ready", "ready", "pending", "rejected"]), widened: top && random() < 0.3 }
     }
     const method = pick(scope === "api" ? ["reset", "reset", "fail"] : ["add", "add", "add", "fail"])
-    return { kind: "call", scope, method, value: randomInteger(random, 50), pending: method === "add" && random() < 0.4,
+    const command = { kind: "call", scope, method, value: randomInteger(random, 50), pending: method === "add" && random() < 0.4,
         rejected: method === "add" && random() < 0.15 }
+    // Keep the existing random stream while varying combined repair and direct
+    // native rejection independently of argument availability.
+    command.repair = command.value % 3 === 0
+    command.resultPending = method === "fail" && command.value % 2 === 0
+    command.rejected ||= command.repair && command.value % 7 === 0
+    if (command.repair && scope === "api" && command.value % 2 === 0) {
+        command.receiver = child
+        if (command.method === "reset") command.method = "add"
+        command.pending = command.method === "add" && command.value % 4 === 0
+    }
+    return command
 }
 
 function generate(random) {
@@ -382,7 +396,7 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
     const ctx = { execution: new r.Execution(), errorContext: {} }
     const errorOracle = new ExternalErrorOracle()
     const tree = { api: { db: {}, config: {} } }
-    const hosts = { A: createHost(log, "A", errorOracle) }
+    const hosts = { A: createHost(log, "A", errorOracle, reason => input(undefined, reason)) }
     const rootA = { api: hosts.A.api, data: {} }
     if (variant.alias) rootA.alias = hosts.A.db
     if (variant.observationOnly) {
@@ -394,7 +408,7 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
     }
     const chains = { A: new r.ContextChain(rootA, ctx, tree) }
     if (variant.second) {
-        hosts.B = createHost(log, "B", errorOracle)
+        hosts.B = createHost(log, "B", errorOracle, reason => input(undefined, reason))
         chains.B = new r.ContextChain({ api: hosts.B.api, data: {} }, ctx, tree)
     }
     let competing
@@ -430,20 +444,37 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
         const relative = path => path.slice(base.length)
         const registered = name => relative(name === "api" ? ["api"] : ["api", name])
         const { kind, seq } = command
+        const keys = (path, route = "metadata") => {
+            if (!path.length) return path
+            const timing = seq % 3
+            coverage.add(`keys:${timing === 0 ? "ready" : timing === 1 ? "synchronous" : "deferred"}`)
+            coverage.add(`${route}-keys:${timing === 0 ? "ready" : timing === 1 ? "synchronous" : "deferred"}`)
+            const index = path.length - 1
+            return path.map((key, i) => i !== index || timing === 0 ? key : timing === 1 ? ready(key) : input(key))
+        }
         let result
         if (kind === "call") {
-            const path = registered(command.scope)
+            const path = registered(command.receiver ?? command.scope)
+            if (command.repair) {
+                coverage.add(`repair-call:${command.scope}`)
+                coverage.add(`repair-call-state:${command.repairState}`)
+                coverage.add(`repair-call:${base.length ? "entered" : "direct"}`)
+                if (command.receiver) coverage.add(`repair-call-broader:${command.repairState}:${base.length ? "entered" : "direct"}`)
+                coverage.add(`repair-call-outcome:${want === "u" ? "success" : want !== `E:${seq}` ? "blocked" :
+                    command.rejected ? "argument" : command.resultPending ? "rejection" : "throw"}`)
+            }
             if (command.method === "read" || command.method === "snapshot") {
                 const args = command.rejected ? [seq, input(undefined, errorOracle.failure(seq, "observation argument rejected"))] : [seq]
                 result = r.run(owner, path, command.method, args, operationContext, {})
             } else {
                 const value = command.rejected ? input(undefined, errorOracle.failure(seq, "argument rejected"))
                     : command.pending ? input(command.value) : command.value
-                const args = command.method === "add" ? [value, seq] : [seq]
-                result = r.run(owner, path, command.method, args, operationContext, { mutationScopeDepth: path.length })
+                const args = command.method === "add" ? [value, seq] : [seq, command.rejected ? value : command.resultPending]
+                result = r.run(owner, path, command.method, args, operationContext,
+                    { mutationScopeDepth: registered(command.scope).length, repair: command.repair })
             }
-        } else if (kind === "peek") result = r.lookupPath(owner, [...registered(command.scope), "items", "length"], operationContext)
-        else if (kind === "get-value") result = r.lookupPath(owner, [...registered(command.scope), "value"], operationContext)
+        } else if (kind === "peek") result = r.lookupPath(owner, keys([...registered(command.scope), "items", "length"], "snapshot"), operationContext)
+        else if (kind === "get-value") result = r.lookupPath(owner, keys([...registered(command.scope), "value"], "native"), operationContext)
         else if (kind === "set-value") {
             const record = { v: command.value, seq }
             const value = command.rhs === "pending" ? input(record)
@@ -451,11 +482,11 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
             const path = [...registered(command.scope), "value"]
             const depth = command.widened ? path.length - 2 : path.length - 1
             result = r.assignPath(owner, path, value, operationContext, depth, command.dynamicFrom ?? path.length)
-        } else if (kind === "repair") result = r.repairPath(owner, command.scope === "root" ? [] : registered(command.scope), operationContext)
-        else if (kind === "errors") result = r.getErrors(owner, command.scope === "root" ? [] : registered(command.scope), operationContext)
+        } else if (kind === "repair") result = r.repairPath(owner, keys(command.scope === "root" ? [] : registered(command.scope)), operationContext)
+        else if (kind === "errors") result = r.getErrors(owner, keys(command.scope === "root" ? [] : registered(command.scope)), operationContext)
         else if (kind === "managed-set") {
             const path = relative(["data", command.key])
-            result = r.assignPath(owner, path, command.value, operationContext, path.length, command.dynamicFrom)
+            result = r.assignPath(owner, keys(path), command.value, operationContext, path.length, command.dynamicFrom)
             if (want === "u") coverage.add(`managed-write:${command.dynamicFrom}:${owner === chains[command.context] ? "direct" : "entered"}`)
         }
         else if (kind === "managed-get") result = r.lookupPath(owner, relative(["data", command.key]), operationContext)
@@ -487,13 +518,13 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
     let phase = "before-release"
     for (const step of steps) {
         if (!observed && isObservation(step)) continue
-        const rootPoisoned = model.contexts[step.context].root !== null
+        const guarded = model.contexts[step.context].guard !== null
         const want = model.apply(step)
         coverage.add(coverageKey(step))
         coverage.add(`context:${step.context}`)
         for (const contained of step.contained ?? []) coverage.add(`contained:${contained.kind}${contained.kind === "call" ? `:${contained.method}` : ""}`)
         if ((Array.isArray(want) ? want[0] : want).startsWith("E:")) coverage.add(`blocked-or-failed:${step.kind}`)
-        if (rootPoisoned) coverage.add(`under-root-poison:${step.kind}`)
+        if (guarded) coverage.add(`under-api-guard:${step.kind}`)
         if (step.prefixPoisoned) coverage.add(`dynamic-peek:1:prefix-poisoned${step.afterPendingFailure === undefined ? ""
             : step.afterPendingFailure ? ":after-pending-failure" : ":after-ready-failure"}`)
         coverage.add(`phase:${phase}`)
@@ -563,9 +594,11 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
         const [contextA, scopeA] = split(a), [contextB, scopeB] = split(b)
         return a !== "ext" && b !== "ext" && contextA === contextB && (scopeA === scopeB || scopeA === "api" || scopeB === "api")
     }
+    const broaderScopes = new Map(checks.filter(({ command }) => command.receiver).map(({ command }) =>
+        [command.seq, command.context === "A" ? command.scope : `${command.context}:${command.scope}`]))
     for (let later = 0; later < log.length; later++) for (let earlier = 0; earlier < later; earlier++) {
         const a = log[earlier], b = log[later]
-        if ((a.mutation || b.mutation) && overlaps(a.scope, b.scope) && a.seq > b.seq)
+        if ((a.mutation || b.mutation) && overlaps(broaderScopes.get(a.seq) ?? a.scope, broaderScopes.get(b.seq) ?? b.scope) && a.seq > b.seq)
             errors.push(`order: ${a.scope}.${a.op} #${a.seq} ran before ${b.scope}.${b.op} #${b.seq}`)
     }
     const ran = log.map(event => `${event.seq}:${event.scope}:${event.op}`).sort().join(" ")
@@ -579,23 +612,17 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
         }
         const data = await outcome(r.export(chains[context], ["data"], ctx))
         const gotData = Error.isError(data.result) ? errorOracle.identify(data.result) : JSON.stringify(data.result)
-        const wantData = state.root !== null ? `E:${state.root}` : JSON.stringify(state.data)
+        const wantData = JSON.stringify(state.data)
         if (gotData !== wantData) errors.push(`${context} data ${gotData} want ${wantData}`)
-        // At quiescence own poison and summaries match the model.
-        const treeRoot = chains[context]._externalMutationTree
-        const nodes = { api: treeRoot.api, db: treeRoot.api.db, config: treeRoot.api.config }
-        for (const name of ["api", ...CHILDREN]) {
-            const own = nodes[name][TREE_NODE].ownPoison
-            const actual = own ? errorOracle.identify(own) : null
-            if (actual !== (state.own[name] === null ? null : `E:${state.own[name]}`)) errors.push(`${context} ${name} own poison ${actual} want ${state.own[name]}`)
+        // Query every canonical scope through the public historical view.
+        for (const scope of ["api", ...CHILDREN]) {
+            const expected = scope === "api" ? model.errors([...model.subtree(state), ...[state.guard].filter(id => id !== null)]) : model.errors(model.blockers(state, scope))
+            const actual = await describe(r.getErrors(chains[context], scope === "api" ? ["api"] : ["api", scope], ctx))
+            if (actual !== expected) errors.push(`${context} ${scope} metadata ${actual} want ${expected}`)
         }
-        const poisoned = name => state.own[name] !== null || state.conflict[name] !== null
-        const summaries = (treeRoot[TREE_NODE].poisonedChildren?.has(nodes.api) ?? false) === (poisoned("api") || CHILDREN.some(poisoned)) &&
-            CHILDREN.every(name => (nodes.api[TREE_NODE].poisonedChildren?.has(nodes[name]) ?? false) === poisoned(name))
-        if (!summaries) errors.push(`${context}: poison summaries disagree with own poison`)
     }
     // At quiescence no reservation remains in any tree.
-    const treeNodes = node => [node, ...Object.values(node).filter(child => child?.[TREE_NODE]).flatMap(treeNodes)]
+    const treeNodes = node => node ? [node, ...Object.values(node).filter(child => child?.[TREE_NODE]).flatMap(treeNodes)] : []
     for (const chain of [...Object.values(chains), competing].filter(Boolean)) {
         for (const node of treeNodes(chain._externalMutationTree)) {
             const frontier = node[TREE_NODE].frontier
@@ -608,7 +635,7 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
     const final = Object.entries(hosts).map(([context, host]) => {
         const state = model.contexts[context]
         const poisoned = Object.keys(state.own).filter(name => state.own[name] !== null).join(",")
-        return `${context}:${host.db.items}|${host.config.items}|${host.db.stored}|${host.config.stored}|${poisoned}|${state.root !== null}|${JSON.stringify(state.data)}`
+        return `${context}:${host.db.items}|${host.config.items}|${host.db.stored}|${host.config.stored}|${poisoned}|${state.guard !== null}|${JSON.stringify(state.data)}`
     }).join(" ") + ` alias=${model.alias !== null} ext=${model.ext !== null}`
     return { errors, final }
 }

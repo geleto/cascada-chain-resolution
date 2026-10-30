@@ -60,7 +60,7 @@ describe("operation context", () => {
             expect(effects).to.be(0)
             expect(externalTreeRead).to.be(false)
             expect(metadata.metaOf(value, secondContext)).to.be(undefined)
-            expect(second._externalIdentities.get(service)).to.be(undefined)
+            expect(second._externalIdentities.has(service)).to.be(false)
         })
 
         it(name + " rejects a failed execution with a correctly bound Chain", () => {

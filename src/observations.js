@@ -9,11 +9,10 @@ import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
-import * as externalTree from "./external-mutation-tree.js"
 
 class ErrorQueryWork extends PathOperation {
     constructor(chain, path, operationContext, firstDynamicSegment, collect = false) {
-        super(chain, path, operationContext, undefined, false, firstDynamicSegment)
+        super(chain, path, operationContext, undefined, false, firstDynamicSegment, path.length, true)
         if (collect) this.errors = new Set()
     }
     release() {
@@ -25,39 +24,30 @@ class ErrorQueryWork extends PathOperation {
         this.visited = undefined
     }
     run() {
-        const node = this.route.externalTreeNode
-        this.reserveExternal(node)
-        const inspect = value => {
-            if (errorUtils.isPoisonError(value) || !node) return this.inspectValue(value)
-            const effect = this.externalEffect
-            // External metadata capture has its own last use. Managed
-            // Error collection may finish earlier, or continue much longer.
-            this.externalEffect = undefined
-            const captured = internalSteps.continueGraphTransition(effect.readiness, this.operationContext, () => {
-                if (this.open) {
-                    const blocker = this.externalBlocker(false)
-                    if (blocker) this.found(blocker)
-                    else for (const error of externalTree.collectPoison(node)) this.found(error)
-                }
-                effect.complete()
-            })
+        const inspect = (value, present, depth) => {
+            if (errorUtils.isPoisonError(value) && (depth !== this.route.path.length || !this.errors)) return this.settle(value)
+            const selected = this.metadataNode()
+            if (!selected) return this.inspectValue(value)
+            const captured = this.metadata.collect(selected, error => this.found(error))
             if (languageValues.isPending(captured, this.operationContext)) this.externalReadiness = captured
+            this.completeExternalEffect()
             return this.open ? this.inspectValue(value) : this.result
         }
         const result = this.observe(inspect,
             access => {
-                if (!access.boundary && access.path.length) return access.read(false, value => {
+                if (!access.boundary && access.start < access.end) return access.read(false, value => {
                     this.completeExternalEffect()
                     return this.inspectValue(value)
                 })
-                return access.validatePath() ?? this.complete(undefined, () => this.errors ? null : false)
+                return this.complete(undefined, () => this.errors ? null : false)
             },
             error => this.settle(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
         return internalSteps.continueGraphTransition(result, this.operationContext,
             value => this.open && errorUtils.isPoisonError(value) ? this.inspectValue(value) : value)
     }
     inspectValue(value) {
-        if (errorUtils.isPoisonError(value)) return this.settle(value)
+        if (errorUtils.isPoisonError(value)) this.found(value)
+        if (!this.open) return this.result
         const readiness = languageValues.isTraversable(value, this.operationContext)
             ? collectFencedErrorWaits(value, this) : undefined
         return this.complete(readiness, () => {

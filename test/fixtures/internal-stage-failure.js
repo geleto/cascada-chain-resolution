@@ -13,6 +13,7 @@ const sites = {
     length: ["array-view.js", "static captureLength(array, operationContext, owner) {"],
     remap: ["array-remap.js", "function createArrayFromRemap(\n    remap,\n    operationContext,\n    refIndexSource = undefined,\n) {"],
     isolation: ["mutations.js", "function shallowCopyPathContainer(source, operationContext) {"],
+    scope: ["path-operation.js", "state.key = depth ? target.key : chain._rootKey\n"],
     validation: ["language-properties.js", "function validatePropertyValue(key, value, operationContext, kind = errorUtils.ERROR_KIND.PropertyValidation) {"],
 }
 let armed, events, issued
@@ -52,6 +53,7 @@ const routes = {
     join: { site: "length", value: [1, 2], invoke: (c, p, ctx) => r.run(c, p, "join", [","], ctx, { firstDynamicSegment: 0 }) },
     flat: { site: "remap", value: [[1], 2], invoke: (c, p, ctx) => r.run(c, p, "flat", [1], ctx, { firstDynamicSegment: 0 }) },
     isolation: { site: "isolation", value: { item: 1 }, invoke: (c, p, ctx) => r.assignPath(c, [...p, "item"], 2, ctx, 2, 0) },
+    scope: { site: "scope", value: { item: 1 }, invoke: (c, p, ctx) => r.assignPath(c, [...p, "item"], 2, ctx, 2, 0) },
     validation: { site: "validation", value: { item: 1 }, invoke: (c, p, ctx) => r.assignPath(c, [...p, "item"], 2, ctx, 2, 0) },
 }
 const selectedRoute = process.argv[2]

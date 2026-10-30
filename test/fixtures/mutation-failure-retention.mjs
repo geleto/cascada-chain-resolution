@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
+import { ready, rejected, OrderedThenable } from "../ordered-thenable.js"
 
 function fail(cause) { throw cause ?? new Error("fresh boundary failure") }
 function traps(cause, weak, key) {
@@ -119,6 +120,25 @@ function healthyControl() {
     return { ctx, chain, weak, value: host.value }
 }
 
+async function failedKey(timing, entered, rejects) {
+    const ctx = { execution: new r.Execution(), errorContext: `key/${timing}/${entered}/${rejects}` }
+    const source = { x: 1 }, chain = new r.Chain({ a: source }, ctx)
+    const cause = new Error("failed key"), value = rejects ? cause : {}
+    const pending = timing === "native" ? Promise.withResolvers() : timing === "ordered" ? new OrderedThenable() : undefined
+    const key = pending?.promise ?? pending ?? (rejects ? rejected(value) : timing === "ready" ? value : ready(value))
+    const entry = entered ? r.enter(chain, ["a"], ctx, true, inside => r.assignPath(inside, [key, "y"], 1, ctx)) :
+        r.assignPath(chain, ["a", key, "y"], 1, ctx)
+    const result = r.lookupPath(chain, ["a"], ctx)
+    if (rejects) pending?.reject(value)
+    else pending?.resolve(value)
+    const error = await result
+    await entry
+    assert.equal(error.kind, r.ERROR_KIND[rejects ? "PathSegmentFailed" : "InvalidPathSegment"])
+    assert.equal(await r.repairPath(chain, ["a"], ctx), undefined)
+    assert.deepEqual(await r.export(chain, ["a"], ctx), { x: 1 })
+    return { ctx, error, weak: [new WeakRef(source), new WeakRef(chain)] }
+}
+
 function pendingWriteControl(native) {
     const ctx = { execution: new r.Execution(), errorContext: "pending write control" }
     const signal = Promise.withResolvers(), input = { child: { value: 9 } }
@@ -136,6 +156,12 @@ function pendingWriteControl(native) {
 }
 
 const states = []
+for (const timing of ["ready", "synchronous", "native", "ordered"])
+for (const entered of [false, true])
+for (const rejects of [false, true]) {
+    const state = await failedKey(timing, entered, rejects)
+    states.push([state.ctx.errorContext, state])
+}
 states.push(["repair scope preflight", await issue("repair scope preflight")])
 for (const fresh of [false, true])
 for (const route of ["method selection", "receiver validation", "recovered receiver validation", "native classification", "native availability", "Array keys",

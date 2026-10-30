@@ -1,7 +1,7 @@
 import { runOutsideGraphTransition, runReceivingCommand } from "./ownership.js"
 import { Chain } from "./chain.js"
 import * as externalTree from "./external-mutation-tree.js"
-import { capturePathOrigin, captureRoute } from "./path-context.js"
+import { captureRoute } from "./path-context.js"
 import { createExternalReservationView, ExternalEffect, pendingExternalEffects } from "./external-operation.js"
 import * as errors from "./error.js"
 import * as steps from "./internal-step.js"
@@ -13,11 +13,12 @@ import * as versions from "./property-versions.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { receiveValue } from "./input-preparations.js"
 import { IdentityPublication } from "./captured-identity.js"
+import { enterMetadata } from "./external-metadata.js"
 
 // Selection consumes no unavailable suffix. The same anchor/rebased reference
 // represents missing, poisoned, pending, intrinsic, and native destinations.
 function captureReference(chain, route, mutable, operationContext) {
-    const staticDepth = route.dynamicDepth - (chain._contextOrigin?.depth ?? 0)
+    const staticDepth = route.dynamicDepth - route.origin
     const publication = mutable ? new IdentityPublication(operationContext,
         metadata.metaOf(chain._state, operationContext)?.entryGate?.publication) : undefined
     return capture(chain._state, "value", versions.capturePlacement(chain._state, "value", operationContext), 0)
@@ -25,12 +26,12 @@ function captureReference(chain, route, mutable, operationContext) {
     function capture(parent, key, placement, depth) {
         let value = placement.value
         if (metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External) {
-            const scope = externalTree.tracePath(chain._externalMutationTree, route.path, staticDepth).externalScope
+            const scope = route.externalScope
             if (scope) {
                 publication?.finish(false)
                 return {
                     placement: { value: scope[externalTree.TREE_NODE].identity, present: true },
-                    depth: scope[externalTree.TREE_NODE].depth - (chain._contextOrigin?.depth ?? 0),
+                    depth: scope[externalTree.TREE_NODE].depth - route.origin,
                     node: scope,
                 }
             }
@@ -69,25 +70,28 @@ function captureReference(chain, route, mutable, operationContext) {
             gate.publication = publication
             publication.suspend()
         }
-        return { key, placement, depth, gate,
-            node: externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth)) }
+        return { key, placement, depth, gate, node: route.nodes[depth] }
     }
 }
 
 function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSegment = path.length, delivery) {
     chain._assertOperationContext(operationContext)
     if (mutable && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
-    const route = captureRoute(chain, path, firstDynamicSegment)
+    let route = captureRoute(chain, path, firstDynamicSegment)
     let { key, placement, depth, node, gate } = captureReference(chain, route, mutable, operationContext)
-    const effect = node ? new ExternalEffect(node, mutable, chain._externalReservationView, operationContext) : undefined
-    const entered = new Chain(undefined, operationContext)
+    let effect = node ? new ExternalEffect(node, mutable, chain._externalReservationView, operationContext) : undefined
+    let metadataEntry = node ? enterMetadata(node, chain._externalMetadataView, mutable) : undefined
+    let entered = new Chain(undefined, operationContext)
     entered._readOnly = !mutable
     entered._rootKey = depth ? key ?? route.path[depth - 1] : chain._rootKey
     entered._rootPath = route.path.slice(depth)
     entered._externalMutationTree = node
-    entered._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+    // A negative boundary preserves a computed ancestor before this anchor.
+    entered._firstDynamicSegment = route.dynamicDepth - route.origin - depth
     entered._externalReservationView = node ? createExternalReservationView(node) : chain._externalReservationView
+    entered._externalMetadataView = metadataEntry?.view ?? chain._externalMetadataView
     versions.transferPlacement(placement, entered._state, "value", operationContext)
+    chain = route = path = undefined
     let leasedValue
     return versions.resolvePlacementTransition(placement, operationContext, captured => {
         // The private root holder has one placement, whose publication
@@ -97,7 +101,9 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
             metadata.incrementReadLease(captured.value, operationContext)) leasedValue = captured.value
         captured = undefined
         return steps.continueGraphTransition(effect?.readiness, operationContext, () => {
-            const result = runOutsideGraphTransition(operationContext, () => onEntered(entered))
+            let result
+            try { result = runOutsideGraphTransition(operationContext, () => onEntered(entered)) }
+            finally { onEntered = undefined }
             if (operationContext.execution.fatalError) throw operationContext.execution.fatalError
             const receive = result => runReceivingCommand(operationContext, () =>
                 receiveValue(result, operationContext, { kind: errors.ERROR_KIND.OperationInputFailed }, complete))
@@ -115,12 +121,15 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
             const publication = gate && versions.completePlacementGate(gate,
                 versions.capturePlacement(entered._state, "value", operationContext), operationContext)
             const external = node ? pendingExternalEffects(entered._externalReservationView) : undefined
+            metadataEntry?.close()
+            metadataEntry = node = undefined
+            entered._externalMutationTree = entered._externalReservationView = entered._externalMetadataView = entered._rootPath = undefined
             markPromiseHandled(steps.collectInputs([publication, external], operationContext, () => {
                 // Stop mirroring before deleting the spent private placement.
                 metadata.metaOf(entered._state, operationContext).entryGate = undefined
                 versions.releaseHolder(entered._state, operationContext)
                 effect?.complete()
-                gate = undefined
+                gate = entered = effect = undefined
             }), operationContext)
             return result
         }

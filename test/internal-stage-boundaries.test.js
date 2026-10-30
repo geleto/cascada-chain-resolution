@@ -11,7 +11,7 @@ describe("internal semantic-stage failure boundaries", () => {
         assert.match(result.stdout, /48 public entry faults/)
     })
 
-    for (const route of ["hasError", "getErrors", "publication", "export", "join", "flat", "isolation", "validation", "receiver-observation", "receiver-mutation"])
+    for (const route of ["hasError", "getErrors", "publication", "export", "join", "flat", "isolation", "scope", "validation", "receiver-observation", "receiver-mutation"])
     it(`keeps ${route} defects fatal during ready and deferred work`, () => {
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/internal-stage-failure.js", import.meta.url)), route],

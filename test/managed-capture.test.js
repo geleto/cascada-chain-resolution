@@ -5,6 +5,13 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import { OrderedThenable } from "./ordered-thenable.js"
 
 describe("managed receiver capture", () => {
+    it("releases discarded capture identities before pending Error collection", function () {
+        this.timeout(25000)
+        const result = spawnSync(process.execPath, [...process.execArgv, "--expose-gc", "--unhandled-rejections=strict",
+            "test/fixtures/capture-output-identity-release.mjs"], { encoding: "utf8", timeout: 20000 })
+        assert.equal(result.status, 0, result.stdout + result.stderr)
+    })
+
     for (const managedClass of [false, true]) for (const mutation of [false, true])
     for (const inReceiver of [false, true]) for (const absent of [false, true]) {
         it(`rejects selection before output identity waits: class=${managedClass}, mutation=${mutation}, receiver=${inReceiver}, absent=${absent}`, async () => {

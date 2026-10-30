@@ -1,10 +1,9 @@
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
-import { metaOf, TYPE } from "../src/meta.js"
+import { metaOf } from "../src/meta.js"
 import { poison } from "./support.js"
 import { rejected } from "./ordered-thenable.js"
-import { TREE_NODE } from "../src/external-mutation-tree.js"
 
 function setup(native, parent = false) {
     r.externalState(native)
@@ -15,6 +14,26 @@ function setup(native, parent = false) {
 }
 
 describe("public external paths", () => {
+    for (const dynamic of [false, true]) for (const mutable of [false, true]) {
+        it(`preserves ancestor provenance through nested entry anchors: dynamic=${dynamic}, mutable=${mutable}`, () => {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            let calls = 0
+            const api = r.externalState({ read() { calls++; return 7 } })
+            const chain = new r.ContextChain({ groups: { a: { api } } }, ctx, { groups: { a: { api: {} } } })
+            const result = r.enter(chain, ["groups", "a"], ctx, mutable, group =>
+                r.enter(group, ["api"], ctx, mutable, resource =>
+                    r.enter(resource, [], ctx, mutable, same => {
+                        assert.equal(r.getErrors(same, [], ctx), null)
+                        return r.run(same, [], "read", [], ctx, {})
+                    })), dynamic ? 1 : 2)
+            if (dynamic) assert.equal(result.kind, r.ERROR_KIND.ExternalLocationConflict)
+            else assert.equal(result, 7)
+            assert.equal(calls, dynamic ? 0 : 1)
+            assert.equal(r.getErrors(chain, [], ctx), null)
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     for (const action of ["call", "assign", "delete"]) {
         it(`separates ancestors when external selection writes back failure: ${action}`, () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }
@@ -207,7 +226,7 @@ describe("public external paths", () => {
         const query = r.getErrors(chain, ["api", {}], ctx, 1)
         const repair = r.repairPath(chain, ["api", {}], ctx, 1)
         assert(query instanceof Promise)
-        assert(repair instanceof Promise)
+        assert.equal(repair.kind, r.ERROR_KIND.InvalidPathSegment)
         hold.reject(cause)
         const failure = await mutation
         assert.equal(await query, failure)
@@ -415,8 +434,6 @@ describe("public external paths", () => {
                 assert.equal(failure.kind, r.ERROR_KIND.PropertyMutationFailed)
                 assert.equal(failure.cause, cause)
                 assert.equal(await r.getErrors(chain, [], ctx), failure)
-                assert.equal(chain._externalMutationTree.group[TREE_NODE].ownPoison, undefined)
-                assert.equal(chain._externalMutationTree.group.api[TREE_NODE].ownPoison, undefined)
                 assert.equal(await r.lookupPath(chain, ["other"], ctx), 3)
                 assert.equal(original.group, group)
                 assert.equal(api.value, 1)
@@ -491,7 +508,7 @@ describe("public external paths", () => {
         assert.equal(chain._state.value.group, group)
     })
 
-    it("orders known dynamic-route failure after an earlier child entry", async () => {
+    it("rejects a computed candidate without waiting for its earlier child entry", async () => {
         let writes = 0
         const { ctx, chain } = setup({ write() { writes++ } })
         const release = Promise.withResolvers()
@@ -502,14 +519,14 @@ describe("public external paths", () => {
         })
         const failure = r.run(chain, ["api"], "write", [], ctx,
             { mutationScopeDepth: 1, firstDynamicSegment: 0, repair: false })
-        assert.ok(failure instanceof Promise)
+        assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
         release.resolve()
         await entry
         assert.equal(writes, 1)
         const error = await failure
         assert.equal(error.kind, r.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(await r.lookupPath(chain, [], ctx), error)
-        await r.repairPath(chain, [], ctx)
+        assert.equal(await r.lookupPath(chain, ["api"], ctx), error)
+        await r.repairPath(chain, ["api"], ctx)
         assert.equal(await r.hasError(chain, [], ctx), false)
     })
 
@@ -528,7 +545,7 @@ describe("public external paths", () => {
     })
 
     for (const pending of [false, true]) {
-        it(`poisons a dynamic-only mutation's captured static prefix, pending=${pending}`, async () => {
+        it(`poisons a dynamic-only mutation's selected placement, pending=${pending}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }
             const native = r.externalState({ write() { assert.fail("unauthorized call") } })
             const deferred = Promise.withResolvers()
@@ -538,7 +555,7 @@ describe("public external paths", () => {
             deferred.resolve(native)
             const failure = await result
             assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
-            assert.equal(await r.lookupPath(chain, ["group"], ctx), failure)
+            assert.equal(await r.lookupPath(chain, ["group", "api"], ctx), failure)
             assert.equal(r.lookupPath(chain, ["sibling"], ctx), 1)
             verifyRefCounts(ctx, chain._state)
         })
@@ -660,8 +677,9 @@ describe("public external paths", () => {
         const failure = await r.run(chain, ["api"], "read", [], ctx,
             { mutationScopeDepth: 1, repair: false, firstDynamicSegment: 0 })
         assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(r.lookupPath(chain, [], ctx), failure)
-        await r.repairPath(chain, [], ctx)
+        assert.equal(r.lookupPath(chain, ["api"], ctx), failure)
+        assert.equal(r.lookupPath(chain, ["ordinary"], ctx), 1)
+        await r.repairPath(chain, ["api"], ctx)
         assert.equal(await r.lookupPath(chain, ["api", "value"], ctx), 2)
     })
 
@@ -689,7 +707,6 @@ describe("public external paths", () => {
             lookup: (c, p, ctx, d) => r.lookupPath(c, [...p, "db", "items", "length"], ctx, d),
             expression: (c, p, ctx, d) => r.lookupPathForExpression(c, [...p, "db", "items", "length"], ctx, d),
             export: (c, p, ctx, d) => r.export(c, [...p, "db", "items", "length"], ctx, d),
-            getErrors: (c, p, ctx, d) => r.getErrors(c, [...p, "db"], ctx, d),
             run: (c, p, ctx, d) => r.run(c, [...p, "db"], "read", [], ctx, { firstDynamicSegment: d }),
         }
         const readyError = result => r.isPoisonedValue(result) ? result.error : result
@@ -723,7 +740,7 @@ describe("public external paths", () => {
                     const first = readyError(observe(chain, ["api"], ctx, 0))
                     assert.equal(first.kind, r.ERROR_KIND.ExternalLocationConflict)
                     assert.notEqual(first, before)
-                    assert.equal(r.hasError(chain, ["api", "db"], ctx, 1), true)
+                    assert.equal(r.hasError(chain, ["api", "db"], ctx, 1), state === "own poison" || state === "child poison")
                     assert.equal(r.getErrors(chain, ["api"], ctx), before)
                     assert.deepEqual(calls, [])
                     verifyRefCounts(ctx, chain._state)
@@ -780,9 +797,10 @@ describe("public external paths", () => {
                     r.lookupPath(inside, ["items", "length"], ctx),
                     r.getErrors(inside, [], ctx),
                 ], 1)
-                for (const result of results) {
-                    if (poisoned) assert.equal(result, expected)
-                    else assert.equal(result.kind, r.ERROR_KIND.ExternalLocationConflict)
+                if (poisoned) for (const result of results) assert.equal(result, expected)
+                else {
+                    assert.equal(results[0].kind, r.ERROR_KIND.ExternalLocationConflict)
+                    assert.equal(results[1], null)
                 }
                 verifyRefCounts(ctx, chain._state)
             })

@@ -1,9 +1,7 @@
 import { externalLocations, externalLocationPaths } from "./support.js"
-import * as externalTree from "../src/external-mutation-tree.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import { validateExternalAccess } from "../src/external-operation.js"
 
 const context = (execution = new runtime.Execution()) => Object.freeze({
     execution, errorContext: Object.freeze({ operation: "external coordination" }),
@@ -56,7 +54,7 @@ describe("external binding commit", () => {
         const boundaries = externalLocations(chain._externalMutationTree, [])
         assert.equal(boundaries.length, 1)
         assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["items", "0"]])
-        assert.equal(boundaries[0][TREE_NODE].entry.binding.deref(), boundaries[0])
+        assert.equal(boundaries[0][TREE_NODE].identity, identity)
     })
 
     it("abandons pending import work without invalidating an existing registration", async () => {
@@ -66,7 +64,7 @@ describe("external binding commit", () => {
         const root = { existing, pending: pending.promise, rawError: new Error("staged"), first: duplicate, second: duplicate }
         const chain = new runtime.ContextChain(root, ctx, { existing: {}, first: {}, second: {} })
         assert.equal(runtime.lookupPath(chain, [], ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(boundary[TREE_NODE].entry.binding.deref(), boundary)
+        assert.equal(boundary[TREE_NODE].identity, existing)
         const late = { identity: external(), error: new Error("abandoned") }
         pending.resolve(late)
         await flush()
@@ -78,50 +76,42 @@ describe("external binding commit", () => {
     })
 
     for (const regularFirst of [false, true]) {
-        it(`leaves regular imports inert and invalidates competing context bindings, regularFirst=${regularFirst}`, () => {
-            const ctx = context()
-            const identity = external()
+        it(`leaves regular imports inert and rejects competing contexts: regularFirst=${regularFirst}`, () => {
+            const ctx = context(), identity = runtime.externalState({ value: 7 })
             const root = { identity, inertAlias: identity }
-            assert.equal(validateExternalAccess(identity, undefined, ctx), null)
             let ordinary
             if (regularFirst) ordinary = new runtime.Chain(runtime.import(root, ctx), ctx)
             const first = new runtime.ContextChain(root, ctx, { identity: {} })
             if (!regularFirst) ordinary = new runtime.Chain(runtime.import(root, ctx), ctx)
-            const boundary = externalTree.findBranch(first._externalMutationTree, ["identity"])
-            assert.equal(boundary[TREE_NODE].entry.binding.deref(), boundary)
-            assert.equal(validateExternalAccess(identity, undefined, ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
-            assert.equal(boundary[TREE_NODE].entry.binding.deref(), boundary)
             assert.equal(runtime.lookupPath(ordinary, ["identity"], ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
-
             const secondContext = context(ctx.execution)
             const second = new runtime.ContextChain({ identity }, secondContext, { identity: {} })
-            const failure = boundary[TREE_NODE].entry.binding
+            const failure = runtime.getErrors(second, [], ctx)
             assert.equal(failure.kind, runtime.ERROR_KIND.ExternalLocationConflict)
             assert.equal(failure.errorContext, secondContext.errorContext)
-            assert.equal(validateExternalAccess(identity, boundary, ctx), failure)
-            assert.equal(validateExternalAccess(identity, undefined, ctx), failure)
-            for (const chain of [first, second]) {
-                assert.equal(externalLocations(chain._externalMutationTree, []).length, 1)
-                assert.equal(externalTree.tracePath(chain._externalMutationTree, ["identity", "opaque"]).externalScope[TREE_NODE].entry.binding, failure)
-                assert.equal(externalTree.findBranch(chain._externalMutationTree, ["identity"])[TREE_NODE].entry.binding, failure)
-                assert.equal(runtime.lookupPath(chain, ["identity"], ctx), failure)
-            }
-            new runtime.ContextChain({ identity }, ctx, { identity: {} })
-            assert.equal(boundary[TREE_NODE].entry.binding, failure)
+            assert.equal(runtime.getErrors(first, [], ctx), null)
+            assert.equal(runtime.lookupPath(first, ["identity", "value"], ctx), 7)
+            assert.equal(runtime.repairPath(second, [], ctx), failure)
         })
     }
 
-    it("invalidates both context claims in either registration order", () => {
-        for (const paths of [["left", "right"], ["right", "left"]]) {
-            const ctx = context()
-            const identity = external()
-            const chains = paths.map(key => new runtime.ContextChain({ [key]: identity }, ctx, { [key]: {} }))
-            const boundaries = chains.map((chain, index) => externalTree.findBranch(chain._externalMutationTree, [paths[index]]))
-            const failure = boundaries[0][TREE_NODE].entry.binding
-            assert.equal(failure.kind, runtime.ERROR_KIND.ExternalLocationConflict)
-            for (const boundary of boundaries) {
-                assert.equal(validateExternalAccess(identity, boundary, ctx), failure)
-            }
-        }
+    for (const reverse of [false, true]) for (const cached of [false, true])
+    it(`rejects the whole later transaction: reverse=${reverse}, cached=${cached}`, () => {
+        const ctx = context(), existing = runtime.externalState({ value: 1 })
+        const first = new runtime.ContextChain({ existing }, ctx, { existing: {} })
+        const fresh = runtime.externalState({ value: 2 }), managed = { value: 3 }
+        if (cached) runtime.import(managed, ctx)
+        const entries = [["fresh", fresh], ["existing", existing], ["managed", managed]]
+        if (reverse) entries.reverse()
+        const root = Object.fromEntries(entries)
+        const rejected = new runtime.ContextChain(root, ctx, Object.fromEntries(entries.map(([key]) => [key, {}])))
+        assert.equal(runtime.getErrors(rejected, [], ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
+        assert.equal(ctx.execution._metadata.has(root), false)
+        assert.equal(ctx.execution._metadata.has(fresh), false)
+        assert.equal(ctx.execution._metadata.has(managed), cached)
+        assert.equal(ctx.execution._externalIdentities.has(fresh), false)
+        assert.equal(runtime.lookupPath(first, ["existing", "value"], ctx), 1)
+        const valid = new runtime.ContextChain({ fresh }, ctx, { fresh: {} })
+        assert.equal(runtime.lookupPath(valid, ["fresh", "value"], ctx), 2)
     })
 })

@@ -144,7 +144,7 @@ describe("shared input preparation", () => {
             assert.equal(subscriptions, 0)
             hold.resolve()
             await entered
-            assert.equal((await r.lookupPath(chain, [], ctx)).kind, r.ERROR_KIND.ExternalLocationConflict)
+            assert.equal((await r.lookupPath(chain, ["api"], ctx)).kind, r.ERROR_KIND.ExternalLocationConflict)
             assert.equal(subscriptions, 0)
         })
     }

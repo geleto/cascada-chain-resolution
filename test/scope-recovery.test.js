@@ -3,7 +3,7 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import * as r from "../src/index.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import { ExternalEffect } from "../src/external-operation.js"
-import { ready } from "./ordered-thenable.js"
+import { ready, OrderedThenable } from "./ordered-thenable.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
@@ -17,9 +17,133 @@ function fixture() {
     return { events, api, ctx, chain }
 }
 
+describe("broader native binding repair", () => {
+    for (const write of ["assign", "delete"]) for (const entry of ["direct", "root", "api"])
+    it(`restores the declared binding scope before calling its child: ${write}/${entry}`, async () => {
+        const { ctx, chain, events } = fixture()
+        mutate(chain, ["api", "config"], "fail", ctx)
+        const guard = write === "assign" ? r.assignPath(chain, ["api"], 1, ctx) : r.deletePath(chain, ["api"], ctx)
+        const retained = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
+        const invoke = (owner, path) => r.run(owner, path, "work", [], ctx,
+            { mutationScopeDepth: path.length - 1, repair: true })
+        let result
+        if (entry === "direct") result = invoke(chain, ["api", "db"])
+        else await r.enter(chain, entry === "root" ? [] : ["api"], ctx, true, inside => {
+            result = invoke(inside, entry === "root" ? ["api", "db"] : ["db"])
+            return result
+        })
+        assert.equal(await result, undefined)
+        assert.deepEqual(events, ["db"])
+        assert.equal(r.getErrors(chain, [], ctx), null)
+        assert.equal(r.lookupPath(retained, ["api"], ctx), guard, "Recovery must preserve another owner's guard")
+        assert.equal(ctx.execution.fatalError, null)
+        verifyRefCounts(ctx, chain._state, retained._state)
+    })
+
+    it("clears own native poison within the declared binding scope", () => {
+        const { ctx, chain, events } = fixture()
+        mutate(chain, ["api"], "missing", ctx)
+        r.deletePath(chain, ["api"], ctx)
+        assert.equal(r.run(chain, ["api", "db"], "work", [], ctx, { mutationScopeDepth: 1, repair: true }), undefined)
+        assert.deepEqual(events, ["db"])
+        assert.equal(r.getErrors(chain, [], ctx), null)
+    })
+
+    for (const own of [false, true]) for (const delivery of ["ready", "synchronous", "native", "ordered"])
+    for (const invalid of [false, true])
+    it(`preserves both stores on binding repair preflight failure: own=${own}/${delivery}/invalid=${invalid}`, async () => {
+        const { ctx, chain, events } = fixture()
+        const native = own ? mutate(chain, ["api"], "missing", ctx) : undefined
+        const guard = r.deletePath(chain, ["api"], ctx)
+        const key = invalid ? {} : "db"
+        const pending = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+        const input = delivery === "ready" ? key : delivery === "synchronous" ? ready(key) :
+            delivery === "ordered" ? pending : pending.promise
+        const result = r.run(chain, ["api", input], "work", [], ctx,
+            { mutationScopeDepth: 1, repair: true, firstDynamicSegment: 1 })
+        const later = r.lookupPath(chain, ["api"], ctx)
+        if (delivery === "native" || delivery === "ordered") assert(r.isPending(later, ctx))
+        pending.resolve(key)
+        const failure = await result
+        if (!invalid && own) assert.equal(failure, native)
+        else assert.equal(failure.kind, invalid ? r.ERROR_KIND.InvalidPathSegment : r.ERROR_KIND.ExternalLocationConflict)
+        assert.equal(await later, guard)
+        const remaining = r.getErrors(chain, ["api"], ctx)
+        assert.deepEqual(new Set(remaining.errors ?? [remaining]), new Set([guard, native].filter(Boolean)))
+        assert.deepEqual(events, [])
+        assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
+        assert.equal(mutate(chain, ["api", "db"], "work", ctx), undefined)
+        assert.deepEqual(events, ["db"])
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
+    it("orders pending native suffix selection within the binding repair transition", async () => {
+        const { ctx, chain, api, events } = fixture(), key = new OrderedThenable()
+        api.local = r.externalState({ work() { events.push("local") } })
+        r.deletePath(chain, ["api"], ctx)
+        const earlier = r.run(chain, ["api", key], "work", [], ctx, { mutationScopeDepth: 1, repair: true })
+        const later = mutate(chain, ["api", "db"], "work", ctx)
+        assert.deepEqual(events, [])
+        key.resolve("local")
+        assert.equal(await earlier, undefined)
+        assert.equal(await later, undefined)
+        assert.equal(key.subscriptions, 1)
+        assert.deepEqual(events, ["local", "db"])
+        assert.equal(r.getErrors(chain, [], ctx), null)
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
+    for (const deferred of [false, true])
+    it(`preserves a failed key's exact Error during binding repair: deferred=${deferred}`, async () => {
+        const { ctx, chain, events } = fixture(), pending = deferred ? Promise.withResolvers() : undefined
+        const keyError = r.run(new r.Chain({}, ctx), [], "missing", [], ctx, {})
+        const guard = r.deletePath(chain, ["api"], ctx)
+        const result = r.run(chain, ["api", deferred ? pending.promise : keyError], "work", [], ctx,
+            { mutationScopeDepth: 1, repair: true })
+        pending?.reject(keyError)
+        assert.equal(await result, keyError)
+        assert.equal(r.lookupPath(chain, ["api"], ctx), guard)
+        assert.deepEqual(events, [])
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
+    for (const mode of ["method", "argument", "throw", "receiver", "suffix"])
+    it(`keeps binding recovery committed after later call failure: ${mode}`, async () => {
+        const { ctx, chain, api, events } = fixture(), pending = Promise.withResolvers()
+        const cause = new Error("later call failure")
+        api.db.fail = () => { throw cause }
+        api.local = r.externalState({})
+        api.managed = {}
+        const guard = r.deletePath(chain, ["api"], ctx)
+        const path = mode === "receiver" ? ["api", "managed"] : mode === "suffix" ? ["api", "local", pending.promise] : ["api", "db"]
+        const args = mode === "argument" ? [pending.promise] : []
+        const result = r.run(chain, path, mode === "method" ? "constructor" : mode === "throw" ? "fail" : "work", args, ctx,
+            { mutationScopeDepth: 1, repair: true })
+        if (mode === "argument") pending.reject(cause)
+        else pending.resolve({})
+        const failure = await result
+        assert(r.isPoisonError(failure))
+        assert.notEqual(failure, guard)
+        assert.equal(r.getErrors(chain, ["api"], ctx), failure)
+        assert.deepEqual(events, [])
+        assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
+        assert.equal(mutate(chain, ["api", "db"], "work", ctx), undefined)
+        assert.deepEqual(events, ["db"])
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
+    it("does not restore a binding outside the declared repair scope", () => {
+        const { ctx, chain, events } = fixture()
+        const guard = r.deletePath(chain, ["api"], ctx)
+        assert.equal(r.run(chain, ["api", "db"], "work", [], ctx, { mutationScopeDepth: 2, repair: true }), guard)
+        assert.equal(r.lookupPath(chain, ["api"], ctx), guard)
+        assert.deepEqual(events, [])
+    })
+})
+
 describe("hierarchical scopes and placement recovery", () => {
     for (const pending of [false, true]) for (const call of [false, true])
-    it(`a binding conflict blocks repair without poisoning its managed placement: pending=${pending}, call=${call}`, async () => {
+    it(`a rejected duplicate leaves canonical repair and calls valid: pending=${pending}, call=${call}`, async () => {
         const ctx = context(), hold = Promise.withResolvers()
         let calls = 0
         const api = r.externalState({ value: 1, wait() { return hold.promise }, change() { calls++ } })
@@ -32,14 +156,13 @@ describe("hierarchical scopes and placement recovery", () => {
             r.repairPath(chain, ["api"], ctx)
         hold.resolve()
         await earlier
-        const failure = await repair
-        assert.equal(failure.errorContext, conflictContext.errorContext)
+        assert.equal(await repair, undefined)
         const dynamicContext = { ...ctx, errorContext: "dynamic lookup" }
         const lookup = await r.lookupPath(chain, ["api", "value"], dynamicContext, 0)
         assert.equal(lookup.errorContext, dynamicContext.errorContext)
         assert.equal(await r.run(new r.Chain([r.lookupPath(chain, [], ctx)], ctx), [], "includes",
             [r.lookupPath(before, [], ctx)], ctx, {}), true)
-        assert.equal(calls, 0)
+        assert.equal(calls, call ? 1 : 0)
     })
 
     for (const array of [false, true])
@@ -186,7 +309,7 @@ describe("hierarchical scopes and placement recovery", () => {
     })
 
     for (const conflictDuringArguments of [false, true]) {
-        it(`keeps descendant binding conflicts authoritative after repair, deferred=${conflictDuringArguments}`, async () => {
+        it(`keeps canonical repair valid after a rejected descendant registration, deferred=${conflictDuringArguments}`, async () => {
             const { api, ctx, chain, events } = fixture(), hold = Promise.withResolvers()
             mutate(chain, ["api", "config"], "fail", ctx)
             const compete = () => new r.ContextChain({ db: api.db }, ctx, { db: {} })
@@ -195,13 +318,12 @@ describe("hierarchical scopes and placement recovery", () => {
                 { mutationScopeDepth: 1, repair: true })
             if (conflictDuringArguments) compete()
             hold.resolve()
-            const failure = await reset
-            assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
-            assert.deepEqual(events, [])
-            assert.equal(r.getErrors(chain, ["api"], ctx), failure)
+            assert.equal(await reset, undefined)
+            assert.deepEqual(events, ["reset"])
+            assert.equal(r.getErrors(chain, ["api"], ctx), null)
             assert.equal(r.getErrors(chain, ["api", "config"], ctx), null)
             mutate(chain, ["api", "config"], "work", ctx)
-            assert.deepEqual(events, ["config"])
+            assert.deepEqual(events, ["reset", "config"])
             assert.equal(ctx.execution.fatalError, null)
         })
     }
@@ -222,7 +344,7 @@ describe("hierarchical scopes and placement recovery", () => {
         await work
     })
 
-    for (const action of ["call-parent", "call-child", "assign", "delete", "enter", "repair"]) {
+    for (const action of ["call-parent", "call-child", "assign", "delete", "enter"]) {
         it(`repairs dynamic native selection at its static external prefix: ${action}`, async () => {
             const { events, api, ctx, chain } = fixture()
             let failure
@@ -231,7 +353,6 @@ describe("hierarchical scopes and placement recovery", () => {
             if (action === "assign") failure = r.assignPath(chain, ["api", "db", "count"], 5, ctx, 2, 1)
             if (action === "delete") failure = r.deletePath(chain, ["api", "db", "count"], ctx, 2, 1)
             if (action === "enter") failure = r.enter(chain, ["api", "db"], ctx, true, inside => r.assignPath(inside, ["count"], 5, ctx), 1)
-            if (action === "repair") failure = r.repairPath(chain, ["api", "db"], ctx, 1)
             failure = await failure
             assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
             assert.equal(await r.getErrors(chain, [], ctx), failure)
@@ -246,18 +367,18 @@ describe("hierarchical scopes and placement recovery", () => {
         })
     }
 
-    it("orders an invalid dynamic mutation after earlier native work", async () => {
+    it("rejects structural repair-and-call without waiting for candidate native work", async () => {
         const { events, ctx, chain } = fixture(), hold = Promise.withResolvers()
         const first = mutate(chain, ["api", "db"], "work", ctx, [hold.promise])
         const invalid = r.run(chain, ["api", "db"], "work", [], ctx,
             { mutationScopeDepth: 2, firstDynamicSegment: 1, repair: true })
-        assert(invalid instanceof Promise)
+        assert.equal(invalid.kind, r.ERROR_KIND.ExternalLocationConflict)
         hold.resolve()
         await first
         const failure = await invalid
         assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
         assert.deepEqual(events, ["db"])
-        assert.equal(await r.getErrors(chain, [], ctx), failure)
+        assert.equal(await r.getErrors(chain, [], ctx), null)
         assert.equal(await r.repairPath(chain, ["api"], ctx), undefined)
     })
 
@@ -424,15 +545,13 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(r.lookupPath(chain, ["present"], ctx), 1)
         assert.equal(Object.hasOwn(source, "absent"), false)
     })
-    it("keeps invalid dynamic repair at its static prefix and preserves an existing blocker", () => {
+    it("permits computed canonical repair", () => {
         const ctx = context()
-        const api = r.externalState({})
+        const api = r.externalState({ fail() { throw new Error("native failure") } })
         const chain = new r.ContextChain({ apis: { db: api } }, ctx, { apis: { db: {} } })
-        const failure = r.repairPath(chain, ["apis", "db"], ctx, 1)
-        assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(r.getErrors(chain, ["apis"], ctx), failure)
-        assert.equal(r.repairPath(chain, ["apis", "db"], ctx, 1), failure)
-        assert.equal(r.repairPath(chain, ["apis"], ctx), undefined)
+        const failure = mutate(chain, ["apis", "db"], "fail", ctx)
+        assert.equal(r.getErrors(chain, ["apis"], ctx, 0), failure)
+        assert.equal(r.repairPath(chain, ["apis", "db"], ctx, 1), undefined)
         assert.equal(r.getErrors(chain, [], ctx), null)
     })
     it("repairs only the requested absent Array placement, without waiting for or clearing siblings", async () => {
@@ -473,7 +592,7 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(mutate(chain, ["api", "db"], "work", ctx), undefined)
         assert.equal(mutate(chain, ["api", "config"], "work", ctx), undefined)
         assert.deepEqual(events, ["db", "config"])
-        assert.equal(ctx.execution._externalIdentities.get(api.db).binding.deref(), chain._externalMutationTree.api.db)
+        assert.equal(chain._externalMutationTree.api.db[TREE_NODE].identity, api.db)
     })
     it("waits for children at a parent and prevents later children from overtaking it", async () => {
         const { chain, ctx, events } = fixture()
@@ -743,7 +862,7 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(failure.cause, cause)
         fail = false
         assert.equal(r.lookupPath(outer, ["chain", "group"], ctx), old)
-        assert.equal(chain._externalMutationTree.group.api[TREE_NODE].ownPoison, child)
+        assert.deepEqual(new Set(r.getErrors(chain, ["group"], ctx).errors), new Set([old, child]))
         assert.equal(r.repairPath(chain, ["group"], ctx), undefined)
         assert.equal(r.getErrors(chain, [], ctx), null)
     })
@@ -771,15 +890,16 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.deepEqual(Object.keys(requests.api), ["skipped", "accessor", "synchronous", "ready"])
     })
 
-    it("collects permanent descendant conflicts behind parent-owned poison and keeps them after repair", () => {
+    it("preserves parent poison across rejected descendant registration", () => {
         const { chain, ctx, api } = fixture()
         const old = mutate(chain, ["api"], "missing", ctx)
-        new r.ContextChain({ db: api.db }, ctx, { db: {} })
-        const conflict = ctx.execution._externalIdentities.get(api.db).binding
-        const collected = r.getErrors(chain, ["api"], ctx)
-        assert.deepEqual(new Set(collected.errors), new Set([old, conflict]))
+        const rejected = new r.ContextChain({ db: api.db }, ctx, { db: {} })
+        const conflict = r.getErrors(rejected, [], ctx)
+        assert.equal(conflict.kind, r.ERROR_KIND.ExternalLocationConflict)
+        assert.equal(r.getErrors(chain, ["api"], ctx), old)
         r.repairPath(chain, ["api"], ctx)
-        assert.equal(r.getErrors(chain, ["api"], ctx), conflict)
+        assert.equal(r.getErrors(chain, ["api"], ctx), null)
+        assert.equal(r.repairPath(rejected, [], ctx), conflict)
     })
 
     it("keeps pending sibling frontier storage bounded while unrelated work finishes", () => {
@@ -797,12 +917,12 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(frontier.subtreeReads.size, 0)
     })
 
-    it("publishes invalid dynamic mutating entry at the known managed prefix", () => {
+    it("publishes invalid dynamic entry work at the reached external placement", () => {
         const { chain, ctx } = fixture()
         const failure = r.enter(chain, ["api", "db"], ctx, true, inside => r.assignPath(inside, ["count"], 5, ctx), 0)
         assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(r.lookupPath(chain, [], ctx), failure)
-        assert.equal(r.repairPath(chain, [], ctx), undefined)
+        assert.equal(r.lookupPath(chain, ["api"], ctx), failure)
+        assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
         assert.equal(r.lookupPath(chain, ["api", "db", "count"], ctx), 0)
     })
 })

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
-import { ready } from "../ordered-thenable.js"
+import { ready, OrderedThenable } from "../ordered-thenable.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
 
 // Seeded programs on a nested record and Array graph: assignment, deletion, subtree
@@ -117,6 +117,20 @@ async function runProgram({ container, steps }, seed, mode, coverage) {
         holds.push(held)
         return held.promise
     }
+    let keySequence = 0
+    const keys = path => {
+        if (!path.length) return path
+        const timing = ["ready", "synchronous", "native", "ordered"][keySequence++ % 4]
+        coverage.add(`keys:${timing}`)
+        return path.map((key, index) => {
+            if (index !== path.length - 1 || timing === "ready") return key
+            if (timing === "synchronous") return ready(key)
+            if (timing === "native") return hold().then(() => key)
+            const source = new OrderedThenable()
+            holds.push({ resolve: () => source.resolve(key) })
+            return source
+        })
+    }
     const verify = () => { if (instrumented) verifyRefCounts(ctx, chain._state, ...retained.map(holder => holder._state)) }
     let phase = "before-release"
     for (const step of steps) {
@@ -130,21 +144,21 @@ async function runProgram({ container, steps }, seed, mode, coverage) {
         const innerLength = rest.length ? 1 + Math.floor(step.inner * rest.length) : 0
         const body = action => step.delayed ? (inside => hold().then(() => action(inside))) : action
         const route = (command, relativeRoute = step.route) => {
-            if (relativeRoute === "direct") return command(chain, path)
+            if (relativeRoute === "direct") return command(chain, keys(path))
             if (relativeRoute === "nested" && rest.length) {
-                return r.enter(chain, outer, ctx, true, body(inside => r.enter(inside, rest.slice(0, innerLength), ctx, true,
-                    body(nested => command(nested, rest.slice(innerLength))))))
+                return r.enter(chain, keys(outer), ctx, true, body(inside => r.enter(inside, keys(rest.slice(0, innerLength)), ctx, true,
+                    body(nested => command(nested, keys(rest.slice(innerLength)))))))
             }
-            return r.enter(chain, outer, ctx, true, body(inside => command(inside, rest)))
+            return r.enter(chain, keys(outer), ctx, true, body(inside => command(inside, keys(rest))))
         }
         if (kind === "lookup") {
             if (observed) {
                 const through = path.slice(0, -1).every((_, index) => isContainer(read(model, path.slice(0, index + 1))))
-                keep(r.lookupPath(chain, path, ctx), through ? display(read(model, path)) : "ERR", `lookup ${path.join(".")}`)
+                keep(r.lookupPath(chain, keys(path), ctx), through ? display(read(model, path)) : "ERR", `lookup ${path.join(".")}`)
                 coverage.add(`lookup:${phase}`)
             }
         } else if (kind === "noop-entry") {
-            keep(r.enter(chain, path, ctx, step.mutable, step.delayed ? () => hold() : () => undefined))
+            keep(r.enter(chain, keys(path), ctx, step.mutable, step.delayed ? () => hold() : () => undefined))
             coverage.add(`noop-entry:${step.mutable ? "mutable" : "readonly"}:${step.delayed ? "delayed" : "ready"}`)
         } else if (kind === "set" || kind === "replace" || kind === "delete") {
             if (!writable(model, path) || kind === "replace" && path.length > 2) continue
@@ -177,17 +191,17 @@ async function runProgram({ container, steps }, seed, mode, coverage) {
             }
             const predecessorValue = value
             apply(predecessor, predecessorValue)
-            keep(r.enter(chain, outer, ctx, true, inside => hold().then(() => predecessor === "delete"
-                ? r.deletePath(inside, target, ctx) : r.assignPath(inside, target, predecessorValue, ctx))))
-            if (observed) keep(r.lookupPath(chain, path, ctx), display(read(model, path)), "conflict predecessor")
+            keep(r.enter(chain, keys(outer), ctx, true, inside => hold().then(() => predecessor === "delete"
+                ? r.deletePath(inside, keys(target), ctx) : r.assignPath(inside, keys(target), predecessorValue, ctx))))
+            if (observed) keep(r.lookupPath(chain, keys(path), ctx), display(read(model, path)), "conflict predecessor")
             const nextValue = freshValue(step.shape, step.value + 100)
             if (writable(model, path)) {
                 apply(first, nextValue)
-                keep(first === "delete" ? r.deletePath(chain, path, ctx) : r.assignPath(chain, path, nextValue, ctx))
+                keep(first === "delete" ? r.deletePath(chain, keys(path), ctx) : r.assignPath(chain, keys(path), nextValue, ctx))
             }
             keep(second === "nested"
-                ? r.enter(chain, outer, ctx, true, inside => r.enter(inside, target, ctx, true, () => undefined))
-                : r.enter(chain, path, ctx, true, () => undefined))
+                ? r.enter(chain, keys(outer), ctx, true, inside => r.enter(inside, keys(target), ctx, true, () => undefined))
+                : r.enter(chain, keys(path), ctx, true, () => undefined))
             coverage.add(`conflict:${predecessor}:${first}:${second}`)
         }
         coverage.add(`step:${phase}`)
