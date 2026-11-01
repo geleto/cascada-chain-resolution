@@ -1,3 +1,10 @@
+// Layout mapping: destination index (after) -> source index (before operation).
+// example: reverse() maps indexes [0, 1, 2] to [2, 1, 0] without awaiting element values.
+// Remaps store PropertyPlacement references, not source indexes; new values are
+// stored directly and missing entries are holes. Concat can combine sources.
+// Publication captures and copies/transfers source versions to the destination;
+// ArrayRangeRemap offsets its entries by the destination start index.
+
 import { ArrayView } from "./array-view.js"
 import { defineCopyProperty } from "./placement-structure.js"
 import * as languageProperties from "./language-properties.js"
