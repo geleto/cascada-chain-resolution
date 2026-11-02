@@ -1,56 +1,42 @@
-# Partial Array publication: two implementation approaches
+# Partial Array publication: queryable block layouts
 
-## 1. Purpose and status
+## 1. Decision and status
 
-This document compares two ways to represent an Array whose final layout is only partly available:
+Use **one queryable block layout integrated with the existing Array machinery**. Each captured Array version has one logical layout. Ordinary Arrays and simple ArrayViews remain compact representations; they do not require a block-list allocation.
 
-- **Approach A — shared range mappings:** extend the existing Array storage, property versions, and ArrayViews with descriptions of unfinished regions.
-- **Approach B — persistent segments:** represent the logical Array as a sequence of shared pieces that can be concatenated, sliced, and traversed in either direction.
+The earlier alternatives were **A: extend existing storage with partial mappings** and **B: retain a persistent sequence of pieces**. The selected design combines A's existing property/version boundary with B's useful block structure. How blocks are stored, updated, and materialized are implementation choices within this architecture.
 
-Both must provide the same safe, ordered iteration. Both may conservatively wait when they cannot prove that a position is available. Neither may expose a provisional value or position that an earlier unfinished command could invalidate.
+The shared architecture is selected; production implementation and work bounds are not yet validated. [iterate-plan.md](iterate-plan.md) owns the method contracts, iterator API, effect/failure rules, and rollout. [Data limitations](docs/data-limitations.md) remains authoritative for current production behavior. [Repair simplification](repair-simplification-plan.md) is a separate revision.
 
-The current recommendation is **A, with a small end-relative query extension evaluated separately**. This is an architectural recommendation, not a completed implementation or a demonstrated performance result. B remains a candidate if its broader benefits justify the integration cost.
+The design must preserve sequential equivalence, captured versions, ownership, and deterministic poisoning. The plan's supported dependency rules define which facts must be available and survive failure. Conservative internal bounds cannot override those rules. Representation choices change computation cost, not required dependencies, command effects, or poison presence.
 
-The implementation contract and unresolved failure decisions remain in [iterate-plan.md](iterate-plan.md). This comparison explains the mechanisms and tradeoffs without repeating the full method specification.
+## 2. Runtime concepts
 
-## 2. Runtime concepts needed for the comparison
-
-### 2.1 A logical Array is more than its JavaScript storage
-
-The runtime already separates an Array's logical contents from its physical backing:
+### 2.1 Logical data and physical storage
 
 | Concept | Meaning |
 | --- | --- |
-| **Placement** | A logical location such as Array index 2. A present slot has a value; a hole is absent even though its index is within length. |
-| **Property version** | The captured state of one placement, including a pending value or a later settlement obligation. An earlier reader keeps its version when a later command writes that location. |
+| **Placement** | A logical `(container, key)` location. A present Array index holds a property version; a hole is absent even though its index is within length. |
+| **Property version** | Captured value, presence, and pending delivery state. Earlier readers retain their version through later writes. |
 | **ArrayView** | An internal view over backing storage, currently using a start offset, logical length state, and owner-local overrides. |
-| **Length bounds** | A guaranteed minimum length and possible maximum length. Exact length is available when the bounds agree. |
-| **Layout mapping** | For each position in the destination Array (after the operation), identifies its origin position in the captured source Array (before the operation): **destination index → source index**. A destination can also be supplied directly by a new value or a hole. See the [example below](#example-reversing-an-array-with-a-pending-value). |
-| **Data producer** | A Promise supplying a pending value, or the runtime computation that completes an unfinished layout. This is a descriptive term, not an additional producer object. See the [example below](#example-supplying-a-pending-value). |
-| **Lease and copy-on-write** | Protection that lets earlier captures retain their logical values while later mutations proceed. Capturing does not necessarily copy the whole Array. |
+| **Layout mapping** | For each destination position (after an operation), identifies its origin in the captured source (before): **destination index → source index**. New values and holes can supply destinations directly. See the [example below](#example-reversing-an-array-with-a-pending-value). |
+| **Bounds** | Guaranteed minimum and possible maximum for a normalized coordinate or length. Equal bounds establish an exact value. |
+| **Data producer** | A Promise supplying a value, or retained runtime work completing an unfinished layout. This does not require another producer object or scheduler. |
+| **Lease and copy-on-write** | Protection preserving captured logical values against later writes; capture need not copy the whole Array. |
 
 The method generates the layout mapping; a generic algorithm applies it to the source to produce the destination.
+
+Source and destination are logical states, not necessarily separate physical Arrays. An operation normally maps from one captured source version; `concat` and inserted-value blocks can have several explicit sources. No mapping may read a later live version instead.
 
 #### Example: reversing an Array with a pending value
 
 ```text
-Source (captured before reverse): [pendingA, "B", "C"]
-Destination (after reverse):      ["C", "B", pendingA]
+Source:      [pendingA, "B", "C"]
+Destination: ["C", "B", pendingA]
+Mapping:     destination i → source 2-i
 ```
 
-There is one captured source version. Every source index in this mapping refers to that same version:
-
-| Destination index | Source index | Value |
-| --- | --- | --- |
-| 0 | 2 | `"C"` |
-| 1 | 1 | `"B"` |
-| 2 | 0 | `pendingA` |
-
-The runtime knows where every element belongs without waiting for `pendingA`. It can describe the entire mapping with one rule: destination index `i` reads source index `2-i`. It does not need a separate mapping entry for every element. Later writes cannot change the captured source.
-
-Source and destination describe logical states; they do not require two separate physical Arrays. Operations such as `concat` have several captured source Arrays, but each source is still fixed at the operation's input position. The mapping does not independently choose a historical version for each element.
-
-For a more complex operation, part of the rule may remain unresolved. A splice with a pending deletion count can determine its unchanged prefix while leaving the source positions of its remaining elements undecided. Supporting such partial mappings is planned work.
+All source indexes refer to the same captured Array version. The layout is determined without awaiting `pendingA`.
 
 #### Example: supplying a pending value
 
@@ -59,515 +45,446 @@ source = [pendingA, "B"]
 result = source.slice(0, 2)
 ```
 
-Here, **the pending data is simply supplied by a Promise**, `pendingA`. The slice can return an Array immediately because its length and positions are known. Its first slot follows the captured pending value; when that value becomes `"A"`, readers can use it without running the slice again.
+The result's shape is ready; its first slot follows `pendingA`. If a later command assigns `result[0] = "X"`, settlement still serves earlier captures without overwriting `"X"`.
 
-Existing property versions handle the destination: if a later command replaces `result[0]` with `"X"`, settlement still serves earlier captures without overwriting `"X"`. Calling this a data producer does not introduce another object around the Promise.
+Finishing an unknown layout needs more than the payload Promise: it retains the required method arguments, captured source placements and shape, and a continuation. The [partial splice example](#35-partial-splice) shows these dependencies.
 
-**An unfinished layout also needs code that uses the promised value.** Consider the planned partial splice:
+### 2.2 Existing implementation and required changes
 
-```text
-source = ["A", "B", "C", "D"]
-source!.splice(2, pendingCount, "X")
+The runtime already has captured length/`inRange(i)` questions, primarily for uncertain indexed growth; pending property versions; ArrayViews; point overrides; source captures; and ownership protection.
+
+Current remaps are ordinary sparse Arrays of placement references or inserted values. They are built explicitly, not by Proxy tracing. Many methods apply native Array operations to those references and then publish through common placement machinery. Pending values and presence can survive this process; generic promised layout indexes/counts are not implemented.
+
+General partial publication through pending structural arguments and the public managed iterator are planned work. Many current methods still prepare required arguments and exact length before building their output.
+
+A compressed block list needs runtime range operations: native Array methods would treat a block as one element. No compiler range analysis is required. Adapted methods must use the same semantic mapping/write evaluator for ready and pending inputs; native assembly may materialize determined layouts.
+
+Relevant sources: [array-remap.js](src/array-remap.js), [array-invocation.js](src/array-invocation.js), [array-length.js](src/array-length.js), [array-view.js](src/array-view.js), and [property-versions.js](src/property-versions.js). See also [ArrayView documentation](docs/array-view.md).
+
+## 3. Blocks and partial mappings
+
+### 3.1 Counted source blocks
+
+Reduce mapping memory by describing consecutive source positions with one entry.
+
+- A block selects a captured source using `{ index, count, fromEnd }`; omitted `count` means `1`, and omitted `fromEnd` means `false`.
+- `abs(count)` is its length. A negative count traverses backward: `{ index: 5, count: -3 }` selects source indexes `5, 4, 3`. Zero count contributes no positions.
+- Reversing a nonempty block moves `index` to its other end and flips `count`. Whole-layout reversal also reverses block order.
+- Signed counts allow composed layouts to contain both forward and backward blocks.
+
+These descriptors are internal. Public iteration still uses ordinary numeric destination indexes.
+
+Block sequences describe logical order, not a mandatory flat list of absolute destination indexes. A deferred region may retain a nested transformation such as reversal until it can be reduced. Lists, chunks, and indexed structures remain storage choices subject to the same queries and work bounds.
+
+#### End-relative indexes
+
+`index` is a nonnegative offset in the captured source. With `fromEnd: false`, zero selects the first element; with `fromEnd: true`, zero selects the last. Keep the flag and offset until a numeric coordinate is actually required, rather than immediately awaiting length to compute `length - 1 - index`.
+
+```js
+{ index: 0, count: 1, fromEnd: true }  // last element
+{ index: 0, count: -3, fromEnd: true } // last three, traversed backward
+{ index: 2, count: 3, fromEnd: true }  // last three, traversed forward
 ```
 
-The prefix `A,B,X` is determined. To complete the remainder, the runtime retains:
+The flag selects the reference end; the sign of `count` still selects traversal toward increasing or decreasing source positions. Use the same coordinate convention for queries and range-edit targets. A source index selects contents; an edit target selects where to replace them. Method normalization preserves clamping, empty ranges, and half-open range semantics before constructing these spans.
 
-- `pendingCount`, the Promise supplying the deletion count.
-- Captured source slots for `C` and `D`, plus the original length and splice bounds needed to calculate the result.
-- A continuation: the code registered to run when the Promise settles. For example, count 1 selects `D` for destination index 3 and establishes length 4.
+When the method already knows the reference end, a pending offset retains that known flag. If a pending input can select either end, keep that choice deferred rather than guessing. Membership and capacity checks still apply.
 
-These are the concrete “inputs and callbacks.” They can be ordinary captured state and Promise-continuation code, using the runtime's existing mechanisms. The count Promise supplies a number; the continuation uses that number to finish the layout. “Data producer” is shorthand for this completion work, not a proposed new scheduling system. The splice's own result may remain pending until its required work finishes.
+### 3.2 Inserted values, repetition, and holes
 
-Ordinary reads, copies, queries, export, and iteration must use the same logical property boundary. An iterator must not inspect raw backing storage to bypass unfinished mutations.
-
-### 2.2 What already exists
-
-The runtime already provides:
-
-- Captured length and `inRange(i)` questions, principally for uncertain indexed growth.
-- Property versions that carry pending values without waiting for their payloads.
-- ArrayViews, point overrides, source captures, and ownership protection.
-- Controlled remaps that move captured placement references rather than resolving every element value.
-
-It does **not** yet provide general partial layout publication through pending structural method arguments. Many intrinsic-backed methods still prepare their required arguments and exact length before invocation. The public managed iterator is also planned work.
-
-Relevant implementation sources are [array-length.js](src/array-length.js), [array-view.js](src/array-view.js), [property-versions.js](src/property-versions.js), and [array-invocation.js](src/array-invocation.js). [ArrayView documentation](docs/array-view.md) describes the existing storage and ownership model.
-
-## 3. The common prefix mechanism
-
-### 3.1 Position certainty and value readiness are separate
-
-For this captured Array:
+Distinct inserted values can share an internal backing Array:
 
 ```text
-[pendingA, "B"]
+values = ["X", "Y", "Z"]
+block  = { source: values, index: 0, count: 3 }
 ```
 
-both positions can be issued immediately:
+Splitting that block shares its backing instead of copying values. An Array inserted as one element remains one element; it is distinct from this internal backing Array.
 
-```text
-index 0 -> pendingA
-index 1 -> "B"
-```
+A repeated value, as in `fill("X")`, needs one retained value and a repetition count. Repeated object values preserve their shared identity. Holes can be represented as runs of absent placements; they must not become present `undefined` except where the method specifies that conversion.
 
-The important guarantee is that these are the **final slots at the iterator's command position**. A later command creates another version and cannot rewrite what this iterator observes.
+### 3.3 Promised indexes and counts
 
-An earlier unfinished mutation is different. If it may change slot 0, the iterator must capture a promise for the final contents of slot 0, including that mutation. It cannot hand out the old element currently stored there and hope it stays put.
+Allow known regions to be used while other parts of the layout remain unfinished.
 
-A hole inside length still counts as an Array iteration position and yields `undefined`. This does not make a hole equivalent to a present `undefined` placement for other operations.
+An `index` or `count` can depend on a Promise. Consume it only when the requested fact or required effect depends on it. Pending element values do not prevent a determined layout.
 
-### 3.2 Bounds establish a safe prefix
+Promise-valued fields participate in shared deferred-region state. That state retains the normalized domain/constraints and causal Error even after failure; a rejected numeric Promise alone is insufficient. Field placement is an implementation detail, not a separate architectural alternative.
 
-Suppose captured final length is somewhere between 3 and 5:
+Retain the necessary source captures and structural relationships. Length intervals alone do not preserve source identity, block order, or relationships between selectors.
 
-```text
-indexes 0, 1, 2: definitely in range
-indexes 3, 4:    not yet determined
-index 5 onward: definitely out of range
-```
+One deferred region can serve many reads. Do not allocate a Promise or descriptor for every possible destination in advance.
 
-Once root selection, authority, and publication prerequisites are satisfied, the iterator can issue positions 0–2 with their final-slot values or promises. It waits at position 3.
+#### Deferred-region state
 
-Bounds belong to a captured version. They may tighten as its dependencies settle. A later mutation can produce a different version with a smaller length; that does not retract the earlier iterator's prefix.
+Retain only what the unfinished mapping needs:
 
-Both A and B use this mechanism. A more expressive representation may determine some values sooner, but a segment tree is not necessary to issue positions with pending values.
+- captured source/shape facts and payloads, with their protection;
+- the pure mapping rule for the affected region;
+- shared control dependencies, their remaining domains/constraints, and causal Errors;
+- live destinations, retained uses, and active questions that need notification.
 
-### 3.3 Settlement updates facts; it does not replay commands
+These are logical obligations; reuse captured versions, publication records, and continuations rather than duplicating their state in a new registry.
 
-The intended flow is:
+Required command effects and completion stay with their existing operation owner. A transferred result-data producer must not retain an invocation merely to keep its mapping usable.
 
-1. Capture the command's inputs and install its successor dependencies once.
-2. Compute available shape and layout facts.
-3. Issue the currently guaranteed prefix.
-4. Retain a question for the next undecided position.
-5. When a relevant dependency settles, update the affected facts and resume from the saved cursor.
+#### Queries and settlement
 
-Re-evaluating a small, pure bounds calculation is acceptable. Re-running `splice`, invoking a comparator again, or scanning the entire command history after every settlement is not the intended implementation.
+A query reduces available facts to a captured source, payload, hole, or established Error. Otherwise it retains the still-required dependencies. Do not guess an address or replay the original operation.
 
-Already-issued item promises have their own dependencies. Their settlement need not wake or restart the iterator.
+On settlement, advance affected facts and required placement/index publication before notifying consumers. Release spent captures at their last required use. Replace resolved regions with ordinary blocks when useful; do not eagerly flatten unread regions merely because one control settled. Failure retains only the alternatives and causes still relevant to the mapping.
 
-This cannot bypass an earlier producer that may still issue unrestricted mutations. If that producer could still clear the Array, no existing prefix is final. Once its relevant command issuance closes, unfinished payloads and captured regional dependencies can remain without forcing whole-Array completion.
+### 3.4 Optional bounds
 
-## 4. Approach A: shared range mappings
+Derive useful bounds from method semantics and captured shape, without predicting Promise values.
 
-### 4.1 What is stored
+- `sourceIndexRange` and `countRange` are inclusive `[min, max]` bounds on normalized mapping fields. Index bounds describe nonnegative offsets from the selected end. They must contain every possible successful normalized outcome and may only narrow for that capture.
+- On a length-10 Array, `splice(5, pendingCount)` deletes between zero and five elements, regardless of the unknown argument's eventual numeric value.
+- Signed count bounds `[-4, -2]` imply length bounds `[2, 4]`; a conservative interval `[-4, 2]` implies `[0, 4]`. Keep a known direction constraint rather than unnecessarily widening across zero. A deferred selection between forward and reversed blocks may leave direction unknown; signed counts do not require it to be unknown.
+- Keep the first affected destination coordinate separate from the source index. A front-relative `destinationStartRange` with minimum `5` leaves positions `0–4` unaffected, regardless of source traversal direction. Neither a source index of `5` nor an end-relative target offset of `5` establishes that prefix guarantee.
+- Preserve known total-length facts. For example, `fill` preserves length even when its block boundaries are pending; independent block bounds must not lose that fact.
 
-A keeps existing Array/ArrayView storage and property versions. It adds compact descriptions of regions whose contents are forwarded, replaced, or still being determined.
+Store bounds only where needed; cheap derivation and exact values need no redundant interval records. The specified rules may require less than an unlimited proof procedure could discover, but every representation must preserve their required answers. A wider internal interval is not a reason to await an irrelevant input or return extra poison. Never certify a position that can disappear.
 
-Conceptually, a captured version contains:
-
-```text
-shape facts
-point overrides
-range mappings
-captured backing / source versions
-```
-
-A range mapping might say:
-
-- Destination indexes 0–9 use the same indexes of a captured source.
-- Destination indexes 10–19 use source indexes 20–29.
-- A selected range contains one retained fill payload.
-- A region's source selection depends on an unfinished control argument.
-
-These are descriptions of data dependencies, not instructions to execute the mutation again. A single deferred region can serve many reads; we need not allocate a promise for every possible index in advance.
-
-The exact indexing structure for these descriptions is still to be validated. A does not imply an ever-growing linked list of operations.
-
-### 4.2 Example: partial splice
+### 3.5 Partial splice
 
 ```text
 a = ["A", "B", "C", "D"]
 a!.splice(2, pendingCount, "X")
 ```
 
-The normalized deletion count `d` is between 0 and 2. A can describe the successor as:
+Let `d` be the normalized deletion count, between zero and two. The successor layout is:
 
 ```text
-length:        between 3 and 5
-index 0:       captured source index 0 -> "A"
-index 1:       captured source index 1 -> "B"
-index 2:       inserted payload       -> "X"
-index 3 onward: deferred remainder selected by d
+captured source block: index 0, count 2   → [A, B]
+inserted value:                          → [X]
+deferred source block: index 2+d, count 2-d
+total length:                           → between 3 and 5
 ```
 
-The iterator can issue `A`, `B`, and `X` immediately. The splice's removed-elements result can still be pending.
+The first three positions are available independently of `d`. The remainder retains `pendingCount`, captured source placements for `C/D`, the required shape facts, and continuation work. The splice's removed-elements result and command completion may still depend on the count.
 
-When `d` settles, the same successor becomes:
-
-| d | Resulting Array |
+| d | Successor Array |
 | --- | --- |
 | 0 | `[A, B, X, C, D]` |
 | 1 | `[A, B, X, D]` |
 | 2 | `[A, B, X]` |
 
-Only the unfinished facts advance. Previously issued positions remain unchanged.
+If a later command assigns `a[1] = "Y"`, its successor uses the new point version. Count settlement must not restore `B` there. An earlier capture still sees `B`.
 
-### 4.3 Later writes override their own destinations
+## 4. Queries and publication
 
-If a later command assigns `a[1] = "Y"`, its successor uses a new point version for index 1. The old splice producer must not replay its prefix and restore `B` when the count settles.
+### 4.1 One query boundary
 
-An earlier iterator still sees its captured `B`; a later reader sees `Y`. The existing version and publication-authority model provides the basis for this separation.
+Behind the existing logical-property boundary, ask whether a destination position is definitely in range, then capture its final value or value Promise.
 
-This is why A fits point assignment, deletion, and bounded `fill` well: these operations already have explicit destination coordinates and a natural place to install overrides.
+- Use exact mappings, captured source/shape facts, and optional bounds. Reuse the existing captured length/`inRange` facilities; do not create a separately authoritative prefix model.
+- Reads, copies, searches, writes, Error queries, export, and iteration consume the same logical state. No consumer bypasses unfinished work through raw backing storage.
+- Point overrides, including absence, mask older mappings according to the captured version. Never combine an old layout with later live overrides.
+- A hole within length is an iteration position yielding `undefined`, while other consumers retain the distinction between absence and a present `undefined`.
 
-### 4.4 Strengths and costs
+### 4.2 Position certainty and value readiness
 
-**Strengths**
+`[pendingA, "B"]` can issue both positions immediately. A known destination extent can also issue positions whose source indexes remain pending, using Promises for their final contents.
 
-- Extends the current logical-property boundary and placement machinery.
-- Gives ordinary reads and iteration the same partial data.
-- Fits fixed-index writes, sparse presence, and local replacement.
-- Can conservatively defer a difficult mapping without adding a general solver.
+Those Promises include every earlier unfinished mutation that may select, overwrite, or delete the contents. Never publish the old stored value provisionally.
 
-**Costs and risks**
+Bounds extend what queries can prove. A known three-position block followed by an unknown-count block permits three positions immediately. If the second block has count bounds `[2, 4]`, five positions are guaranteed even while their values remain pending.
 
-- Deferred mappings can form long chains if each merely wraps its predecessor.
-- Repeated reads can revisit the same history unless captures, normalization, and indexes prevent it.
-- Superseded ranges must release their source uses while older snapshots retain theirs.
-- A purely numeric mapping may wait for exact length even when an end-relative fact would answer the read.
+For the partial splice's length bounds `[3, 5]`, indexes `0–2` are in range, `3–4` are undecided, and `5` onward are out of range. The bounds refine the captured version; a later mutation may create a shorter successor without retracting that capture.
 
-A reduces the scope of the storage redesign. It does not eliminate the need to design and measure dependency propagation.
+### 4.3 Ordered progress
 
-## 5. A possible extension to A: read from either end
+1. Establish target selection, authority, and required publication validation.
+2. Capture the Array version and ask whether the next position is in range.
+3. If known in range, capture its final slot and issue it; the value may be pending or poison.
+4. If out of range, finish. If membership is pending, retain the question. If membership fails, report the structural failure.
+5. Resume at that position when relevant facts change.
 
-This is a query capability, not a separate storage representation or public iterator API.
+Already-issued value Promises have their own dependencies; their settlement need not restart the cursor. Required errors and completion retain the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
 
-Instead of supporting only “read numeric position i,” a captured mapping can also answer “read offset r from the end.” Bounds still establish whether the selected position exists.
+This revision implements only ordered prefix delivery. The [future out-of-order iterator](iterate-plan.md#future-out-of-order-element-delivery) changes callback delivery and pacing over the same captured layout; it adds no notification or scheduling machinery to the current implementation. Payloads can already settle out of order.
 
-Some local rules are simple:
+A newly produced Array root must also pass its result validation. For example, `with(pendingIndex, value)` waits for index validity and may resolve to poison; a mapping cannot expose an Array root that might later be retracted.
 
-| Operation | Query rule |
-| --- | --- |
-| `reverse` | A front query becomes a back query on the captured predecessor, and vice versa. |
-| `push` of k items | The last k offsets select inserted payloads; deeper back offsets select the predecessor at offset `r-k`. |
-| `unshift` of k items | The first k offsets select inserted payloads; deeper front offsets select the predecessor at offset `r-k`. |
+### 4.4 Queries from either end
 
-Other operations can conservatively wait when they cannot locate the requested range. We do not need a rule for every combination of methods.
+A private query or range-edit target uses an offset and the [fromEnd flag](#end-relative-indexes). The [required endpoint rules](iterate-plan.md#required-endpoint-relationships) belong to the semantic plan; the layout implements them through captured blocks and deferred transformations. Bounds establish membership, and local mapping rules preserve the selected source without requiring an absolute coordinate first.
 
-### Example: pending splice, push, reverse
+Numeric coordinates remain necessary for ordinary indexed access. In `S + [M, N]`, where S has length between one and three, the last value is N but numeric index 1 may belong to S or select M.
+
+#### Read or edit a known suffix
+
+For `[A,B] + deferredRemainder + [Z]`, the final block is known even while Z's numeric index is not. Applied independently, `at(-1)` selects Z, `slice(-1)` constructs [Z], `pop()` removes that final block and returns Z, and `fill("Y",-1)` replaces it with [Y]. Relative edits use the same capture and composition machinery as other edits; they do not write to a guessed numeric key.
+
+When an earlier index/count settles, update affected offsets, bounds, and blocks. Fixed published positions never move; unresolved coordinates become determined. If the selected block genuinely depends on an unresolved control, retain that dependency. This is ordinary dependent-remap work, not command replay.
+
+#### Example: pending splice, push, reverse
 
 ```text
 a = ["A", "B"]
 a!.splice(0, pendingCount)
 a!.push("Z")
+a.at(-1)                 // "Z", even if pendingCount fails
 a!.reverse()
 iterate a
 ```
 
-Ordinary bounds alone give:
+Length bounds progress through `[0, 2]`, `[1, 3]`, and `[1, 3]`. The appended value is last regardless of the deletion count. The negative-index read must return `"Z"` without waiting for that count; after reverse, position zero must likewise yield `"Z"`. Dependent length and other positions retain their pending/failed facts.
+
+The selector reduction is:
 
 ```text
-after splice:  length in [0, 2]
-after push:    length in [1, 3]
-after reverse: length in [1, 3]
+first of reversed result → last of appended result → "Z"
 ```
 
-Therefore the baseline can issue position 0 with a promise for its final contents.
+The known final block becomes first without determining the earlier region's length. This never assigns Z a guessed index in the intermediate Array.
 
-End-relative queries can additionally determine its value:
+This availability and failure rule is fixed, not selected by a performance prototype. Target/authority/capacity validation still precedes publication, and no owning-path blocker may be bypassed. Prototypes must validate topology, snapshots, and bounded work while preserving this result; those implementation obligations do not authorize poisoning Z.
+
+### 4.5 Earlier commands still to be issued
+
+An earlier open producer may still issue `clear`, replacement, or arbitrary mutations. Its current prefix is not final merely because existing mappings have settled.
+
+Release publication once relevant command issuance closes, or a sufficient remaining-effect guarantee proves independence. Path-only entry reservations do not supply that guarantee. Append-only production is one sufficient restriction, not the only one. Pending payloads and unrelated effects need not hold an otherwise final region.
+
+## 5. Composition and optimization
+
+### 5.1 Add one operation at a time
+
+Each operation maps its captured predecessor to a successor. This is the primary composition case; merging two arbitrary complex compositions is optional.
+
+The method supplies semantic mapping and write rules. Common machinery applies available facts, retains unresolved dependencies, and publishes permitted regions. A single operation can still produce multiple blocks or require sorting/classification work.
+
+Ready and pending controls use the same rules. Do not replay the original command or introduce a separate semantic implementation for pending inputs.
+
+### 5.2 Remap composition
+
+Reduce lookup depth and retained intermediate storage by replacing:
 
 ```text
-first of reversed result
-    -> last of pushed result
-    -> "Z"
+destination → intermediate → source
 ```
 
-The absolute append index is never needed for that proof. We have not assigned `Z` a guessed index in the earlier Array; reverse has established its final position in the later Array.
-
-This extension is promising, but not yet a production guarantee. Its interaction with poison, snapshots, graph indexing, source release, and long dependency chains must be validated. A local selector proof alone does not establish those properties.
-
-## 6. Approach B: persistent segments
-
-### 6.1 What “persistent” means
-
-Here, persistent means that later versions share unchanged structure with earlier versions. It does not mean disk storage.
-
-A logical Array is an ordered sequence of pieces. Possible pieces include:
-
-| Piece | Contents |
-| --- | --- |
-| Captured source slice | A range of placements from an earlier version. |
-| Payload run | One or more inserted values or promises. |
-| Hole run | A range of absent placements. |
-| Concatenation | Several pieces in a fixed order. |
-| Deferred region | A piece whose layout or length still depends on unfinished work. |
-
-Reverse changes traversal direction. It need not immediately copy or renumber every element.
-
-The logical structure of a captured version is preserved. A shared producer can settle an unfinished piece, just as a captured promise can settle; a later command does not edit the earlier version's logical contents.
-
-This is internal data structure. Public iteration still uses ordinary numeric indexes.
-
-### 6.2 The same splice as segments
-
-The splice from section 4 can be represented as:
+with:
 
 ```text
-captured slice [A, B]
-    + payload [X]
-    + deferred tail: source slice starting at 2+d
+destination → source
 ```
 
-The first two pieces have known length and contents. The tail's length is between 0 and 2.
+- Preserve selected values, holes, and captured sources. Composition can trim, split, reorder, duplicate, or remove blocks and omit unselected values.
+- Start with resolved indexes/counts. Pending element values do not obstruct composition; unresolved coordinates can leave parts deferred.
+- Preserve dependencies needed to finish deferred regions. Earlier captures and required command work may still need intermediate mappings.
+- If operation mappings are retained as a sequence, they can be folded one by one. Flattened blocks instead describe pieces of one output, each read from its captured source.
 
-This yields the same guaranteed prefix as A. Its main difference is that the ordering of pieces is explicitly represented rather than being recovered through destination mappings.
-
-### 6.3 Why endpoints and reverse fit naturally
-
-For the push/reverse example, the intermediate sequence is:
+#### Example: splitting at block boundaries
 
 ```text
-[unknown-length region] + [Z]
+First mapping:    [{ index: 0, count: 3 }, { index: 10, count: 3 }]
+Selected indexes: [0, 1, 2, 10, 11, 12]
+
+Second mapping:   [{ index: 1, count: 4 }]
+Combined mapping: [{ index: 1, count: 2 }, { index: 10, count: 2 }]
 ```
 
-Traversing it backward reaches `Z` first. The length of the earlier piece is irrelevant to that first value.
+The second mapping selects intermediate positions 1–4. Composition splits at the crossed boundary; it need not expand four individual entries. Reversed blocks follow the same principle.
 
-Appending, prepending, concatenating, and reversing are natural operations on this structure. This is B's strongest advantage.
+Worst-case fragmentation can produce one-element blocks. Compose selectively when reduced lookup depth justifies additional blocks and work; do not rebuild the entire mapping after every operation. This benefits retained layouts; current ordinary remaps are generally materialized per operation.
 
-### 6.4 Numeric indexes still need coordinates
+### 5.3 Local optimization
 
-Suppose the sequence is:
+Reduce fragmentation and storage after construction, composition, **or index/count settlement**.
 
-```text
-S, with length between 1 and 3
-    + [M, N]
-```
-
-Index 1 might be inside `S`, or it might be `M`. A fixed-index read or write cannot choose a piece from the minimum length alone.
-
-The last value is definitely `N`, but that does not make every numeric position immediately selectable. B still needs bounds, deferred coordinate selection, and final-slot promises.
-
-### 6.5 Middle edits and unresolved controls
-
-For a known-range `fill`, B can retain the prefix and suffix and replace the middle piece. A point write can split a source slice around one replacement.
-
-If the split coordinate is unknown, the split must itself be deferred. A general pending `splice`, `fill`, or `copyWithin` therefore still needs operation-specific dependency rules. A sequence of pieces does not remove this work.
-
-A method's known shape facts must also survive. For example, `fill` preserves exact length even if its bounds are pending. Breaking its output into pieces with uncertain individual lengths must not lose that known total or require a solver to rediscover it.
-
-### 6.6 Strengths and costs
-
-**Strengths**
-
-- Structural sharing is natural for concatenation and slicing.
-- Known outer pieces remain accessible despite unknown interior lengths.
-- Reversed traversal can expose a known suffix without knowing its absolute offset.
-- Several operations can reuse a small set of sequence primitives.
-
-**Costs and risks**
-
-- Repeated edits can fragment the sequence into many pieces.
-- Efficient numeric lookup may require a balanced index over pieces and their lengths.
-- Unknown lengths can still prevent navigation to a numeric index.
-- Balancing concatenations does not balance arbitrary chains of deferred transformations.
-- Sharing one source in several places requires tracking each distinct occurrence.
-- Using this as permanent Array storage broadens the changes to parent indexing, ownership, overlays, materialization, and retirement.
-
-Small segment descriptions could also be used inside A's deferred producers. The larger architectural choice is whether to make a general persistent sequence the Array's permanent layout representation.
-
-## 7. How important operations compare
-
-| Operation or workload | A: shared mappings | B: persistent segments |
-| --- | --- | --- |
-| Known positions, pending values | Ordinary captured placement promises. | Pending payloads within known pieces. No prefix advantage over A. |
-| Known-start splice, pending count | Known prefix/insertion, deferred remainder. | Known pieces followed by a deferred remainder. |
-| Push, unshift, reverse | Local mappings; optional end-relative queries improve readiness. | Sequence boundaries and traversal direction give the same proofs naturally. |
-| Point assignment, deletion, bounded fill | Fits existing overrides and range publication. | Requires split/replacement or an integrated override mechanism. |
-| Overlapping copyWithin | Capture pre-write source versions, then map destinations. | Reuse slices of the pre-write version, never the live destination. |
-| Slice and concat | Reuse captured ranges where suitable; defer unresolved offsets. | Strong structural fit, but source classification and result-root validation still apply. |
-| Sort | Preserve known shape; wait for required comparisons for affected values. | A deferred sorted piece can serve the same role. A tree cannot prove comparison results. |
-| Flat | Required classification, depth, cycle and capacity rules still apply. | Pieces help assembly after those facts are established; they do not remove validation barriers. |
-| Full export or native receiver preparation | Consume required shape and placements, then assemble. | Same obligation; segment structure does not permit exporting only the healthy prefix. |
-
-For example, overlapping copyWithin must preserve the original source:
-
-```text
-[A, B, C, D].copyWithin(1, 0, 3)
-    -> [A, A, B, C]
-```
-
-A captures source positions 0–2 before destination writes. B retains a slice of the old version. Neither may read destination index 1 after overwriting it and accidentally copy the new `A` again.
-
-## 8. Runtime obligations neither representation removes
-
-### 8.1 Graph indexing and ownership
-
-The runtime tracks logical `(parent, key)` relationships, including Array indexes. These support ownership, copy-on-write, Error summaries, and retirement.
-
-Current ArrayView sharing projects backing positions through a single offset view. B can require several source slices, reversed slices, and repeated occurrences within one Array. Its projection into logical indexes is therefore more general.
-
-For example, concatenating the same captured slice twice creates two sets of logical placements, even though the underlying data is shared. Registering only one occurrence would lose topology.
-
-If a preceding piece has unknown length, a later object's numeric index may be unknown. Neither implementation may invent a parent edge at a guessed index. Captures or leases retain the required source until actual publication is possible. Once a placement is published, its relationships must be complete before consumers observe it.
-
-A also needs new integration for partial regions. The difference is that it can publish known coordinates through existing placements instead of immediately generalizing all backing projections.
-
-### 8.2 Writes and identity are separate from layout
-
-Two reverses can restore the original arrangement:
-
-```text
-a!.reverse()
-a!.reverse()
-```
-
-The representation may reuse the original layout afterward. That does not cancel any prescribed writes, failure boundaries, or write-based identity changes.
-
-Both approaches need an explicit write/effect decision in addition to a description of resulting values. A simpler layout is not evidence that the commands were no-ops.
-
-### 8.3 Poison is a semantic outcome, not a storage optimization
-
-For the selected partial-splice semantics, a failed count leaves the specified independent `A,B,X` prefix usable while dependent length and remainder facts fail. Both representations must implement that same contract.
-
-Three states must remain distinct:
-
-- **Pending:** required input has not settled.
-- **Conservatively unknown:** the analysis cannot yet prove an answer from the available facts.
-- **Poisoned:** the specified result depends on a failed prerequisite.
-
-These are distinctions for reasoning, not a new public value type. Conservatism limits early proofs; once the inputs required for normal evaluation are available, the operation must finish its normal computation. The first two states are not permission to invent an Error. Conversely, an owning-path poison cannot be bypassed by inspecting hidden backing data or taking an end-relative shortcut.
-
-A stronger representation may prove an independence that a simpler one does not. If that changes Error presence, it is a semantic decision to settle and apply consistently, not an optional fast path. Storage eligibility or settlement order must not choose the failure result.
-
-Capacity failure and unresolved write-effect decisions remain separately identified in [the implementation plan](iterate-plan.md#12-remaining-failed-effect-contract). Choosing A or B does not settle them. Repair remains limited by [its own specification](repair-simplification-plan.md); neither representation may reconstruct missing layout through repair.
-
-### 8.4 Sources must be released at their last use
-
-Shared structure is useful only while its retained inputs are needed.
-
-- Replacing the current Array must detach old producers from that destination.
-- Earlier snapshots keep their own required captures.
-- A late settlement may complete an old capture, but must not overwrite a later version.
-- Overwriting a deferred region must release obsolete source uses when no other consumer needs them.
-- A completed call that returns a partial Array must transfer unfinished production to shared state rather than leave it dependent on a closed invocation.
-
-These are lifetime and publication responsibilities. Garbage collection of a tree or mapping object does not establish them by itself.
-
-## 9. Work bounds and failure modes
-
-### 9.1 What to avoid in A
-
-If each command adds a wrapper and each read walks every wrapper, a small Array can acquire expensive history despite having little data.
-
-Likewise, if each settled argument scans every operation issued so far, N settlements can cause work proportional to `1 + 2 + ... + N`.
-
-Needed protections include shared captures, normalization of resolved mappings, removal of superseded dependencies, and notifications limited to facts still being consumed. The exact mechanism needs a prototype; there is no established constant-time guarantee.
-
-### 9.2 What to avoid in B
-
-Copying an ever-longer flat segment list on every append can also produce quadratic work. A permanently skewed concatenation tree can make lookups history-sized.
-
-A balanced structure can address those particular problems, but not every deferred transformation is a concatenation. Pending edits can still leave long chains above an otherwise balanced sequence.
-
-Snapshots may legitimately retain old structure. The test is whether retention corresponds to live captured versions and necessary unfinished work, rather than obsolete wrapper chains or duplicated indexes.
-
-### 9.3 Measure the same workloads
-
-Compare the approaches with:
-
-1. Ordinary known-layout Arrays containing pending values.
-2. Partial splice followed by point reads, bounded writes, and iteration.
-3. Endpoint operations and reverse around an unknown-length region.
-4. Repeated fixed-index edits and overlapping copies.
-5. Sparse Arrays with large holes.
-6. Retained snapshots followed by current-owner replacement or truncation.
-7. Many pending operations on a small Array, including operations later proved to have no effect.
-8. One permanently pending branch while unrelated work settles and releases its inputs.
-
-Count allocations, mapping/segment visits, notifications, retained captures, and actual emitted output separately. Faster prefix delivery is not a sufficient win if it requires unbounded history or persistent extra copies.
-
-## 10. Recommendation and remaining decisions
-
-### Recommended direction
-
-Start with **A: shared range mappings behind the existing property boundary**. It addresses the required prefix behavior while limiting the storage redesign.
-
-Evaluate end-relative queries as a small, general extension. They may recover useful endpoint/reverse concurrency without a permanent segment tree or operation-combination rules.
-
-Use small shared pieces where they simplify the mapping implementation. Do not keep A and B as separate authoritative Array models with different behavior.
-
-### When B could be preferable
-
-B becomes more attractive if prototypes show that:
-
-- Common concatenation, slicing, and remapping workloads otherwise require substantial copying.
-- A accumulates special-case state that common sequence primitives would remove.
-- Segment sharing improves those workloads without making indexed edits, topology, or lifetime handling disproportionately complex.
-
-The push/reverse example alone is not enough to justify the larger change.
-
-### What is established and what is not
-
-| Established design direction | Still to validate or settle |
-| --- | --- |
-| One shared logical-property interface for all consumers. | Compact storage and indexes for deferred mappings. |
-| Sound conservative bounds and captured final-slot promises. | Propagation and retention costs across long histories. |
-| Incremental fact updates, without replaying commands. | Production integration of end-relative reads. |
-| No provisional values or guessed positions. | Failure semantics of stronger composed-selector proofs. |
-| Existing ownership, publication, and snapshot guarantees remain binding. | The remaining failed-effect contract in the implementation plan. |
-
-The objective is a small common mechanism that makes useful progress, not a complete proof system for every theoretically deterministic result.
-
-## 11. Ideas
-
-Prototype candidates under the existing [publication contract](#3-the-common-prefix-mechanism) and [ownership, failure, and lifetime obligations](#8-runtime-obligations-neither-representation-removes).
-
-### 11.1 Count per remap entry
-
-Reduces mapping memory by representing consecutive source elements with one entry.
-
-- Remap entries can represent captured source blocks as `{ index, count }`; omitted `count` means `1`.
-- `abs(count)` is the number of elements; a negative count traverses backward from `index`. Example: `{ index: 5, count: -3 }` selects source indexes `5, 4, 3`.
-- Signed counts support mixed directions after composition. Reversing a nonempty block moves `index` to its other end and flips `count`; whole-remap reversal also reverses block order.
-- Distinct inserted values can share an internal backing Array through `{ source, index, count }`; splitting entries need not copy values. Repeated values, as in `fill`, need only one value and a repetition count. An Array-valued element remains one element.
-- Block lists need runtime range operations: native Array methods would treat each block as one element. No compiler range analysis is required.
-
-### 11.2 Promises for index and count, with optional bounds
-
-Allows earlier publication of determined positions without waiting for every structural argument to resolve.
-
-- `index` and `count` can be Promises when their determining arguments are unresolved; consume each only when the requested position or value depends on it.
-- Promise fields and deferred regions driven by arguments can provide the same early publication; prototype which fits the existing machinery more simply.
-- Optional inclusive bounds (`sourceIndexRange`, `countRange`) cover every possible normalized mapping value and narrow as dependencies settle. Derive them from captured shape and method semantics: on a length-10 Array, `splice(5, pendingCount)` deletes between zero and five elements. No prediction of the Promise's value is needed.
-- Length bounds follow `abs(count)`: count bounds `[-4, -2]` give length bounds `[2, 4]`; `[-4, 2]` gives `[0, 4]`.
-- Keep `destinationStartRange` separate: a minimum affected destination start of `5` leaves positions `0–4` unaffected, regardless of source traversal direction.
-
-### 11.3 Remap composition
-
-Can reduce lookup depth and mapping storage, and avoid intermediate Array materialization. This targets retained mappings; current ordinary remaps are generally materialized per operation.
-
-- Primary case: fold one new operation's mapping into the previous captured mapping to form its successor. A general merger of two arbitrary compositions is optional.
-- Compose destination → intermediate → source into destination → source, preserving selected values and holes.
-- If a composition retains a sequence of operation mappings, fold them one by one. Flattened blocks instead describe pieces of one output; resolve each against its captured source rather than treating it as the next operation.
-- Composition can trim, split, reorder, duplicate, or remove blocks and omit unselected values. Discard intermediate remaps only when no consumer or required command work needs them.
-- Start with resolved indexes/counts; pending element values do not prevent composition. Defer regions whose coordinates remain unresolved.
-- Split at crossed block boundaries rather than expand every element. Worst-case fragmentation produces one-element blocks, so compose selectively when reduced lookup depth justifies the extra blocks and work. Avoid rebuilding the whole mapping after every operation.
-- Preserve each command's results, writes, identity changes, and failures, plus intermediate versions still in use.
-
-### 11.4 Remap queries as the common publication interface
-
-Determine publication from partial or composed mappings without maintaining a separate publishable-prefix model.
-
-- Behind the shared logical-property boundary, ask whether a destination position is definitely in range, then capture its final value or value Promise. A pending source index need not block issuance of a known destination position; never expose provisional old contents.
-- Answer from exact mappings, captured source facts, and optional bounds. Preserve known total length even when individual block counts remain pending. Composition can simplify queries but must preserve required dependencies and publication prerequisites.
-- Example: a known block of three positions followed by an unknown-count block permits three positions immediately. Count bounds `[2, 4]` for the second block establish five guaranteed positions, even if their values remain pending.
-- Resume iteration at its next undecided position when relevant facts change; avoid rescanning the complete mapping or maintaining iterator-specific availability facts.
-
-### 11.5 Dependent structural updates
-
-Resolving an index or count can split, trim, remove, or shift unfinished blocks in dependent remaps.
-
-- Example: after `a!.splice(2, pendingCount, "X")` on `[A, B, C, D]`, `a.slice(3)` produces `[C, D]`, `[D]`, or `[]` when the count resolves to `0`, `1`, or `2`.
-- Retain the source captures and deferred transformations needed to finish these updates. Composition must preserve unresolved dependencies.
-- Re-evaluate small, pure range calculations for affected dependencies; do not replay commands or comparators, or scan the whole history per settlement. Queries can follow updated sources or use derived updates; avoid maintaining both redundantly.
-- Published positions remain fixed for their captured version. Release discarded blocks when no other capture or consumer needs them.
-
-### 11.6 Remap optimization
-
-Reduces block count and storage whenever compatible regions become known.
-
-- Apply after construction, composition, or index/count settlement; revisit affected blocks and their neighbors rather than the whole history.
+- Revisit affected blocks and neighbors.
 - Merge adjacent blocks selecting contiguous positions from the same captured source with compatible traversal directions.
-- Successive `push` calls can share one appended block. Reuse append storage where permitted; avoid repeatedly copying the accumulated tail.
-- Preserve per-call results (including each push's length), write/identity effects, validation/failure boundaries, captured versions, and required dependencies.
+- Successive `push` calls may share an appended block. Reuse append storage where permitted; avoid repeatedly copying the accumulated tail.
+- Preserve each call's returned length/result, writes, identity changes, validation/failure boundaries, captures, and required dependencies.
+
+Optimization simplifies representation. It does not combine the semantic commands into one call.
+
+## 6. Settlement and dependent layouts
+
+### 6.1 Structural updates
+
+Resolving an index/count may change other mappings: split, trim, remove, or shift unfinished blocks, change ranges, and release unused sources. Replacing a Promise field with a number is not sufficient.
+
+For the [partial splice](#35-partial-splice), a following `a.slice(3)` yields:
+
+| Resolved count | Following slice |
+| --- | --- |
+| 0 | `[C, D]` |
+| 1 | `[D]` |
+| 2 | `[]` |
+
+Retain the source captures and deferred transformations needed to establish these outcomes. Composition must not erase them.
+
+Install dependencies once. On settlement, small pure range calculations may run again for affected facts; commands, comparators, conversions, and host actions must not be replayed. Use existing guarded synchronous continuations and history-safe worklists, not a new execution-wide scheduler. A genuinely required Promise may remain pending indefinitely.
+
+### 6.2 Derived updates versus queries
+
+Two implementation policies remain to be tested:
+
+| Policy | Benefit | Risk |
+| --- | --- | --- |
+| Update derived mappings on settlement | Subsequent reads can be simpler; obsolete blocks may be released promptly. | One settlement may propagate through many descendants. |
+| Resolve derived layout through queries | Avoids computing unused derived layouts. | Repeated queries may revisit the same history or retain obsolete dependencies too long. |
+
+Start with shared dependency state, notifications to active consumers, and queries for derived layout facts. Test eager updates where reuse justifies them. Cache useful derivations without maintaining two independently authoritative layouts.
+
+Required mutation completion, poison handling, publication, parent/counter maintenance, and last-use release must advance at their prescribed transitions, even when nobody later reads the result. Query-driven work may defer optional layout calculations, not these obligations. Waiting consumers must resume when their dependencies permit it. This boundary applies to both live destinations and retained captures; their existence alone does not decide how every derived calculation is stored or cached.
+
+## 7. Runtime obligations
+
+### 7.1 Ownership and parent relationships
+
+Captured sources remain protected against later writes. Overlapping copies always read the pre-write version:
+
+```text
+[A, B, C, D].copyWithin(1, 0, 3) → [A, A, B, C]
+```
+
+Reading destination index 1 after overwriting it would incorrectly copy the new A again.
+
+Current backing-owner projection uses a single offset. Multiple, reversed, or repeated source blocks require generalized projection or ordinary placement publication; this is real integration work. Reusing a source slice twice creates two logical occurrences.
+
+Never register a parent edge at an unknown destination index. Source captures/leases retain required values until publication or discard. Published placements must have complete logical `(parent, key)` relationships and required active counters before consumer callbacks. Sparse enumeration, aliases, cycles, copy-on-write, and retirement use the same logical boundary.
+
+[Deferred-child integration](iterate-plan.md#deferred-children-and-graph-summaries) extends retention and aggregate queries beyond established numeric placements. Include only output-relevant dependencies in Error/Promise summaries; a privately retained child that may be discarded is not automatically an output member. Release obsolete layout uses on retirement without dropping earlier captures or retaining abandoned cycles.
+
+### 7.2 Effects, identity, and completion
+
+A determined layout does not by itself establish command completion.
+
+Use [write-based identity](iterate-plan.md#identity-policy-and-implementation-cost): prescribed writes create identity, including equal-value writes; commands publishing nothing preserve it through the existing mechanism. Do not resolve old payloads merely to avoid a write or identity change. A different uniform policy would require an explicit revision, not a per-call fallback.
+
+- Two reverses can restore the original arrangement while retaining prescribed writes, failures, and write-based identity changes.
+- Same-value writes remain writes; an empty write interval can be a genuine no-op.
+- Controlled self-copy is also a semantic no-op: when normalized copyWithin source/destination starts are proved identical, ignore end, preserve identity, and avoid mutation copying. Any provisional no-effect copy retains the original identity.
+- Partial receiver publication is separate from the mutating call's result and completion. A splice may expose its prefix while its count still determines remaining effects and removed elements.
+- Result-data production can outlive a completed invocation only when it no longer contributes to that invocation's required effects or result completion.
+
+Keep effect decisions at the operation, independent of representation optimization.
+
+#### Structural proofs survive materialization
+
+Identical captured selectors or a repeated-source block can prove data independent without reading payloads. Preserve those required relationships through composition, copying, materialization, and settlement; representation must not change which arguments introduce poison. Retain compact source facts rather than old containers or complete command history solely for this proof.
+
+Such a data proof does not erase prescribed writes. For example, sorting a known repetition of one captured payload needs no comparator to determine the mapping, but still performs its specified writes. Do not scan or await old values solely to discover equal contents; comparisons and value inspection required by the operation itself retain their ordinary dependencies.
+
+### 7.3 Poison, validation, and repair
+
+| State | Meaning |
+| --- | --- |
+| Pending | A required input has not settled. |
+| Analysis incomplete | Internal work has not yet established the contract's answer; this is not a failure outcome. |
+| Poisoned | The specified outcome depends on a failed prerequisite. |
+
+Uncertainty is not an Error. Complete the specified reductions before deciding which inputs are required. A fact independent of an input under those rules must not wait for it, even if it never settles. An uncovered failure case is a specification gap to close before production, not permission for a representation to choose extra poison.
+
+Poison follows semantic dependencies, including positions, shape, presence, and effects. [Irrelevant arguments never introduce poison](iterate-plan.md#universal-rule-irrelevant-arguments-never-introduce-poison): this applies to every argument and operation, including independent outcomes of operations with real effects. Array no-ops and searches are examples of that rule. No combinatorial search over hypothetical values is required.
+
+Under the selected partial-splice contract, a failed count leaves `A/B/X` usable while dependent exact length and remainder questions fail. It does not invent a shortened healthy Array. An owning-path blocker forbids access through that path; backing data or endpoint queries cannot bypass it.
+
+Optimizations must preserve the required availability and failure outcomes. A healthy fact published while P is pending must survive P failing; a fact required to survive P's failure cannot wait for P once its other prerequisites are ready. This concerns the fact itself, not the later outcome of a returned value Promise. Additional selector rules that change these dependencies require a common semantic decision. Root, authority, dispatch, and required boundary validation retain their contracts; opaque native calls retain their isolation/completion rules.
+
+Capacity failure poisons the affected Array's owning path before any successor fact escapes; an eligible explicit-! repair exposes its retained pre-call state. Controlled self-copy creates no new poison, even with a failed end. These [effect rules](iterate-plan.md#12-required-effect-failures) require neither a special failed-size marker nor a failed-identity state. [Repair](repair-simplification-plan.md) only clears the selected own-path blocker originating from explicit `!`; it neither clears local data poison nor reconstructs a failed layout.
+
+### 7.4 Release at last use
+
+- A later write, truncation, or replacement removes obsolete publication authority; late settlement cannot overwrite or regrow the successor.
+- Earlier snapshots retain exactly the captures they still need.
+- Drop discarded blocks and source references when no consumer or required command work needs them, even while unrelated inputs remain pending.
+- Transfer unfinished independent result-data production to shared state before closing its invocation.
+- A source's last access can precede result completion; capturing pending versions must not retain the former owner unnecessarily.
+
+Garbage collection of a mapping/tree is not a substitute for these lifetime transitions.
+
+## 8. Method families
+
+The [full method specification](iterate-plan.md#3-controlled-operation-rules) remains in the implementation plan. The representation must handle these cases through one logical boundary:
+
+| Operation | Layout behavior and constraint |
+| --- | --- |
+| Known positions with pending values | Capture ordinary pending placements; no structural wait. |
+| `push` / `unshift` | Append/prepend value blocks; preserve capacity validation and per-call length/effects. |
+| `pop` / `shift` | Trim an endpoint; shape and removed-value readiness are separate. |
+| `splice` | Preserve known prefix/insertion; defer dependent remainder and split coordinates. |
+| `reverse` / `toReversed` | Reverse block order and traversal; preserve length. Dense-copy hole rules still apply. |
+| Point assignment, deletion, `fill` | Integrate point overrides or range replacement; retain unaffected regions. Deletion may create a hole, not shorten the Array. Unknown boundaries remain deferred. |
+| `copyWithin` | Identical normalized source/destination starts are a no-op with irrelevant end. Otherwise map captured pre-write source ranges; overlapping copies must not read new writes. |
+| `slice` / `concat` | Reuse captured blocks, including multiple occurrences; classification and result-root validation remain required. |
+| `sort` / `toSorted` | Preserve known shape; wait for required comparisons to determine affected values. A tree cannot prove comparison results. |
+| `flat` | Assemble blocks after required classification, depth, cycle, and capacity decisions. |
+| Full export / native preparation | Consume the required complete shape and graph and use canonical assembly; a healthy prefix is not a complete export. |
+
+Generic mapping machinery centralizes layout handling. It does not remove each method's semantics or required algorithm.
+
+## 9. Storage and work bounds
+
+### 9.1 Retain or materialize
+
+Reuse existing Arrays and simple ArrayViews when they already represent the layout compactly. Retain block layouts when they avoid unnecessary intermediate copying. Materialize when a boundary requires it or measured costs justify it; do not flatten after every command.
+
+Internal materialization can transfer pending placements without awaiting their payloads. Export/native boundaries still require their specified completion.
+
+A retained block layout and a materialized Array are representations of the same captured logical version, not competing authorities. Sharing unchanged structure across versions is persistence; it does not require a balanced tree or permanent storage of every command.
+
+### 9.2 Block storage and indexing
+
+Small block lists, chunked storage, and indexed structures are implementation options. Efficient numeric access may need an index over block extents; unknown lengths can still prevent selecting the containing block.
+
+Avoid:
+
+- copying a growing list on every append;
+- walking all predecessor mappings for every read;
+- scanning the complete history after each settlement;
+- retaining spent mappings behind an unrelated pending dependency.
+
+A balanced sequence index does not automatically bound chains of deferred transformations. Local composition and merging help, but are not complexity proofs.
+
+Notifying only when a fact changes is necessary but does not prove O(versions × Array size). Even facts that settle once can have a quadratic number of dependency edges or repeated queries. Length-interval narrowing does not bound selector, Error-membership, identity, or release work. The representation must bound these costs rather than count the dependency records it chose to allocate.
+
+Bound work to consumed data, produced output, captured versions, and necessary unfinished work. Preserve sparse gaps symbolically; do not allocate entries for every possible hole. Legitimately retained snapshots can cost space; obsolete history cannot be justified by calling it a snapshot.
+
+## 10. Prototype and remaining decisions
+
+### 10.1 Fixed architecture and implementation options
+
+| Selected | To validate or choose |
+| --- | --- |
+| One captured layout through the existing logical-property boundary | Block storage and indexing structure |
+| Shared facts, conservative bounds, final-slot capture | Update derived layouts on settlement versus through queries |
+| One-operation composition and local optimization | Which compositions/merges save work under fragmentation |
+| Existing versions, ownership, publication, and effects | When to retain blocks, publish placements, or materialize |
+| Ordered numeric iteration and required endpoint relationships | Their bounded implementation with topology and lifetime obligations |
+
+These are choices within one architecture. A prototype must not preserve separate ready/pending semantic engines or alternate failure policies.
+
+### 10.2 Acceptance workloads
+
+1. Known layouts with pending payloads, including ready values after a pending one.
+2. Partial splice followed by reads, bounded writes, slices, Error queries, and iteration.
+3. Unknown-length regions followed by push/unshift/reverse and fixed-index access.
+4. Repeated appends, fixed-index edits, overlapping copies, and fragmented compositions.
+5. Sparse Arrays with large holes, repeated source occurrences, aliases, and cycles.
+6. Retained snapshots followed by writes, truncation, replacement, and retirement/re-entry.
+7. Many pending operations on a small Array, including operations later proved to have no effect.
+8. An indefinitely pending branch while unrelated work completes and releases sources.
+
+Compare ready controls, varied settlement order, rejection, and synchronous delivery. Verify early accessibility with controlled or never-settling inputs rather than timing-based sleeps. Successful native operations can be an oracle for layout; revised dependency-based failure behavior needs its own semantic model.
+
+Build a small independent oracle that enumerates bounded legal controls and source selectors at every partial-settlement state, including failed controls retaining their domains. Check required availability, failure membership, validity, and write decisions as well as final values. Preserve the plan's [shared inputs and occurrences](iterate-plan.md#shared-inputs-and-occurrences); do not replace them with independently varying alternatives. Enumeration is test machinery, not the production evaluator, and need not require every mathematically possible proof beyond the specified rules.
+
+Measure allocations, block/mapping visits, notifications, copied materialization, parent-index work, and retained sources separately from emitted output. Include both update policies and storage choices in these workloads. Passing a pure selector model is insufficient evidence for ownership, publication, poison, or work bounds.
+
+The remaining production gates are reference-rule coverage, bounded propagation/retention, and topology/lifetime integration. The objective is one small mechanism with useful early publication, not a solver for every theoretically independent outcome.
+
+### 10.3 First integration prototype
+
+Exercise the hard representation boundary before selecting storage or shipping a method family: a pending-count splice, then push, reverse/at, and captured prefix queries. Include managed children, inherited poison, retained earlier versions, and both count fulfillment and rejection.
+
+Verify source protection before numeric keys are known, conditional Error/Promise summaries, parent publication when keys become known, copy-on-write, and retirement of abandoned layouts. A selector-only model or shape-preserving example does not validate this integration. Keep production rollout order separate from this early prototype requirement.
+
+### 10.4 Ready-input performance
+
+Compare the new evaluator with the current implementation on ready inputs as well as pending ones. Measure normalization, query/block visits, allocation, and materialization for small ordinary Arrays, long appends, sparse ranges, and fragmented layouts. Report input/output size and retained versions separately. A ready fast path may specialize the shared rules; it must not become a second semantic implementation or change failure behavior.

@@ -40,7 +40,7 @@ repair is not authorized to construct [A,B,X,C,D] or restore the old [A,B,C,D]. 
 
 A broader ! scope grants authority but does not convert local failure into an ancestor blocker. Opaque operations retain whole-scope isolation where required; controlled Array operations use their known dependency footprint.
 
-An unused poisoned argument creates nothing to repair. A proved no-write operation with a determined result, such as fill on an empty Array, succeeds without installing any blocker or local poison. Determined effects/results likewise ignore irrelevant argument poison. Preserve existing local Errors in retained data. There is no separate Array failure marker to clear; a failure of a required effect retains its ordinary call/dependent-data outcome.
+Under the [universal argument rule](iterate-plan.md#universal-rule-irrelevant-arguments-never-introduce-poison), an irrelevant poisoned argument creates nothing to repair, whether the operation observes, does nothing, or performs independent effects. Preserve existing local Errors in retained data. There is no separate Array failure marker to clear; a failure of a required effect retains its specified call/dependent-data outcome.
 
 ## 3. Provenance and ownership
 
@@ -54,7 +54,9 @@ COW and representation copies preserve eligible owning-placement state and ordin
 
 Drop repair-only retained values for ineligible failures. Preserve protection needed for native mutation isolation, immutable outputs, imported data, captures, or required publication. Do not remove all recovery/baseline machinery merely because regional reconstruction is excluded.
 
-The origin restriction also applies to external setters and deletion: a non-! failure is ineligible. Fixed resource identities cannot be replaced by forbidden namespace mutation. Such a blocker can therefore remain effective for that execution; repair grants no extra authority. This loss of recovery is a deliberate consequence of the selected restriction, not a storage limitation to work around by dropping the failure or relabeling its origin.
+The origin restriction also applies to external setters and deletion: a non-! failure is ineligible. Fixed resource identities cannot be replaced by forbidden namespace mutation. Such a blocker can therefore remain effective for that execution; repair grants no extra authority. Ordinary replacement is not a recovery option in this case.
+
+This is the deliberate cost of making explicit-! origin a uniform recovery-eligibility rule. Determinism alone does not require permanent blocking, but removing it would introduce a broader resource-reset contract that the user excluded. Do not simulate that reset by dropping poison, relabeling its origin, or re-registering the resource within the execution.
 
 ## 4. Ordered and atomic clearing
 
