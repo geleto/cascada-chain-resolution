@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This is the flat-sequence implementation candidate for the [queryable block layout](../array-layout-approaches.md), compared with the [persistent-sequence candidate](remap-structure-variant-B.md). Both follow [iterate-plan.md](../iterate-plan.md).
+This is the flat-sequence comparison baseline for the [queryable block layout](../array-layout-approaches.md). The [persistent-sequence variant B](remap-structure-variant-B.md) is selected for implementation. Both follow [iterate-plan.md](../iterate-plan.md).
 
 Methods generate mappings from captured source versions to a destination. The remap structure composes those mappings and answers which destination positions and contents are determined. Reads, searches, copies, Error queries, and iteration use the same facts.
 
@@ -187,9 +187,9 @@ a!.splice(-1, p2)
 
 With normalized counts `p1` in `[0, 2]` and `p2` in `[0, 1]`, `M` is always present. Its front index lies in `[0, 2]`, and its back index in `[0, 1]`. `includes("M")` can succeed without inventing a numeric index for streaming.
 
-Ordered iteration issues the known fixed prefix. Each slot captures its **final** value or value Promise. A dense four-element Array under a pending-bound fill permits four final-slot Promises; old values must not escape as final. Retain cursor progress without rescanning the issued prefix, and preserve it when settlement splits or removes entries.
+Ordered iteration issues the structurally published prefix: membership, intended position, and final payload source must be established. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
 
-A future iterator may deliver published elements out of order, each with a fixed numeric index. The same queries support it; knowing only an end-relative position is insufficient for numeric-index delivery.
+A future iterator delivers guaranteed surviving occurrences before their numeric indexes are known, carrying index futures as specified in the [iteration plan](../iterate-plan.md#future-out-of-order-element-delivery). Numeric queries remain useful, but occurrence discovery and delivery require their own final-phase integration over the same layout.
 
 ## Captured versions
 
@@ -223,11 +223,13 @@ Use the shared [waiting-shape-query protocol](../array-layout-approaches.md#63-w
 
 ## Failure
 
-Failure retains the control's known bounds, constraints, and causal poison. It does not erase an entry, reveal overwritten old data, or turn an uncertain extent into an empty healthy span.
+Apply the common [mode and fallback contract](../poison-policy-plan.md). Complete mode waits for the required structural outcome and produces whole-Array Error on failure. Streaming modes retain independent facts and use the specified fallback layout; the representation cannot choose extra poison or an empty extent merely to simplify storage.
 
-Answer independent questions normally. A failed splice count can leave a fixed prefix and a later appended last element usable while dependent length or numeric-position questions return poison. A guaranteed poisoned member participates in Error queries even without its numeric key; retained input alternatives are not automatically output members.
+Sequential mode flags surviving occurrences whose intended positions are lost. Unordered mode keeps those occurrences usable without positional flags or an extra marker. Potentially deleted or overwritten occurrences become permanent structural poison; possibly missing output gets one real Error marker per failed contribution. Ordinary payload rejection remains value poison only.
 
-Apply the plan's relevance, owning-path poison, and repair rules unchanged. A path blocker cannot be bypassed through the layout, and repair never reconstructs failed layout facts. No Array error-history marker is needed.
+Fallback must preserve every established bound, occurrence, and publication and compose with later commands in issuance order. Represent markers as ordinary entries and positional status at its retained occurrence; preserve their structural role through captures and materialization. Genuine path flags block access in every mode. Repair clears only own status, exposing retained payload at the fallback position; it never repairs Error data or reconstructs deleted candidates.
+
+Counts alone do not summarize Error membership. Pending selections retain only output-relevant candidate dependencies; discarded alternatives are not output members. Use the [deferred-child and graph-summary rules](../iterate-plan.md#deferred-children-and-graph-summaries). Keep no separate zero-width failure channel or error-history ledger.
 
 ## Ownership, parent keys, and release
 

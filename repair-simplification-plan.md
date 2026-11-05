@@ -1,120 +1,91 @@
-# Repair only explicit-! own-path poison
+# Repair own-path poison without rollback
 
-Implementation specification selected alongside [partial Array publication](iterate-plan.md), with an independent implementation and rollout. Array regional failures need no recovery baseline; the iterator does not otherwise depend on this entire repair revision. Production behavior changes only when the code and authoritative contracts are updated together.
+Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes sequential-stream positional flags on retained occurrences, but excludes complete-mode Array Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
 
 ## 1. Contract
 
-Repair removes the exact selected path's own blocking poison only if the blocker originated from an explicit ! operation. It exposes retained placement state; it neither repairs local data nor reconstructs a failed operation.
+Repair removes the exact selected path's own failure status, regardless of which operation introduced it. It leaves current data unchanged. It does not undo an operation, restore a predecessor, reconstruct missing data, or clear local property/element poison.
 
-Two conditions are necessary: eligible origin and an owning-path blocker. A local Error caused by a!.splice(...) does not become repairable just because the command used !.
+The distinction is status versus data poison. A sequential-stream positional flag retains a known survivor at a deterministic fallback position; repair exposes it there without reconstructing its intended position. A potentially deleted/overwritten value becomes permanent structural poison, even when the command used !. A missing-output marker is ordinary Error data and needs ordinary removal/replacement. Genuine computed-key, scope, or canonical external path failures remain repairable without an explicit-! origin restriction.
 
-This is an explicit language restriction: repair unblocks a failed explicit mutation sequence at its selected path. It is not a general Error eraser. Ordinary failed data writes use ordinary replacement/deletion where permitted; they do not gain implicit recoverability merely because the runtime retained an old value. Explicit-! provenance is therefore distinct from mutation authority and from the Error's causal source.
-
-| Selected state | Repair result and effect |
+| Selected state | Repair effect |
 | --- | --- |
-| Eligible managed own-path blocker | Expose its retained placement, preserving presence, value/version, and all contained local poison; return undefined after publication. |
-| Eligible canonical external own-path blocker | Clear only that own blocker; retain host state and descendant metadata; return undefined after publication. |
-| Healthy value or absent placement | No change; return undefined. A canonical location can still have an eligible external own blocker to clear. |
-| Ordinary Error or ineligible own-path blocker | Return the existing Error; clear nothing and invent no retained value. |
-| Container with only descendant or regional poison | Do not recurse or clear local data. A repair with no selected own blocker is a no-op. |
-| Strict-ancestor blocker or invalid selection | Return the selection/blocking Error without modifying state. |
-| Off-path alias of a registered external identity | Apply ordinary managed-placement rules only; never clear its canonical resource metadata or grant native authority. |
+| Managed own-path status, including a sequential positional flag | Clear that status and preserve the retained payload, fallback position, presence, pending versions, and local poison. |
+| Complete-mode root Error, structural Error element, or missing-output marker | No hidden value to restore. Leave the Error unchanged. Ordinary replacement/removal remains available. |
+| Canonical external own-path status | Clear only that status; preserve host state and descendant metadata. |
+| Healthy or absent placement | No data change; clear selected canonical own status there if one exists. |
+| Ordinary Error value, with no own status | Leave the Error unchanged; successful selection returns undefined without inspecting or repairing its payload. |
+| Container with only descendant or regional poison | Do not recurse or clear it. Repair has no effect on those failures. |
+| Invalid or inaccessible selection | Return the selection Error without changing state. |
+| Off-path alias of a registered external identity | Apply ordinary managed-placement rules; do not clear canonical resource metadata or grant authority. |
 
-An owning-path blocker prevents all usage through that path until a permitted repair or replacement removes it. Local data poison instead propagates to consumers that depend on those data facts. Repair never searches for a nearby eligible blocker or widens an absent Array index to its Array.
+A genuine poisoned strict ancestor blocks selection in every mode. Repair that ancestor before accessing a flagged descendant. Regional Array failure does not automatically flag the Array root, so a positional flag on a retained element can normally be repaired directly at its fallback index. Clearing a descendant never clears an ancestor or local value poison. Repair does not search for another scope or widen an absent index to its Array.
 
-## 2. What retained state means
+Successful repair returns undefined after status publication, including when no own status exists. Selection, authority, or publication failures return poison. Error-query snapshots taken before repair retain their earlier status.
 
-For an opaque managed ! call, ordinary mutation isolation protects the pre-call logical value. Failure discards the private working graph; an eligible path blocker can retain the protected prior placement. Repair exposes that placement, not the failed working receiver.
+### Pending payloads and local poison
 
-Retained state includes absence and a captured pending version where applicable. Restoring absence leaves an already committed Array length unchanged. Restoring a pending version preserves its exact producer; it does not wait for or guess its payload. This is deterministic restoration of a specified placement, not reconstruction from incomplete data.
+Clearing selected own status does not consume the selected payload. A pending payload may remain pending; an ordinary Error remains Error data. When own status and data poison coexist, clear only own status and return undefined. This avoids a result-only payload wait.
 
-Local Errors already inside the retained value survive. For example, unpoisoning a path that hid a partially failed Array still exposes that same partial Array. Successful repair need not make hasError false.
+Traversing an intermediate Error or an unavailable parent is still a selection dependency. Repair cannot skip it merely because the eventual operation would clear metadata. Final selection and traversal through the selected value are different operations.
 
-For the partial splice:
+## 2. No repair-only predecessor
 
-```text
-[A, B, C, D].splice(2, failedCount, "X")
-```
+Keep current logical data and own failure status in the same versioning system. A flagged path blocks access to its retained data until repair or permitted replacement. Unaffected siblings remain accessible. Unordered mode avoids creating positional flags; it does not bypass an existing one. No mode needs a hidden earlier value solely for repair.
 
-repair is not authorized to construct [A,B,X,C,D] or restore the old [A,B,C,D]. Restoring a captured predecessor as a new successor is technically possible; it is excluded from repair because it can discard independent effects committed by the failed command and intervening commands. There is no implicit regional baseline merge. An explicit assignment of an available saved value is ordinary replacement with its ordinary ordering. Overwrite, deletion, truncation, or whole-value replacement establish new facts and discard exactly the dependencies they supersede, as specified in the Array plan.
+Every committed independent write survives. Other accessible regions can accept later mutations; repair clears only the selected status on current state. It must not reveal a saved pre-failure Array and discard those later writes.
 
-A broader ! scope grants authority but does not convert local failure into an ancestor blocker. Opaque operations retain whole-scope isolation where required; controlled Array operations use their known dependency footprint.
+After a streaming mutation of [A,B,C,D] by splice(2,failedCount,"X"), the fallback [A,B,X,Error,Error] does not retain C/D for repair: their survival was uncertain. In contrast, failed-position pure insertion retains A/B/X, and sequential mode can repair their individual positional flags. Repair creates a successor; it does not restart an earlier captured iterator. Explicit assignment of a saved COW snapshot remains the way to request restoration.
 
-Under the [universal argument rule](iterate-plan.md#universal-rule-irrelevant-arguments-never-introduce-poison), an irrelevant poisoned argument creates nothing to repair, whether the operation observes, does nothing, or performs independent effects. Preserve existing local Errors in retained data. There is no separate Array failure marker to clear; a failure of a required effect retains its specified call/dependent-data outcome.
+Ordinary replacement/deletion clears the own status at the selected location. A child replacement does not clear an ancestor's status. Creating or deleting a local Error at an Array index retains ordinary committed length behavior; status clearing itself neither grows nor shrinks the Array.
 
-## 3. Provenance and ownership
+## 3. Keep necessary protection
 
-Repair eligibility belongs to owning placement or external own-state metadata, never to an Error object, Error kind, message, or source context. Propagating or storing the same Error elsewhere transfers neither retained state nor repair authority.
+Remove rollback and hidden storage retained solely to implement repair. Preserve captures and copies required by other owners, immutable outputs, imported-data protection, pending publication, and native isolation.
 
-A mutating run already has an explicit-! fact in its trusted mutation mode. Assignment/deletion also need an explicit origin fact because their implicit mutation authority does not prove that the source used !. Carry that Boolean from compiler issuance to the introducing failure boundary; do not infer it from a nondefault scope depth, omitted JavaScript arguments, or diagnostic text. Scope selection and origin are separate facts.
+A write that never committed cannot be treated as a completed logical mutation. Conversely, failure cannot erase writes already committed by a controlled partial operation. Repair changes neither fact.
 
-A failure while traversing an explicit-! command can own poison at the first failed placement under the existing selection rules. That blocker retains the command's origin; an existing blocker propagated through a later ! command never gains new eligibility. Stored payload rejection remains local data, not an own-path blocker.
+Opaque native mutation adopts its private working graph only after successful validation. If failure prevents adoption, keep current logical data and record path poison; the inadmissible private graph never becomes the data exposed by repair. This requires no repair-only predecessor and does not undo any committed logical write. Verify this boundary before removing old recovery storage.
 
-COW and representation copies preserve eligible owning-placement state and ordinary retention. Two owners must not share a baseline that mutation through one can change for the other. Extracting an Error as data does not copy that state. Canonical namespace references continue following ordinary ordered publication, not arbitrary copies.
+## 4. Provenance and ownership
 
-Drop repair-only retained values for ineligible failures. Preserve protection needed for native mutation isolation, immutable outputs, imported data, captures, or required publication. Do not remove all recovery/baseline machinery merely because regional reconstruction is excluded.
+Own-path status belongs to the owning logical placement/version, not the Error object, kind, message, or source context. Remove explicit-! repair-origin flags and eligibility tests. Keep causal provenance for reporting and ordinary mutation authority for writes; neither is a second repair policy.
 
-The origin restriction also applies to external setters and deletion: a non-! failure is ineligible. Fixed resource identities cannot be replaced by forbidden namespace mutation. Such a blocker can therefore remain effective for that execution; repair grants no extra authority. Ordinary replacement is not a recovery option in this case.
+Ordinary Error values and stored payload rejection remain data poison. Ordinary access cannot bypass selected or ancestor path flags. Extraction of accessible data does not attach unrelated failures; status and marker roles contained in a captured substructure remain intact. Canonical external paths retain their existing authority rules.
 
-This is the deliberate cost of making explicit-! origin a uniform recovery-eligibility rule. Determinism alone does not require permanent blocking, but removing it would introduce a broader resource-reset contract that the user excluded. Do not simulate that reset by dropping poison, relabeling its origin, or re-registering the resource within the execution.
+Historical captures and COW preserve the selected data/status versions. Clearing one owner's status cannot change another owner or earlier snapshot. Record status on owned logical path/placement state, separately from shared payload identity; apply the policy's extraction rule at ordinary handoff.
 
-## 4. Ordered and atomic clearing
+An external setter/deletion failure can be cleared at its canonical own scope, including without a source `!`. This clears metadata only; it does not reverse host changes, replace fixed identities, re-register a resource, or grant native authority. Off-path aliases cannot clear canonical status.
 
-Repair is an ordinary ordered mutation of selected blocker state. It has no host effect and needs no native reservation merely to clear metadata. Existing host-effect reservations remain active for actual conflicting operations.
+## 5. Ordered and atomic clearing
 
-1. Capture the requested path and selected own state at repair's program position. Strict-ancestor blockers still prevent selection; descendant summaries do not prevent selecting their parent.
-2. Establish origin eligibility and required authority without inspecting the hidden managed graph or external host contents.
-3. Complete fallible managed selection, COW, placement restoration, and publication preflight before committing any clear.
-4. Publish the restored managed placement and any eligible selected canonical external own state in the same protected transition. Preserve child metadata and ineligible state.
-5. Expose completion only after commit. On supported failure, preserve the prior blocker, retained placement, and external metadata, returning the new causal Error.
+Repair is an ordinary ordered mutation of selected status. It has no host effect and needs no native reservation merely to clear metadata; actual conflicting host effects retain their reservations.
 
-Current metadata clearing replaces a subtree. The replacement must update only its own field while forwarding the captured child branches. Earlier queries keep earlier versions. Late publication from an overwritten external operation can update its old capture, never reinstate a cleared blocker in the current version.
+1. Capture the selected current data/status at repair's program position.
+2. Establish selection and authority without consuming unrelated descendant poison or hidden payloads.
+3. Complete required COW and fallible publication preflight before clearing anything.
+4. Publish the cleared managed own status and any selected canonical external own status in one protected transition. Preserve data and descendant status.
+5. Expose completion only after commit. A supported failure preserves the previous state and returns its causal Error.
 
-Pending own state needs particular care: explicit-! eligibility cannot be inferred from a pending operation alone if its eventual outcome may simply propagate an older ineligible blocker. Apply the conditional clear to the captured own-state outcome. Repair may complete without waiting only when existing facts prove that every possible selected own outcome is empty or eligible; otherwise the eligibility decision is a real dependency. Do not unconditionally erase a pending ineligible outcome to preserve an old fast path.
+External clearing updates only the own field, not the subtree. Once selection and authority permit repair, clear captured pending own status without awaiting its eventual cause or origin. Install a clean successor while earlier captures retain the original future. This does not bypass a required path-selection or result dependency, clear local data poison, or suppress the failed operation's own result.
 
-For example, a pending ordinary external setter precedes an explicit ! call. That call might introduce its own eligible blocker, or merely propagate the setter's ineligible blocker. A subsequent repair cannot distinguish those cases from the last command's ! flag. Waiting for the necessary provenance reverses the old unconditional pending-reset behavior intentionally; fixing eligibility at issuance would clear failures this contract expressly excludes.
+Late settlement may finish an earlier capture, but cannot reinstate cleared status or replace later data in the current version.
 
-Repair never waits for unrelated descendant poison merely to leave it unchanged. An earlier pending value hidden beneath an eligible managed blocker also remains ordinary data after restoration. Future writes and captures retain their own version authority; repair cannot replay over them.
+## 6. Repair-and-call
 
-## 5. Repair-and-call
+Preserve one combined ordered transition. Capture call inputs and reserve its position before suspension. Preflight the structural route, scope, and readonly capability; failure preserves the previous state and suppresses invocation.
 
-Preserve the existing combined operation's ordering and structural preflight:
+After successful repair, use ordinary receiver, dispatch, authority, argument, and invocation processing under the original ordering. Local poison remains an input dependency. A new call failure publishes against current state and cannot resurrect the cleared status.
 
-- Capture explicit call inputs and reserve the combined operation's position before suspension.
-- Preflight the structural route, selected mutation scope, and readonly capability before clearing. Failure preserves the old state and skips invocation.
-- Perform the exact-own-state repair above. A repair failure or ineligible blocker suppresses the call.
-- After committed repair, use ordinary receiver availability, dispatch, authority, argument preparation, member selection, and invocation. Do not add a second early dispatch path.
-- Local data poison remains an input to the selected call's normal dependency rules. A bounded controlled call can use healthy facts; a native call requiring the full graph can fail on local poison.
-- A new failed call owns its new failure against the repaired state. It must not resurrect deliberately cleared poison.
+Do not implement this as an awaited public repair followed by newly issued public call. Parent repair does not reset descendant external status; a subsequent whole-resource call can remain blocked by it.
 
-Do not implement this as an awaited public repair followed by newly issued public run: intervening work could acquire precedence. Reuse the existing combined transition and one operation/result lifetime.
+## 7. Implementation and verification
 
-Parent repair does not reset a resource subtree. If api.db carries a blocker and api!!.reset() requires the whole api subtree, repairing api alone leaves the call blocked by api.db. Repair each eligible descendant explicitly before the parent call, using ordinary ordering; an ineligible descendant remains blocking. Do not preserve the previous subtree-reset idiom by recursively clearing eligible children.
+- Replace repair-only recovery storage with current data plus own status, using common placement versions, COW, and publication.
+- Implement exact-own external clearing, including pending status; remove unconditional subtree reset and obsolete origin-based eligibility machinery.
+- Integrate all three modes and ordinary path blocking. Preserve positional status separately from permanent structural poison, missing-output markers, and payload poison.
+- Verify repair after several continued writes, earlier captures, local/regional poison, absence, Array length, repeated failures, and replacement. Ready/pending own status with healthy, Error, or never-settling payloads returns undefined after successful status publication; ordinary local poison remains unchanged.
+- Preserve failed-repair atomicity, combined-call ordering, fixed external identities, aliases/cycles, retirement/re-entry, and source release.
+- Audit opaque native failure publication before removing any isolation path. Do not replace an invalid working graph with fabricated healthy data.
 
-## 6. Implementation work
-
-| Area | Required change |
-| --- | --- |
-| path-operation.js, mutations.js | Test exact-own eligibility and preserve failed-repair atomicity. Retain first-failed-placement and strict-ancestor rules; no ancestor search. |
-| mutate-property.js, run.js, invocation.js | Forward explicit-! origin to the failure introduction. Do not upgrade an existing blocker or ordinary payload Error. |
-| property-versions.js and ownership | Retain placement state only for eligible repair or another named protection; preserve absence, pending versions, COW, and source release. |
-| external-metadata.js | Replace unconditional subtree clearing with conditional own-field clearing. Preserve child branches, historical captures, and pending-outcome provenance. |
-| Public API/compiler integration | Carry the minimal missing assignment/deletion origin fact in one coordinated cutover. Trust internal controls without malformed-control tests or compatibility adapters. |
-
-Regional reconstruction was a design proposal, not a reason to invent more runtime recovery machinery. The concrete removals are ineligible repair baselines and subtree-wide clearing; opaque native isolation and eligible own-path restoration remain. Land origin transport, eligibility, clearing, and their public contracts together; do not couple the cutover to completing every Array method family.
-
-Update docs/error-handling.md, docs/data-limitations.md, docs/mutation-and-observation.md, docs/integration.md, docs/run.md, external-ordering documentation, and the corresponding AGENTS.md scope/repair guarantees with the implementation.
-
-## 7. Verification
-
-- Eligible own-path repair restores exact retained presence/value/version, including a hole and a never-settling payload.
-- Empty/otherwise determined controlled operations with unused poisoned arguments create no repair state; existing local poison remains unchanged.
-- Local element, mapping, shape, and any other local Array failure survive path unpoisoning; partial splice never chooses a missing layout.
-- Non-! failures, copied/imported Errors, and an existing ineligible blocker encountered by a later ! operation gain no eligibility.
-- Parent repair preserves child external poison, including pending child outcomes; own/ancestor/descendant selection is distinct. Parent repair-and-call can remain blocked until each eligible descendant is explicitly repaired.
-- Pending own metadata that can propagate an ineligible predecessor is not blindly cleared. Earlier queries and later commands keep their respective versions.
-- Failed selection or publication preserves both managed and external prior state. Healthy repair creates no placement or mutation identity.
-- Repair-and-call preserves input capture, structural preflight, original ordering, remaining local failures, and repaired-state failure ownership.
-- Off-path aliases cannot clear canonical metadata; broader scopes grant no additional external authority.
-- COW, aliases/cycles, retained old Errors, and source release work with both ready and pending restoration. GC probes retain unformatted diagnostics and healthy controls.
-- Replace fixtures that create repairable state through ordinary assignment with explicit-! origins or non-repairability expectations. Retain native isolation and immutable-output checks.
+Validate the [policy and query integration](poison-policy-plan.md) alongside this revision. The initial determined-layout cursor can precede the mode cutover; structural streaming and open-entry failure behavior use the selected modes.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This is the persistent-sequence implementation candidate for the [queryable block layout](../array-layout-approaches.md), compared with the [flat-sequence candidate](remap-structure-variant-A.md). Both follow [iterate-plan.md](../iterate-plan.md).
+This is the selected persistent-sequence design for the [queryable block layout](../array-layout-approaches.md). The [flat-sequence variant](remap-structure-variant-A.md) remains a comparison baseline. Both follow [iterate-plan.md](../iterate-plan.md).
 
 Methods generate mappings from captured source versions to a destination. The structure composes those mappings and answers which destination positions and contents are determined. Reads, searches, copies, Error queries, and iteration use the same facts.
 
@@ -43,6 +43,8 @@ Each node exposes a **count measure**: its number of output positions, either ex
 | A length-preserving deferred fill | The captured input length |
 
 Extend the existing captured-shape boundary for subtraction, truncation, shifts, and failed layout. For a layout-backed version, it obtains length and `inRange(index)` from the logical root's semantic shape, including region constraints and indexed-growth transitions. Node count intervals are cached projections of those facts, not a second authority or a complete failure state.
+
+Shape-only captures reference independent count facts, not payload-owning tree nodes. Exclusive content storage can therefore coexist with an earlier captured shape; editing that storage must preserve the captured count version. Fuse ready additions and trims into the [compact shift/clamp form](array-layout-implementation-findings.md#compact-ready-count-transforms) rather than retaining a linked shape history.
 
 Ordinary branch measures combine child counts and can be recomputed after balancing. Constraints that make a total more precise than independent interval addition must remain attached to the logical region.
 
@@ -110,7 +112,7 @@ Bounds approximate these selectors; an offset range alone does not define a slic
 
 For a region `R` of width `[0, 2]`, selecting from front offset `1` to its end has width `[0, 1]`. If `R` resolves to `[C,D]`, the slice yields `[D]`; if it resolves to `[D]` or `[]`, the slice is empty. It shares R's settlement without rerunning the producer.
 
-A live slice registers its selection with the producer. Removing or refining that use lets the producer release inputs no remaining selection or required command work needs. Selection dependencies can extend beyond the returned range: even one sorted output may depend on many input values. The bounded representation of these uses remains open; a general interval-coverage index is not assumed.
+A live slice owns restricted source captures, sharing persistent subtrees with overlapping uses. Removing or refining that use releases its obsolete captures without scanning other consumers. Shared shape/control state must not retain a whole payload root. Uncertain selections retain candidate source regions and narrow them through the method's mapping. Selection dependencies can extend beyond the returned range: even one sorted output may depend on many input values. Use this [sliced-ownership baseline](array-layout-implementation-findings.md#2-use-sliced-ownership-not-a-producer-wide-range-registry); a general interval-coverage index is not required by the demonstrated cases.
 
 ## Composition and command order
 
@@ -205,7 +207,7 @@ Apply copy-on-write to tree nodes using their existing use counts. Transfer the 
 1. Descend from the root, reusing nodes with one owning use along an exclusive path.
 2. At the first shared node, copy it before changing it. The copy retains its child edges, making the old children shared too. Copy the changed path below it as needed; keep untouched siblings shared. A child's count of one before copying its shared parent is not evidence of exclusive access.
 3. Apply the same rule to balancing and orientation pushed into nodes; root-reference orientation stays local to that reference. Keep entry descriptors leaf-owned and copy them with a copied leaf, sharing their captured sources and producer facts. This avoids separate use counts for each descriptor; reusing a leaf never authorizes changing a shared producer's meaning.
-4. When changing an edge, maintain owning uses, replace the old dependency link, and refresh or invalidate affected summaries within the transition, before consumer callbacks. Apply the dirty-child registration rules below to newly attached children.
+4. When changing an edge, maintain owning uses, replace the old dependency link, and refresh or invalidate affected summaries within the transition, before consumer callbacks. Leaf edits likewise update affected producer-use records; delayed settlement must not address an entry by a stale row offset. Newly attached dependencies consume current semantic facts; optional caches also inherit or resolve existing dirtiness as specified below.
 
 Every retained old view must protect the nodes it can still read: copied Array containers, cursors, slices, deferred sources, and unfinished shape or selection captures. A non-owning notification link is not a snapshot. A shape-only capture may instead retain independent semantic facts; it need not retain payloads or the whole tree.
 
@@ -227,35 +229,36 @@ Indirection depth is separate from balanced-tree height. Queries, settlement, an
 
 Required publication, poison handling, parent/counter maintenance, completion, and release run at their prescribed transitions. Optional derived work may follow queries, as specified in the [update-policy plan](../array-layout-approaches.md#62-derived-updates-versus-queries). Use guarded continuations and synchronous worklists.
 
-## Cached measures
+## Count and query summaries
 
-An ancestor cache may temporarily retain wider, conservative count bounds after a child refines. A query can use those bounds when they already establish its answer; otherwise it must obtain the required current facts.
+Maintain compact facts needed for active progress during settlement. Compute detailed derived mappings on demand where that saves work. Both use the same captured semantic facts; there is no alternate ready/pending evaluator.
 
-A settlement revision plus node stamps can detect possible staleness, but does not identify which branch changed. A domain-wide revision can invalidate unrelated subtrees. Prefer the targeted-invalidation prototype below; compare eager aggregate updates where measurements justify them.
+### Change-sensitive propagation
 
-An exact numeric count stays valid for the same logical version. This does not make cached Error, presence, or dependency summaries permanently valid. Structural refresh has the amortized bound below; navigation and semantic evaluation retain their separate costs. Conservative caching must not withhold required progress.
+1. **Register required dependencies.** A summary follows the child or region facts that can change its projection. Exact count needs no further count link, but selection, presence, and failure questions retain their own required dependencies.
+2. **Recompute the affected projection.** Stop that propagation when the fact is unchanged. A dirty flag alone does not justify waking all captured queries. A newly registered dependent consumes current state before waiting.
+3. **Notify relevant questions.** Finish the synchronous update wave before callbacks. Count bounds, failure certainty, and selection are different projections: unchanged bounds cannot suppress a relevant failure or value notification. A summary must not claim to cover facts it does not encode.
+4. **Remove links at last use.** Reverse dependency links do not increment node ownership counts. Detach them when the fact becomes independent or the node loses its final owning use, clearing their ordinary JavaScript references before releasing child edges.
 
-### Targeted invalidation prototype
+The [fixed-size history probe](array-layout-implementation-findings.md#counterexample-to-dirty-root-wakeups) rejects dirty-root wakeups as the default: 512 possible writes to one Array slot caused 131,328 wakeups, versus 512 with changed-summary propagation. This chooses the active-progress baseline; it does not establish all-method complexity bounds.
 
-1. **Register dependencies when constructing or editing a node.** A count summary follows the child or semantic-region facts that can still change it. Ordinary branch sums need no count links once exact. Error, presence, selection, and failure outcomes retain their own required links. Bounded fan-out makes registration proportional to constructed or changed structural nodes; deferred semantic dependencies are additional work.
-2. **Mark affected summaries dirty upward.** Dirty means the cache may be stale, not that its answer is still pending. Stop at an already-dirty summary whose dependents have already been invalidated. A new dependent of a dirty fact must refresh it or inherit its dirty state before publication; it cannot wait for a future change to discover current staleness.
-3. **Refresh the facts needed by the question.** Use still-conclusive bounds directly. Otherwise refresh dirty contributions required for the aggregate, including dirty siblings where necessary, then mark the recomputed summary clean even if its bounds remain uncertain. This work can exceed the numeric lookup path.
-4. **Notify active questions through their shared summary.** Complete the affected invalidation wave before consumer callbacks, within the synchronous transition. Coalescing repeated dirtiness is safe only while it cannot hide a later event from an active waiter; an inconclusive refreshed summary must be able to become dirty and notify again.
-5. **Remove links at last use.** Reverse dependency links do not increment node ownership counts. Detach them when a summary becomes independent or its node loses its final owning use, before releasing its child edges. This also clears their ordinary JavaScript references; non-owning bookkeeping alone would not prevent retention.
+### Optional derived caches
 
-Failure and dependency changes must notify relevant questions even when numeric bounds do not narrow. A rejected count can keep the same interval while turning an undecided range question into poison. Numeric invalidation alone is therefore insufficient.
+Optional mapping caches may use targeted invalidation and lazy refresh. Mark only dependent caches dirty, stop at already-dirty caches, and let newly attached dependents inherit or resolve existing dirtiness. Refresh clears the dirty mark even when the resulting fact remains uncertain, so later changes can invalidate it again.
+
+A query may use an older conservative bound when it already proves the answer; otherwise refresh required contributions, including dirty siblings where necessary. Optional cache dirtiness does not itself notify semantic consumers. Required completion, publication, Error processing, and release still advance without a later read.
 
 ### Structural work bound
 
 For bounded fan-out `f`, refreshing an ordinary structural count summary reads at most `f` child summaries and clears one dirty mark. Recursive child refreshes are charged to those children's marks. Across a trace with `I` clean-to-dirty transitions and `N` initially dirty summaries, total structural refresh work is `O(f × (I + N))`. In-place edits that make a summary stale count in `I`. Refreshing dirty siblings may exceed one lookup path, but is charged to the events that dirtied them, not unexplained extra work.
 
-One occurrence has `O(log B)` structural ancestors for `B` entries. Across `V` retained versions with one occurrence each, one invalidation wave visits at most `O(V log B)` ancestors; already-dirty paths coalesce. For fixed fan-out, their eventual structural refresh is amortized within that budget. Initialization, repeated occurrences, and semantic-region chains are separate work.
+One occurrence has `O(log B)` structural ancestors for `B` entries. Across `V` retained versions with one occurrence each, a change can reach up to `O(V log B)` ancestors, stopping earlier where the relevant projection is unchanged. This per-change bound is not a total-history proof: the fixed-size probe shows why refreshing and waking every affected version on every settlement can still be quadratic.
 
-Root notification events are likewise charged to root clean-to-dirty transitions. Delivery to `W` waiting consumers still costs `O(W)`, plus their query work; many consumers can share one version. This bound covers structural count summaries, not selector evaluation, Error collection, output publication, or managed-graph maintenance. Verify these accounting bounds in the prototype and measure the remaining costs separately.
+Charge active summary work to initialization and actual child-projection changes; charge optional refresh to its dirty transitions. Delivery to `W` relevant waiting consumers still costs `O(W)`, plus query work. Repeated occurrences, semantic-region chains, Error collection, publication, and managed-graph maintenance need separate bounds. Do not justify an avoidable notification fan-out merely by counting allocated dependencies.
 
 ## Waiting queries
 
-Use the shared [waiting-shape-query protocol](../array-layout-approaches.md#63-waiting-shape-queries): one existence registration per cursor on its captured semantic shape, separate from slot-value dependencies. In B, structural invalidation reaches that summary through the tree root and its semantic-region dependencies. A cached root interval alone is insufficient.
+Use the shared [waiting-shape-query protocol](../array-layout-approaches.md#63-waiting-shape-queries): one existence registration per cursor on its captured semantic shape, separate from slot-value dependencies. In B, changed projections reach that summary through the tree and semantic-region dependencies. A cached root interval alone is insufficient.
 
 ## Queries and publication
 
@@ -282,19 +285,19 @@ a!.splice(-1, p2)
 
 With normalized counts `p1` in `[0, 2]` and `p2` in `[0, 1]`, `M` is always present between an uncertain prefix and an optional `C`. `includes("M")` can succeed even though neither its front nor back numeric index is fixed.
 
-Ordered iteration issues the known fixed prefix, capturing each slot's final value or value Promise. A dense four-element Array under a pending-bound fill still permits four final-slot Promises. Iteration must not expose old values as final or repeatedly rescan the already-issued prefix; retain traversal progress through the captured version.
+Ordered iteration issues the structurally published prefix: membership, intended position, and final payload source must be established. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
 
-A future iterator can deliver published elements out of order with their fixed numeric indexes. The same queries support it; knowing only an end-relative position is insufficient for numeric-index delivery.
+A future iterator delivers guaranteed surviving occurrences before their numeric indexes are known, carrying index futures as specified in the [iteration plan](../iterate-plan.md#future-out-of-order-element-delivery). Numeric queries remain useful, but occurrence discovery and delivery require their own final-phase integration over the same layout.
 
 ## Failure
 
-A failed control retains its semantic bounds, constraints, and causal poison. Its deferred region remains queryable. Do not remove it, replace it with zero length, or expose overwritten predecessor data.
+Apply the common [mode and fallback contract](../poison-policy-plan.md). Complete mode waits for the required structural outcome and produces whole-Array Error on failure. Streaming modes retain independent facts and use the specified fallback layout; the representation cannot choose extra poison or an empty extent merely to simplify storage.
 
-Independent facts remain usable. In the partial-splice example, the fixed prefix and the appended last element survive a failed count; dependent length and numeric-position questions return poison under the common rules.
+Sequential mode flags surviving occurrences whose intended positions are lost. Unordered mode keeps those occurrences usable without positional flags or an extra marker. Potentially deleted or overwritten occurrences become permanent structural poison; possibly missing output gets one real Error marker per failed contribution. Ordinary payload rejection remains value poison only.
 
-Count measures alone do not summarize Error membership. A guaranteed poisoned member participates in Error queries even without a numeric key. A retained source that might be discarded is only a conditional output member. Use the [deferred-child and graph-summary rules](../iterate-plan.md#deferred-children-and-graph-summaries) for those distinctions.
+Fallback must preserve every established bound, occurrence, and publication and compose with later commands in issuance order. Represent markers as ordinary entries and positional status at its retained occurrence; preserve their structural role through captures and materialization. Genuine path flags block access in every mode. Repair clears only own status, exposing retained payload at the fallback position; it never repairs Error data or reconstructs deleted candidates.
 
-Apply irrelevant-argument, owning-path poison, and repair rules unchanged. Tree traversal cannot bypass a path blocker, and repair never reconstructs failed layout facts. No Array error-history marker is added.
+Counts alone do not summarize Error membership. Pending selections retain only output-relevant candidate dependencies; discarded alternatives are not output members. Use the [deferred-child and graph-summary rules](../iterate-plan.md#deferred-children-and-graph-summaries). Keep no separate zero-width failure channel or error-history ledger.
 
 ## Internal-node lifetime
 
@@ -308,13 +311,25 @@ A live forwarding cell retains its resolved root; source and slice dependencies 
 
 Root release therefore follows nodes losing their final use, plus their released entries and dependency uses. Managed-data retirement is additional work. These counts do not collect cycles passing through managed values and deferred captures; that integration remains a production requirement.
 
+### Consuming a captured sequence
+
+Whole-root retention is appropriate for a full snapshot. A forward cursor also needs [progressive consumed-region release](../array-layout-approaches.md#advancing-consumers-release-consumed-regions): retaining its original root indefinitely would keep every prefix subtree alive. Reuse partial-range uses and separate shape captures; do not introduce a cursor-specific lifetime registry. The concrete mechanism must preserve traversal through forwarding and earlier versions without copying a root per emitted item. This is part of the partial-use retention prototype below.
+
+#### Frontier for determined boundaries
+
+Prototype a traversal frontier holding unread sibling subtrees along the path, plus the exact number of positions passed. For a balanced tree with determined boundaries this needs O(log B) structural references. Release a fully consumed subtree when no remaining cursor selection needs it; already-issued values and other captures retain their own uses. Advance at subtree boundaries without constructing a new root for each item.
+
+Uncertain numeric lookups can retain a conditional slice/use, as in the [remaining-range example](../array-layout-approaches.md#advancing-consumers-release-consumed-regions). Sequential iteration waits for final source selection; it cannot issue that unresolved occurrence. Unordered discovery can retain a guaranteed survivor separately. Keep shape-only existence registration distinct from the payload frontier, and release each use at its own last access.
+
 ## Ownership, parent keys, and release
 
 Tree persistence protects the layout description. Existing captures, leases, and copy-on-write protect the managed values selected by it.
 
 Never register a guessed destination key. Publish complete logical parent relationships and required active counters before consumer callbacks. Repeated or reversed source spans create their actual destination occurrences; shared tree nodes do not merge those placements.
 
-Prepend, middle edits, reversal, and settlement can change published numeric parent keys. Direct placements need re-keying; generalized backing projection instead needs maintained source-to-owner relationships. This is separate from logarithmic path edits or constant-size orientation changes. Follow the [ownership integration](../array-layout-approaches.md#71-ownership-and-parent-relationships).
+Prepend, middle edits, reversal, and settlement can change published numeric parent keys. Start with existing placement publication and its simple backing projection; update affected established keys through the ordinary property boundary. Generalized multi-span projection is a later measured optimization. Graph work can be linear in affected managed placements despite a logarithmic layout edit. Follow the [publication baseline](array-layout-implementation-findings.md#publication-baseline).
+
+Use parent-derived preservation for layout-owned inputs whose keys are not established. Reuse the existing retention/COW mechanism without reporting those inputs as logical placements or unconditional Error members. Unconditional lease roots owned by the layout itself would prevent cycles from retiring. The [runtime preservation probe](array-layout-implementation-findings.md#3-reuse-parent-derived-preservation-for-deferred-inputs) validates ready-child protection and cycle retirement; pending delivery and summary integration remain required.
 
 Retain required source regions instead of whole predecessor layouts merely for convenience, within the existing backing-retention contract. Live slice uses and required command work determine which producer inputs remain needed. Release obsolete sources and registrations while unrelated controls remain pending; test shared sources and cycles rather than relying on JavaScript garbage collection for the release protocol.
 
@@ -372,22 +387,24 @@ Compare with the flat-sequence candidate using the same [acceptance workloads](.
 
 Measure path copying, entry visits, deferred-history work, notifications, graph maintenance, and retained sources separately. Include rotations around constrained regions, overlapping slices, forwarded results with no later edit, uncertain end edits, and retirement while another control never settles. Cheap root capture and local editing do not establish the [runtime work bounds](../AGENTS.md#work-bounds) on their own.
 
-Verify exclusive edits without unnecessary path allocation and shared edits without altering earlier roots, including sharing below an exclusive root. Count structural refresh against dirty transitions and initialization; test many waiters sharing a root. The common workloads cover sparse traversal and materialization.
+Verify exclusive edits without unnecessary path allocation and shared edits without altering earlier roots, including sharing below an exclusive root. Count active propagation against changed projections and optional refresh against dirtiness and initialization; test many waiters and retained roots. The common workloads cover sparse traversal and materialization.
 
-## Pending decisions and unsolved mechanisms
+## Implementation choices and acceptance
 
-The semantic requirements above are fixed for this comparison. These implementation choices and unproven mechanisms remain; the document is not yet a complete production implementation specification.
+Variant B and the [method specification](array-method-specification.md) define the architecture and semantics. Remaining choices are implementation measurements, not alternate failure policies.
 
 ### Choices to measure
 
-1. **Tree and leaf representation.** Choose balancing, leaf capacity, optional leaf boundary caches, and materialization thresholds. Measure compact append-only Arrays, long tails after one pending edit, concat accumulation, and fragmented retained versions. Validate return to compact storage without repeated full copies.
-2. **Cache update policy.** Prototype child/region-to-dependent invalidation with demand-driven refresh, then compare eager aggregate updates. Verify the structural refresh bound, including dirty siblings; measure constants, semantic dependencies, repeated occurrences, and actual waiter deliveries separately.
-3. **Forwarding incorporation and override folding.** Decide when edits or queries incorporate resolved subtrees and compact selection chains. Batch relevant point overrides without awaiting values or repeatedly rebuilding the same region.
+1. Balancing, leaf capacity, optional leaf indexes, and materialization thresholds. Compare compact append-only Arrays, long tails after a pending edit, partial concat accumulation, and fragmented retained versions.
+2. Optional derived caches. Active questions use their specific projections; exact-length waits must not subscribe to every numeric-bound refinement. Do not reinstate history-wide invalidation.
+3. When to incorporate resolved forwarding subtrees and batch overrides. Required publication/release is synchronous; optional cache folding must not rebuild the same region repeatedly.
 
-### Mechanisms still to demonstrate
+### Production acceptance
 
-1. **Stable shape and constraint representation.** Preserve required shared facts through splitting, rotations, slices, and composition. Integrate indexed growth with the root's semantic shape; cached child intervals alone are insufficient.
-2. **Partial-use retention.** Represent live slice selections and operation dependencies so unused inputs can be released promptly. Determine whether simple use records suffice or selective range indexing is needed; output-range coverage alone does not describe all dependencies.
-3. **Lifetime integration.** Implement internal-node use counts, exclusive-node reuse, and producer-use release together with managed retirement. Verify that all retained old views protect their nodes and that cycles and never-settling controls cannot retain otherwise abandoned layouts.
-4. **Bounded propagation and queries.** Demonstrate that targeted invalidation, root subscriptions, forwarding, and selector evaluation avoid repeated history scans and quadratic dependency work. Include failure without interval narrowing, new dependents of dirty nodes, and repeated changes after an inconclusive refresh.
-5. **Parent-key and summary integration.** Choose direct placement updates or generalized backing projection where appropriate. Preserve complete parent relationships and conditional Error/Promise membership before publication without rescanning unrelated data.
+1. Implement captured normalizers, shared controls, method fallbacks, and region queries under the common rules; preserve them through splitting, composition, and indexed growth.
+2. Restrict source uses backwards through the same mapping recipes. Separate content from shape and release excluded regions without producer-wide consumer scans.
+3. Integrate parent-derived preservation, pending publication, authoritative forward uses, retirement/re-entry, and internal-node release in the actual layout.
+4. Preserve projected-readiness and mixed-history counter bounds. A balanced output tree alone does not bound semantic history.
+5. Publish established keys and active counters before callbacks; preserve repeated occurrences, canonical export, and conditional Error membership without treating retained inputs as output children.
+
+The [implementation evidence](array-layout-implementation-findings.md#6-specification-and-integration-acceptance) now includes pending delivery, indexed publication, retirement/re-entry, mixed transforms, and the remaining production test gates. Rerun those witnesses against the actual layout at cutover.

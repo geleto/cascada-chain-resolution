@@ -32,7 +32,7 @@ copyWithin fill pop push reverse shift sort splice unshift
 
 | `mutation` | Resolved call | Behavior |
 | --- | --- | --- |
-| `false` | Logical Array mutator | Leave the receiver unchanged and return a distinct transformed logical Array. |
+| `false` | Logical Array mutator | Leave the source unchanged and return a distinct transformed logical Array. |
 | `false` | Any other supported method | Invoke it as a trusted observation and return its result. |
 | `true` | Logical Array mutator | Mutate or publish a new receiver and return the JavaScript mutator result. |
 | `true` | Managed method | Isolate, invoke, validate, and publish the receiver; return the method result. |
@@ -53,7 +53,9 @@ String methods use the ordinary observation path. Their dispatch protocols, such
 
 Controlled Array dispatch assumes the global `Array`, `Array[Symbol.species]`, standard Array intrinsics, and `Array.prototype` are unmodified.
 
-An observation never publishes its receiver. An intercepted mutator run as an observation returns a distinct post-mutation logical Array even for a no-op.
+An observation never publishes its receiver. All nine intercepted mutators return the privately transformed Array in observation mode, including no-ops. With mutation enabled, push/unshift return length, pop/shift return the removed value, splice returns the sparse removed-elements Array, and copyWithin/fill/reverse/sort return the published receiver. Observational splice preserves holes in its transformed copy; toSpliced produces a dense copy.
+
+**Planned partial publication:** the [iteration plan](../iterate-plan.md#constructed-array-results) retains these return types and adds mode-dependent copying results. Complete mode waits for structure; sequential/unordered modes can return valid partial copies under their declared regional failure rules. This is not implemented yet. Representation, preparation, and repair descriptions below describe the current runtime before that cutover.
 
 ## Language Integration
 
@@ -116,7 +118,7 @@ Array wrappers use logical properties and never expose ArrayView backing. They r
 | `sort`, `toSorted` | Resolve every present top-level element participating in ordering. Default comparison then prepares strings; a supplied comparator receives the logical values. |
 | `join`, intrinsic Array `toString` | Resolve each indexed value the text result inspects and any further Promise reached by its scalar conversion. |
 | `push`, `unshift`, `fill`, `splice`, `toSpliced`, `reverse`, `toReversed`, `copyWithin`, `slice`, `with` | Do not resolve elements merely to retain, insert, replace, move, or copy them. |
-| `pop`, `shift` | Contract the receiver without waiting; resolve a removed Promise only for the independent method result. |
+| `pop`, `shift` | Contract the receiver or produce the shortened copy without awaiting removed payloads; only the mutation's independent removed-value result resolves that Promise. |
 
 Moving a Promise-valued property never moves its Promise version. The destination receives a fresh Promise version at this operation's program position, while the old Promise version detaches or remains with an unchanged source identity. Copying one Promise into several properties creates one Promise version per destination. Structure-only operations do not inspect nested Promises. Sort and text conversion continue only into logical values that scalar conversion actually inspects.
 
@@ -179,7 +181,7 @@ Eligible endpoint mutations derive an ArrayView while preserving the baseline re
 | `copyWithin`, `fill`, `reverse`, `sort` | Published receiver | Transformed Array |
 | `push`, `unshift` | New logical length | Transformed Array |
 | `pop`, `shift` | Removed value or `undefined` | Shortened Array |
-| `splice` | Array of removed property versions | Post-splice Array |
+| `splice` | Array of removed property versions | Transformed Array |
 
 Receiver publication is never inferred from the method result. Every graph-identity result receives normal ownership preparation. A receiver-returning mutation result aliases the published path and makes that identity shared; a wholly removed or newly created result may transfer when it has no other owner.
 
