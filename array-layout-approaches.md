@@ -72,7 +72,7 @@ Reduce mapping memory by describing consecutive source positions with one entry.
 - Reversing a nonempty block moves `index` to its other end and flips `count`. Whole-layout reversal also reverses block order.
 - Signed counts allow composed layouts to contain both forward and backward blocks.
 
-These descriptors are internal. Public iteration still uses ordinary numeric destination indexes.
+These descriptors are internal. Ordered iteration consumes ordinary numeric destination indexes; unordered iteration consumes distinct occurrences with independent index futures under the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
 
 Block sequences describe logical order, not a flat list of absolute destination indexes. Variant B stores them in small leaves joined by relative-count tree nodes. A deferred region may retain a nested transformation such as reversal until it can be reduced; the same queries and work bounds apply.
 
@@ -216,7 +216,13 @@ All publication examples assume target, authority, ordering, and validation prer
 
 Already-issued payload Promises settle independently. Their settlement need not restart the cursor. Required errors and completion retain the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
 
-The [future unordered iterator](iterate-plan.md#future-out-of-order-element-delivery) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. Implement occurrence discovery in the final stage; ordinary payloads can already settle out of order.
+The [future unordered iterator](iterate-plan.md#future-out-of-order-element-delivery) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. Implement occurrence discovery in the unordered stage; ordinary payloads can already settle out of order.
+
+The following [bounded-window phase](iterate-plan.md#bounded-window-iteration) restricts demand to [f,r), where Cascada owns both boundaries and B bounds unfinished positions. Initially r=B; every newly completed admitted occurrence extends r once, including before its exact index settles. Advancing f across the proved completed prefix does not credit those completions again. Thus interior completions expand the window, and retiring them later shrinks its width. Before source/capacity clipping, (r-f) minus completed positions inside the window equals B.
+
+A guaranteed, not-yet-delivered occurrence with possible final index range [lo,hi] is eligible when lo >= f and hi < r, without awaiting its exact index or payload. Intersecting ranges alone cannot establish admission. Include declared fallback in these bounds and preserve count correlations through composed mappings. Completed occurrences with unknown indexes remain excluded from delivery; their pending position resolution must not duplicate an earlier capacity credit.
+
+Reuse sparse/range queries and captured occurrence uses to prune disjoint blocks, revisit only affected boundary candidates, and deliver eligible occurrences once. Do not select an out-of-window occurrence and then block the pull while an eligible earlier occurrence is available. Window updates must neither rescan the unread suffix/completed history nor eagerly allocate holes. Coalesce completed runs and release spent body/payload references while preserving only necessary unresolved occurrence facts. This is another consumer of the same layout; completion acknowledgement and command execution remain in Cascada.
 
 A newly produced Array root must pass its required result validation. For example, `with(pendingIndex, value)` waits for index validity and may resolve to poison; a mapping cannot expose a root that might later be retracted.
 
@@ -462,7 +468,7 @@ Required mutation completion, poison handling, publication, parent/counter maint
 
 ### 6.3 Waiting shape queries
 
-A waiting query cannot always watch only one deferred region. With two adjacent regions each of width `[0, 1]`, either becoming definitely nonempty establishes that position `0` exists. The iterator can then issue its final-value Promise even if selection still depends on the other region.
+A waiting query cannot always watch only one deferred region. With two adjacent regions each of width `[0, 1]`, either becoming definitely nonempty establishes that position `0` exists. Numeric lookup can return a pending source-selection result at that position. The ordered iterator still waits until its final occurrence and payload source are established; existence alone does not permit an item step.
 
 Keep one existence registration per cursor on the captured layout's semantic shape summary, updating the next undecided index as the cursor advances. That summary includes region constraints and indexed growth, not just a length interval. Registration consumes current state; relevant failure changes must notify it even without narrower bounds. Optional cache dirtiness alone does not wake the cursor. Retain the required shape facts, not a payload-owning root solely to keep this registration alive; [consumed-region release](#advancing-consumers-release-consumed-regions) remains required.
 
@@ -516,14 +522,14 @@ Pending inputs remain pending. Analysis not yet performed is not failure. Apply 
 
 Use one [mode/failure contract](poison-policy-plan.md) throughout layout queries, composition, and ordinary consumers:
 
-- Complete mode exposes the Array only after its required structural outcome; structural failure produces ordinary root Error.
+- Complete mode exposes the Array only after its required structural outcome; structural failure normally produces ordinary root Error. The [mutating-sort exception](poison-policy-plan.md#sorting-requires-order) retains repairable Array-path status for required preparation/comparison failure in every mode.
 - Sequential mode publishes the structurally fixed prefix. Surviving occurrences with lost positions receive repairable flags at deterministic fallback positions.
 - Unordered mode preserves and can deliver guaranteed survivors despite positional failure; it adds no positional Error merely to report ordering that this mode does not require.
 - Potential deletion or overwrite produces permanent structural poison. Possibly missing output gets one real marker for that failed contribution. Ordinary payload poison affects only the value.
 
 For `[A,B,C,D].splice(2,failedCount,"X")`, streaming fallback is `[A,B,X,Error,Error]`. The removed-elements result fails independently. For `[A,B].splice(failedStart,0,X)`, fallback is `[A,B,X]`: sequential mode flags potentially misplaced occurrences; unordered mode adds neither positional flags nor a fourth marker.
 
-Fallback is ordered, deterministic, and compatible with every published fact. A later push follows the failed operation's fallback; settlement order must not move it ahead. The [bounded splice analysis](docs/array-iteration-technical-analysis.md#5-a-bounded-splice-fallback) specifies a tested case: choose a compatible latest insertion boundary and minimum deletion count, then classify retained survivors and uncertain output slots. Its limits and the remaining per-method tables must be completed before integration.
+Fallback is ordered, deterministic, and compatible with every published fact. A later push follows the failed operation's fallback; settlement order must not move it ahead. The [bounded splice analysis](docs/array-iteration-technical-analysis.md#5-a-bounded-splice-fallback) specifies a tested case: choose a compatible latest insertion boundary and minimum deletion count, then classify retained survivors and uncertain output slots. Integrate its bounds with the [method specification](docs/array-method-specification.md), including shared-control normalization and the [selected decisions](iterate-plan.md#13-selected-decisions), at their affected cutovers.
 
 The [Error-query contract](poison-policy-plan.md#4-error-queries) includes structural markers, local poison, and own-path status at their captured scopes. Genuine flags block access in every mode. Healthy extraction does not inherit unrelated failures; it also cannot erase failures contained in the captured value.
 
@@ -669,7 +675,7 @@ The [implementation findings](docs/array-layout-implementation-findings.md) spec
 
 #### Bounded dependency rules
 
-Implement the [completed method specification](docs/array-method-specification.md), including symbolic/shared normalizers, bounded fallback, coupled copying, sorting/flattening, and occurrence roles. The method catalogue remains an inventory; the specification owns the reductions and failure rules. Apply the mode-dependent [copy-result boundary](iterate-plan.md#constructed-array-results) and [shared-control rule](iterate-plan.md#captured-control-identity-at-the-api-boundary). No new cross-read provenance API is required.
+Implement the [selected method specification](docs/array-method-specification.md), including symbolic/shared normalizers, bounded fallback, coupled copying, sorting/flattening, and occurrence roles. The method catalogue remains an inventory; the specification owns the reductions and failure rules, including the all-mode repairable flag for mutating-sort preparation/comparison failure, copying-sort root Error, and ordinary later publication-failure boundary. Apply the mode-dependent [copy-result boundary](iterate-plan.md#constructed-array-results) and [shared-control rule](iterate-plan.md#captured-control-identity-at-the-api-boundary). No new cross-read provenance API is required.
 
 Include the [required capacity proofs](iterate-plan.md#required-capacity-proofs), not merely sound intervals. Preserve correlated totals such as splice(p,0,X) producing L+1. The oracle must distinguish safe publication, necessary waiting, definite overflow, and a failed required capacity prerequisite; cached bound precision cannot choose different failure coverage.
 

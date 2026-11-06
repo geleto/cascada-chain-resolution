@@ -167,7 +167,7 @@ node test/experiments/array-layout-technical-probes.mjs
 
 ## 6. Specification and integration acceptance
 
-The [method specification](array-method-specification.md) completes the normalizer/correlation, unknown-length, coupled-copy, sorting/flattening, occurrence-role, and failure rules. The [iteration analysis](array-iteration-technical-analysis.md) selects holder delivery and the pending-step lifecycle. The earlier shape probe retains abstract failed domains; it is not an implementation of the selected fallbacks.
+The [method specification](array-method-specification.md) supplies the normalizer/correlation, unknown-length, coupled-copy, sorting/flattening, occurrence-role, and failure rules, including the plan's [selected decisions](../iterate-plan.md#13-selected-decisions). The [iteration analysis](array-iteration-technical-analysis.md) selects holder delivery and the pending-step lifecycle. The earlier shape probe retains abstract failed domains; it is not an implementation of the selected fallbacks.
 
 The expanded [method probe](../test/experiments/array-method-specification-probes.mjs) passes:
 
@@ -175,12 +175,12 @@ The expanded [method probe](../test/experiments/array-method-specification-probe
 | --- | --- |
 | Coupled copying | 63,264 selector queries and 44,328 sparse-placement checks against native copyWithin. |
 | Coordinates | 238,383 normalization/length witnesses and a shared-control fallback counterexample. |
-| Sorting | 1,386 permutation cases with fixed undefined/hole suffixes. |
+| Sorting | 1,386 permutation cases with fixed undefined/hole suffixes under the earlier fallback proposal. Healthy failure fallback/early-suffix witnesses must be replaced for the selected whole-sort failure boundary. |
 | Flattening | 70 depth domains, including holes and repeated aliases. |
 | Runtime integration | Four fulfillment/rejection and pre-delivery-detachment cases: indexed publication before callbacks, captured queries, alias/cycle export, retirement, and re-entry without resubscription. |
 | History work | Exact-sum and fixed-width mixed-transform counter tests at 32/128/512 versions. |
 
 The focused existing Chain, refcount, and boundary-lifetime suite also passes 129 tests. These checks validate the reused mechanisms and specification algorithms. They do not claim that the future production layout has already passed end-to-end tests.
 
-At implementation, run the same witnesses through actual layouts and the repository's required sequence/conflict/consistency/lifetime suites. Preserve restricted captures, forward-state restoration, role-aware queries, and the measured work assertions. Balancing/leaf constants, optional cache thresholds, generalized projection, and materialization thresholds remain implementation measurements, not unresolved method semantics.
+At implementation, run the same witnesses through actual layouts and the repository's required sequence/conflict/consistency/lifetime suites, including the plan's added boundary combinations and updated sort failure/repair cases. Preserve restricted captures, forward-state restoration, role-aware queries, and the measured work assertions. Balancing/leaf constants, optional cache thresholds, generalized projection, and materialization thresholds remain implementation measurements under the selected contract.
 

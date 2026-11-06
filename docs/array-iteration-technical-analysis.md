@@ -1,6 +1,6 @@
 # Array iteration: dependency rules and item handoff
 
-Technical analysis for the two deferred tasks in [iterate-plan.md](../iterate-plan.md). The follow-up [method specification](array-method-specification.md) completes the correlated/unknown-shape, copyWithin, sort/flat, placement-role, work, and lifetime rules. This document retains the initial derivations and handoff decision; neither document implements the production iterator.
+Technical analysis for the two deferred tasks in [iterate-plan.md](../iterate-plan.md). The follow-up [method specification](array-method-specification.md) supplies the correlated/unknown-shape, copyWithin, sort/flat, placement-role, work, and lifetime rules, including the plan's [selected decisions](../iterate-plan.md#13-selected-decisions). This document retains the initial derivations and handoff decision; neither document implements the production iterator.
 
 ## 1. Conclusions
 
@@ -55,7 +55,7 @@ For each method family, define successful mapping, irrelevance reductions, failu
 
 Apply fallback at the failed operation's logical position, then compose later commands. Do not recompute failure from the later live Array, resurrect discarded payloads, or let settlement order choose the layout. Complete-mode root Error and genuine path blockers remain prerequisites; a later content simplification cannot silently repair them. Ordinary overwrites/removals can discard regional errors as specified.
 
-The three modes share successful mappings. They differ at the declared structural failure boundary: complete root Error, sequential positional status, or unordered survivor fallback. Payload rejection remains value poison in every mode.
+The three modes share successful mappings. They differ at the declared structural failure boundary: complete root Error, sequential positional status, or unordered survivor fallback. The [sort exception](array-method-specification.md#7-sort-and-tosorted) uses repairable own status for mutating preparation/comparison failure in every mode and ordinary root Error for copying failure. Payload rejection remains value poison in every mode.
 
 Per-command effects and direct results remain separate. For example, a failed required splice deletion count can poison the removed-elements result while its streaming receiver has a usable prefix. Folding a mapping does not cancel prescribed writes or erase a call-result failure.
 
@@ -184,9 +184,9 @@ Use one outward pending-result/fatal registration per pending step, and existing
 
 ## 9. Specification completed; implementation acceptance
 
-The [method specification](array-method-specification.md) closes the earlier family placeholders. It also records the clarified result contract: all nine observational mutators return transformed copies, and copy producers follow the source Chain's mode after root validity.
+The [method specification](array-method-specification.md) supplies the earlier family rules; the plan records selected decisions and additional acceptance cases. It also records the clarified result contract: all nine observational mutators return transformed copies, and copy producers follow the source Chain's mode after root validity.
 
-The [expanded probe](../test/experiments/array-method-specification-probes.mjs) adds coupled copyWithin/sparse checks, unknown-length normalizer witnesses, sorting partitions, flattening depth/alias cases, actual indexed publication and retirement/re-entry, and the numeric-bound notification counterexample. Existing public ownership/counter/lifetime tests validate the reused runtime surfaces.
+The [expanded probe](../test/experiments/array-method-specification-probes.mjs) adds coupled copyWithin/sparse checks, unknown-length normalizer witnesses, sorting partitions, flattening depth/alias cases, actual indexed publication and retirement/re-entry, and the numeric-bound notification counterexample. Sorting failure/fixed-suffix witnesses predate the selected whole-sort failure boundary and must be revised at that cutover. Existing public ownership/counter/lifetime tests validate the reused runtime surfaces; indexed out-of-order command branches remain higher-runtime integration work.
 
-What remains is production implementation and its acceptance—not an unresolved choice of method semantics. Integrate the rules into the actual tree, then rerun these witnesses and the repository's required sequence, conflict, consistency, and lifetime checks. Prototype evidence cannot certify unwritten code. Representation constants and measured cache/leaf choices must preserve the specified outcomes and work limits.
+Production implementation and its acceptance remain under the plan's [selected decisions](../iterate-plan.md#13-selected-decisions). Integrate the selected rules into the actual tree, then rerun these witnesses and the repository's required sequence, conflict, consistency, and lifetime checks, updating historical sort cases at that cutover. Prototype evidence cannot certify unwritten code or boundary combinations not covered by its witnesses. Representation constants and measured cache/leaf choices must preserve the specified outcomes and work limits.
 

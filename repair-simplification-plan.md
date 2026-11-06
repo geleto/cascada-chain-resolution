@@ -1,6 +1,6 @@
 # Repair own-path poison without rollback
 
-Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes sequential-stream positional flags on retained occurrences, but excludes complete-mode Array Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
+Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes sequential-stream positional flags and failed mutating sort's Array-path status in every mode, but excludes ordinary complete-mode Array Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
 
 ## 1. Contract
 
@@ -10,7 +10,7 @@ The distinction is status versus data poison. A sequential-stream positional fla
 
 | Selected state | Repair effect |
 | --- | --- |
-| Managed own-path status, including a sequential positional flag | Clear that status and preserve the retained payload, fallback position, presence, pending versions, and local poison. |
+| Managed own-path status, including a sequential positional flag or failed mutating sort's flag | Clear that status and preserve the retained payload, fallback position, presence, pending versions, and local poison. |
 | Complete-mode root Error, structural Error element, or missing-output marker | No hidden value to restore. Leave the Error unchanged. Ordinary replacement/removal remains available. |
 | Canonical external own-path status | Clear only that status; preserve host state and descendant metadata. |
 | Healthy or absent placement | No data change; clear selected canonical own status there if one exists. |
@@ -30,6 +30,8 @@ Clearing selected own status does not consume the selected payload. A pending pa
 Traversing an intermediate Error or an unavailable parent is still a selection dependency. Repair cannot skip it merely because the eventual operation would clear metadata. Final selection and traversal through the selected value are different operations.
 
 ## 2. No repair-only predecessor
+
+Under the [sort exception](poison-policy-plan.md#sorting-requires-order), required preparation/comparison failure in `a!.sort()` retains the captured pre-sort data under repairable own status, including in complete mode. Repair exposes that unchanged data without retrying sorting or asserting that it is sorted. No sort data writes were published, so this needs no rollback or separate repair baseline. A failure after successful ordering instead follows ordinary storage/publication rules and preserves committed effects. Failed `a.sort()` and `a.toSorted()` return ordinary root Error, preserve their source, and retain no hidden failed copy for repair.
 
 Keep current logical data and own failure status in the same versioning system. A flagged path blocks access to its retained data until repair or permitted replacement. Unaffected siblings remain accessible. Unordered mode avoids creating positional flags; it does not bypass an existing one. No mode needs a hidden earlier value solely for repair.
 
@@ -86,6 +88,7 @@ Do not implement this as an awaited public repair followed by newly issued publi
 - Integrate all three modes and ordinary path blocking. Preserve positional status separately from permanent structural poison, missing-output markers, and payload poison.
 - Verify repair after several continued writes, earlier captures, local/regional poison, absence, Array length, repeated failures, and replacement. Ready/pending own status with healthy, Error, or never-settling payloads returns undefined after successful status publication; ordinary local poison remains unchanged.
 - Preserve failed-repair atomicity, combined-call ordering, fixed external identities, aliases/cycles, retirement/re-entry, and source release.
+- Verify failed mutating sort in every mode: unchanged pre-sort data and payload producers, status-only repair, no fallback writes, effective flag identity, and unchanged earlier captures. Copying-sort failure leaves its source unchanged and has no repairable result; distinguish later publication failure from preparation/comparison failure.
 - Audit opaque native failure publication before removing any isolation path. Do not replace an invalid working graph with fabricated healthy data.
 
 Validate the [policy and query integration](poison-policy-plan.md) alongside this revision. The initial determined-layout cursor can precede the mode cutover; structural streaming and open-entry failure behavior use the selected modes.

@@ -1865,7 +1865,7 @@ Update Cascada runtime and compiler documentation, kernel integration documentat
 
 ## Phase 9: Implement incremental managed access and iteration
 
-**Status: architecture and mode semantics selected; method specification completed; production integration and validation remain.** [iterate-plan.md](../iterate-plan.md) owns the method contracts, iterator API, delivery stages, and acceptance checks. [Queryable block layouts](../array-layout-approaches.md) use [Variant B](remap-structure-variant-B.md): flat leaves, relative counts, exclusive-node reuse, and shared-path copying. The [remaining-work checklist](../iterate-plan.md#implementation-and-validation-work) lists integration and acceptance requirements. Production implementation has not started.
+**Status: architecture and policy decisions selected; production integration and validation remain.** [iterate-plan.md](../iterate-plan.md) owns the method contracts, iterator API, delivery stages, acceptance checks, and [selected decisions](../iterate-plan.md#13-selected-decisions). [Queryable block layouts](../array-layout-approaches.md) use [Variant B](remap-structure-variant-B.md): flat leaves, relative counts, exclusive-node reuse, and shared-path copying. The [remaining-work checklist](../iterate-plan.md#implementation-and-validation-work) lists integration and acceptance requirements. Production implementation has not started.
 
 Build the cursor on the common captured-property boundary, then extend that boundary with partial layouts in coherent method families. The cursor owns no separate prefix model or tree. All 22 controlled methods, indexed/length writes, ordinary consumers, queries, and replacement participate. General pending path keys retain selection dependencies because they can select length as well as an index.
 
@@ -1881,6 +1881,26 @@ A sequential step requires established membership, intended numeric position, an
 
 Verify [self-modifying iteration](../iterate-plan.md#self-modifying-iteration) against the sequential reference, including unread indexes, structural writes, nested children, pending facts, and pacing modes. Repeat after unordered integration. Reads inside entry use its private command prefix, avoiding dependency on that loop's future completion.
 
+### Indexed command-buffer branches
+
+For unordered iteration, extend Cascada's existing command-buffer tree so each delivered body's branch takes its captured final/fallback index as a ready Number or future. Mirror the same logical branch and position fact across every Chain/reference used by that body. Receiving the item and enqueuing its commands need not wait for the index. Execution still follows the [indexed-branch contract](../iterate-plan.md#indexed-branches-for-unordered-bodies), not arrival order.
+
+Share compiler-declared may-observe/may-mutate coverage across the loop's branch family, including unfinished, nested, and undiscovered branches. Preserve per-branch captured values and readonly authority. Commands wait for earlier iterations that may mutate their Chain; only proved adjacent observation intervals overlap. A loop-wide readonly reference permits early concurrent reads after outside predecessors. A known numeric index alone does not establish a closed predecessor frontier.
+
+Create control-flow branches together on all affected Chains through Phase 8 batch-entry coordination before waiting on cross-reference work, so corresponding branches cannot acquire inconsistent positions or create cross-buffer self-waits. Maintain separate issuance closure and required effect completion, including nested issuers and asynchronous native observations. Reuse Cascada's existing control-flow lowering, including its mutable break-control Chain; this phase does not redefine break behavior. Keep prefix tracking and release incremental; test late branch discovery, reverse index settlement, two-Chain conflicts, aliases, readonly progress, existing control-flow integration, and long unfinished histories before cutover. This is a higher-runtime buffer extension, not a second kernel scheduler.
+
+Stage 7 supplies [bounded-window iteration](../iterate-plan.md#bounded-window-iteration). A later body occupying the only active slot can wait for an earlier body that the consumer has not pulled, causing a scheduler-created cycle. Separate discovery, admission, and ordered execution; neither automatic full draining nor silently exempting unlimited parked branches from the advertised bound is a complete solution.
+
+### Bounded-window iteration phase
+
+Add a dedicated phase after basic unordered occurrence/indexed-branch integration. B is a finite bound on unfinished logical positions, not numeric window width. Cascada supplies demand [f,r), where f follows the proved completed prefix and r starts at B. Each newly completed iteration extends r once; advancing f across already-credited completed positions does not extend r again. Before source/capacity clipping, (r-f) minus completed positions still inside the window equals B. Completion at the start normally slides the window; earlier interior completions expand it, and later prefix trimming shrinks its width without moving r backward.
+
+Cascada reports completion under its existing iteration-completion rules and communicates updated demand to the iterator. A completed occurrence with a pending index earns its credit immediately because its admission already proved that it lies inside the earlier window; resolving that index later earns no second credit. Unknown indexes can still delay prefix trimming. The bound/configuration API therefore needs an explicit completion-update path; next() or payload settlement is not an acknowledgement. Keep branch execution and control flow in Cascada, and range selection in the shared layout implementation.
+
+Admit only distinct guaranteed occurrences whose entire possible final/fallback index range lies in [f,r); exact index readiness is unnecessary, and mere intersection is insufficient. Use captured layout queries to find eligible occurrences rather than blocking a pull behind an outside candidate. Completed positions consume no capacity, while not-yet-discovered positions reserve it, so a slow early body does not prevent refilling from later completions or lose its place to later unfinished work.
+
+For B=3, finishing positions 1 and 2 changes [0,3) to [0,5). Finishing position 0 then changes it to [3,6): one new credit and three positions trimmed. Verify these transitions, completion with unknown indexes, source-end clipping, bound-one/reverse-delivery deadlock cases, fallback, sparse spans, early closure, and incremental history/release work. Compact finished runs and discard completed body state even while f is blocked. B does not bound the numeric span, retained source/output graph, necessary unresolved index facts, or nested work within a body; these keep their separate lifetime/work contracts. Earlier stages keep ordered admission for bounded dependent loops; proved-independent bounded work can retain existing pacing.
+
 ### Partial facts and failure
 
 Use one bounded mapping/demand evaluator for ready, pending, and failed controls. Remove irrelevant dependencies, including determined searches and comparison-free sorting. Preserve [endpoint relationships](../iterate-plan.md#required-endpoint-relationships), correlated shape, and explicit shared internal controls through composition and materialization. Do not add a provenance API merely to recover sharing between separate lookup wrappers. Conservative delay beyond required reductions is acceptable; premature publication or timing-selected failure is not.
@@ -1889,7 +1909,7 @@ The [mode contract](../poison-policy-plan.md) replaces the earlier Boolean propo
 
 | Mode | Structural behavior |
 | --- | --- |
-| Complete | Wait for required captured structure; structural failure produces ordinary whole-Array Error. |
+| Complete | Wait for required captured structure; structural failure normally produces ordinary whole-Array Error. Required preparation/comparison failure in mutating sort retains a repairable Array-path flag instead. |
 | Sequential stream | Issue the structurally fixed prefix. Retain surviving but potentially misplaced occurrences under repairable flags at deterministic fallback positions. |
 | Unordered stream | Deliver guaranteed surviving occurrences without index readiness; accept positional fallback without extra positional poison. |
 
@@ -1897,13 +1917,15 @@ All modes preserve ordinary pending/poisoned payloads independently. Genuine pat
 
 For [A,B].splice(failedStart,0,X), streaming fallback is [A,B,X]. Sequential mode flags potentially misplaced occurrences; unordered mode adds no positional flag or fourth marker. For [A,B,C,D].splice(2,failedCount,X), fallback is [A,B,X,Error,Error]. The removed-elements result fails separately. Implement the [method specification](array-method-specification.md); its fallbacks preserve established bounds/publications and precede later effects.
 
-New producer roots wait for required result validity, then copying results follow their mode. An unordered sort copy can remain healthy when only ordering fails; no root replacement or hidden diagnostic is added after handoff. Known-invalid with returns poison; with(pendingIndex,...) may remain pending and resolve to poison. A valid root may expose regional production under its mode. Preserve write-based identity and structural no-op reductions; do not await old payloads to avoid same-value writes. Add no failed-size or failed-identity state.
+New producer roots wait for required result validity, then copying results follow their mode. Sort is a selected exception to position-only recovery: required ordering failure blocks the whole Array/result, including unordered mode. Required sorting success precedes item/result exposure. Under the [selected sort contract](../iterate-plan.md#13-selected-decisions), preparation/comparison failure in `a!.sort()` flags unchanged pre-sort data in every mode; `a.sort()` and `a.toSorted()` return ordinary result-root poison and preserve a, without a repairable failed copy. Later storage/publication failure keeps its ordinary causal boundary and committed effects, with no sort-specific rollback. Known-invalid with returns poison; with(pendingIndex,...) may remain pending and resolve to poison. Other valid roots may expose regional production under their mode. Preserve write-based identity and structural no-op reductions; do not await old payloads to avoid same-value writes. Add no failed-size or failed-identity state.
 
 ### Queries and repair
 
 Use the common [query contract](../poison-policy-plan.md#4-error-queries): isPoisoned checks root/path status, hasError performs the deep check used by Cascada's “is error,” and value predicates remain separate. Queries include captured markers, local poison, and statuses. A healthy streaming Array containing an Error can have isPoisoned false and hasError true. A false deep query waits for its relevant frontier; true may short-circuit on established poison. Entry status is independent of iterator consumption.
 
 [Repair](../repair-simplification-plan.md) clears selected own status on current data and returns undefined after successful publication. It never clears Error values or markers, reconstructs deleted candidates, restores intended positions, or rolls back. Repairing a positional flag exposes the retained payload at the fallback index; earlier captures remain unchanged. Selection, authority, and publication failures retain their ordinary outcomes. Keep native isolation; repair cannot adopt an invalid private working graph.
+
+Repairing mutating sort's preparation/comparison failure exposes its unchanged pre-sort data without retrying sorting. This applies in complete mode too; no sort data writes were published at that boundary and no repair-only predecessor is required. Publishing new own status still changes semantic identity.
 
 Healthy extraction does not inherit unrelated failures. A captured value retains its own contained flags and Error data; unordered mode does not grant access through an existing flag. Full export and native preparation collect actual errors without inventing a historical failure ledger.
 
@@ -1924,7 +1946,8 @@ Follow the [delivery order](../iterate-plan.md#delivery-order):
 3. Complete the policy, query, marker, and status-only repair cutover across supported boundaries.
 4. Open-entry streaming.
 5. Complete incremental method coverage, compact diagnostics, and measured optimization.
-6. Unordered occurrence discovery, index futures, and Cascada ordering/metadata integration.
+6. Unordered occurrence discovery, index futures, coordinated indexed branches, and existing Cascada ordering/control-flow integration; initially unbounded or proved-independent bounded pacing.
+7. Bounded-window unordered iteration: range-containment eligibility, one-time completion credits, independent completed-prefix trimming, expanded demand windows, predecessor progress, and unfinished-work/release bounds.
 
 Stage 2 provides the structural core; stage 5 completes remaining partial algorithms. Unadapted methods apply available reductions before documented complete-input waits/materialization. They must not treat incomplete backing storage as complete data. Follow the [migration inventory](../iterate-plan.md#migration-inventory). Validate mixed-history bounds, source restriction, parent indexing, counters, canonical export, retirement/re-entry, and cycles before production integration.
 

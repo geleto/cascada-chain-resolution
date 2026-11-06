@@ -1,6 +1,6 @@
 # Partial Array methods: implementation specification
 
-This document completes the method-level rules for [iterate-plan.md](../iterate-plan.md). It specifies the selected bounded evaluator, fallback construction, publication, and verification. [Chain modes](../poison-policy-plan.md) own the failure policy; [Variant B](remap-structure-variant-B.md) owns storage. Production implementation remains a separate task.
+This document specifies the method-level rules for [iterate-plan.md](../iterate-plan.md): the selected bounded evaluator, fallback construction, publication, and verification. [Chain modes](../poison-policy-plan.md) own the failure policy; [Variant B](remap-structure-variant-B.md) owns storage. The plan records the [selected decisions](../iterate-plan.md#13-selected-decisions), including retained state and result forms under the whole-Array sort-failure exception. Production implementation remains a separate task.
 
 ## 1. One operation, separate outcomes
 
@@ -18,7 +18,7 @@ Copy-producing calls, including slice/concat/flat/toSorted/toSpliced/with, use t
 | Sequential stream | After root validity, return a partial copy. Later production publishes the specified regional Errors or positional flags in that captured copy. The root is not replaced retroactively. |
 | Unordered stream | After root validity, return a partial copy and preserve guaranteed survivors. A later ordering-only failure creates no positional Error or missing-output marker. |
 
-Thus an unordered sort copy can remain healthy after its comparator fails to establish order, provided its payloads and other required facts are healthy. This is the selected mode's result contract, not silent repair or a retained error-history exception. Required production/effect work still completes; dropping order as a data requirement does not cancel already-required callbacks.
+Sort and toSorted are exceptions to position-only recovery: explicitly requesting sort requires ordering, including in unordered mode. Required sorting success precedes result access; no healthy unsorted fallback escapes after comparator failure. A pending sort cannot hand off guaranteed survivors or its fixed undefined/hole suffix before a possible whole-result failure is excluded. Other methods retain their selected positional fallback. Required work still completes; no mode cancels already-required callbacks.
 
 Mutating calls have a separate receiver and direct result. Their receiver can publish permitted regions while the direct result retains its required control/effect dependencies and reports a failed required call. No payload-only wait is added. Root invalidity—failed target/category/authority, with index invalidity, capacity, or required unlimited-flat cycle validation—precedes any root handoff in every mode. These outcomes cannot be converted into a late flag on an already exposed copy.
 
@@ -132,15 +132,26 @@ Capture source presence and occurrence order before consuming sortable roots. A 
 
 Apply comparison-free proofs first: fewer than two sortable occurrences, or a structurally known repetition of one payload selector, needs no comparator/default keys. Preserve the ordinary permutation, hole rules, and prescribed writes. Otherwise prepare every required default key or one canonical comparator snapshot of all comparator-visible values. Keep aliases within that snapshot.
 
-Run the existing stable sorting algorithm only after required preparation is complete. Comparator execution remains synchronous with the existing Number-result validation. Do not call it speculatively, sort arrivals in settlement order, invoke it again to recover from failure, or use a partial native permutation as the fallback.
+Once a needed supplied comparator fails selection/validation, callback-only argument export is irrelevant; do not await its nested data or switch to default-key conversion. Such preparation failures remain conditional until comparator selection establishes that they are needed. Keep the original payloads and source-classification/presence work still required by the failure boundary; do not materialize a fallback permutation. Later deep consumers still observe retained payload errors; fatal failures retain their normal boundary.
 
-### Permutation failure
+Run the existing stable sorting algorithm only after required preparation is complete. Comparator execution remains synchronous with the existing Number-result validation. Stage the permutation privately under ordinary captures; publish sort data writes only after preparation and comparison succeed. Do not call the comparator speculatively, sort arrivals in settlement order, invoke it again to recover from failure, or expose a partial native permutation.
 
-For failed required comparison, key conversion, or comparator preparation, retain the original captured order within the sortable group, followed by the established undefined and hole groups. Every definitely present payload survives; sorting does not delete it. In sequential mode flag sortable occurrences whose required positions were not established; in unordered mode retain those survivors without positional poison. No missing-output marker is added solely for ordering failure.
+### Whole-Array failure
 
-An Error already inside a payload remains payload Error. A required failed key/export does not erase the original payload or invent a replacement value. Genuine source-presence/layout failures retain their own structural roles; they are not cured by sorting. Do not promote a possibly present source candidate to a guaranteed occurrence.
+Failed required comparison, key conversion, or comparator preparation fails the whole affected Array/result in every mode. The [selected contract](../iterate-plan.md#13-selected-decisions) distinguishes mutation from copying:
 
-Fixed undefined/hole suffix positions can publish once their counts and root prerequisites are established, independently of pending key work. The sequential cursor still waits for its earlier sortable region. Unordered discovery may hand off all guaranteed occurrences before permutation is known, while the operation continues required work under its result contract.
+| Call | Required preparation/comparison failure, in every mode |
+| --- | --- |
+| `a!.sort()` | Report failure and publish repairable own-path status on the affected Array. Retain its captured pre-sort data and publish no sort data writes or fallback permutation. This is an explicit exception to complete mode's ordinary structural-root-Error rule. |
+| `a.sort()` or `a.toSorted()` | Return ordinary result-root poison and preserve a. Do not expose or retain a repairable failed copy. |
+
+A new path-poison publication is itself effective for identity, even if retained payloads have not moved. No missing-output marker duplicates this whole-Array failure. Repair of failed mutating sort clears only that status and exposes the unchanged pre-sort data; it neither retries sorting nor restores a separate baseline. Sorting `[undefined,B,A]` with a required failing comparator therefore leaves `[undefined,B,A]` behind the flag.
+
+An unconsumed Error inside a retained payload remains payload Error. If preparing that payload is required to sort and fails, it contributes to the whole-sort failure; do not invent an unrelated failure or discard its causal identity. Existing source blockers propagate through their normal boundary, and unused comparators still introduce no failure. Any retained data preserves its payload producers, holes, aliases, and existing structural roles.
+
+Fixed undefined/hole partition facts may be calculated privately, but they are not permission to expose sort-result items before required sorting success. Observations captured before the sort retain their own earlier values. Preparation/comparison failure retains the captured input without publishing that private partition.
+
+After ordering succeeds, any storage/publication failure follows the ordinary publication-failure rules at its causal scope. Preserve already committed effects; add no sort-specific rollback or guarantee that later repair reveals pre-sort data at this boundary. Successful sorting keeps its ordinary prescribed-write and identity rules.
 
 ## 8. flat
 
@@ -150,7 +161,9 @@ Walk captured present occurrences in source order. At depth zero, retain the val
 
 Required source discovery, capacity, and unlimited-depth cycle validity are root prerequisites. Establish them before exposing a root they could invalidate. Valid discovered Array regions can retain partial captured shapes. A pending required prerequisite may wait indefinitely; do not fabricate a marker to escape it. Known payload Error at a retained leaf remains value poison. Required discovery/selection failures keep their declared root or structural boundary.
 
-Depth Infinity rejects an active Array-ancestry cycle through the existing InvalidArrayOperation boundary. Use captured identities; a repeated alias outside the active ancestry is not a cycle. Finite depth decreases on descent. The implementation may memoize a captured subtree/depth transform, but must preserve repeated occurrences and release it with its live uses. Never traverse unrelated data merely to build a cache.
+For the singleton cycle `const a=[]; a[0]=a` and unrestricted pending depth, finite depth is legal but Infinity is not. Root safety therefore cannot be inferred from the shallow fallback alone. Wait for the required control or a safety proof; a failed depth that leaves required root validity unprovable returns its causal root poison. Apply the same precedence to possible capacity-expanding depths, including branching cycles at finite depth. Regional failed-depth fallback requires proved root safety and does not authorize unrelated discovery.
+
+Depth Infinity rejects an active Array-ancestry cycle through the existing InvalidArrayOperation boundary. Use captured identities; a repeated alias outside the active ancestry is not a cycle. Finite depth is semantically consumed on descent, but repeated Number subtraction is not a sufficient implementation: `2**54 - 1 === 2**54`. Use depth-safe compact handling of repeated captured cycles, rather than one recursive frame or retained transform per conceptual depth. A singleton cycle produces one retained cyclic value at every finite depth; branching cycles can exceed capacity and require a bounded count proof before expansion. Preserve the accepted finite-depth domain without BigInt, an implicit cap, or conversion to Infinity. Memoized subtree/depth work must preserve repeated occurrences and release with its live uses; never traverse unrelated data merely to build a cache.
 
 ### Failed depth
 
@@ -174,6 +187,8 @@ An existing marker or structural Error produced by an earlier operation retains 
 
 Presence is distinct from value. Holes have length but no placement; value iteration yields undefined for a healthy hole. Preserve sparse ranges in slice/splice/concat/reverse/copyWithin, and densify only methods whose contract requires it. Do not walk every hole to update parent relationships or counters.
 
+A hole can carry positional own status on its captured absent-slot fact or symbolic span. Status blocks access without creating present undefined data or a managed-child parent edge. Repair clears status while preserving absence; structural transfers preserve it, including when a dense copy creates the prescribed undefined placement. Explicit deletion clears selected status even on a hole and is then an effective publication. Unordered discovery treats repeated holes as distinct occurrences rather than deduplicating their undefined payloads.
+
 Keep structural selection failure and missing-output markers as named numeric roles on logical placement/version captures, separate from their Error values. Ordinary payload is the default role. Remap moves and structural copies preserve the role; positional status remains the selected placement's own flag. Neither role nor status is inferred from Error identity, text, or delivery timing. A marker is one real Error slot, with no second positional container or new language value class.
 
 Explicitly receiving a looked-up Error as a new payload creates a new structurally known occurrence: `b.push(a[i])` may therefore hold ordinary payload poison even when a[i] was structurally invalid in a. The failure value remains; b's occurrence is now defined. In contrast, slice/concat/flat and other placement-preserving copies retain the original structural role. Copying an Array as a value also preserves roles inside it. This distinction follows fresh placement construction versus captured placement transfer and requires no Error-provenance registry.
@@ -195,7 +210,7 @@ Propagate a consumer's requested output region backwards through the same captur
 | Restrict or splice | Intersect with retained prefix/suffix and translate by the shared normalized cut. Inserted payloads have their own uses. |
 | Fill or point replacement | Drop predecessor content definitely overwritten; retain only possible old selections and selected new payloads. |
 | copyWithin | Union the possible old/copied source ranges from section 6. Read the predecessor, never the destination under construction. |
-| Sort | Ordering may require the complete sortable group even for one requested position. Retain that algorithm use separately from payloads already handed off. |
+| Sort | Ordering may require the complete sortable group even for one requested position. Retain required algorithm inputs through the whole-sort validity gate; do not hand off sort-result payloads ahead of that gate. |
 | Flat | Retain candidate nested contributions and the shape/discovery frontier that can select them. Discard excluded branches without consuming their payloads. |
 
 Pending boundaries retain conservative candidate slices and their deciding facts. Narrow them when those facts settle; a numeric-length use alone never retains payloads. An independently retained capture keeps its own use when another consumer releases overlapping data. Release and refine through the use index, without scanning all consumers of the producer.
@@ -232,8 +247,8 @@ The required stress set is fixed: retained versions with all-no-effect controls;
 
 ## 13. Verification and implementation boundary
 
-Run the [method specification probe](../test/experiments/array-method-specification-probes.mjs), [bounded fallback/handoff probe](../test/experiments/array-iteration-contract-probes.mjs), and [layout mechanism probe](../test/experiments/array-layout-technical-probes.mjs). The method probe compares normalizer/copy selectors against native successful operations, checks sparse writes, sort partitions, flatten occurrences, and actual runtime publication/retirement.
+Run the [method specification probe](../test/experiments/array-method-specification-probes.mjs), [bounded fallback/handoff probe](../test/experiments/array-iteration-contract-probes.mjs), and [layout mechanism probe](../test/experiments/array-layout-technical-probes.mjs). The method probe compares normalizer/copy selectors against native successful operations, checks sparse writes, sort partitions, flatten occurrences, and actual runtime publication/retirement. Its former healthy sort-fallback and early-suffix assertions are historical evidence, not acceptance of the newly selected whole-sort failure boundary; replace those witnesses at the sorting cutover.
 
 Production implementation must integrate these rules with each method's existing input conversion, effects, Error collection, and identity reporting. Re-run the same witnesses through the production layout when it exists, plus the repository's required public-operation, sequence, conflict, consistency, and lifetime suites. A specification/prototype cannot certify code that has not been written.
 
-No further method-design placeholder is required for the cases covered here. Remaining production choices are representation constants, cache thresholds, and measured optimizations; they cannot alter these semantics or introduce eager history-wide work.
+Implement the plan's [selected decisions](../iterate-plan.md#13-selected-decisions) with their acceptance checks. Representation constants, cache thresholds, and measured optimizations remain implementation choices; they cannot alter selected semantics or introduce eager history-wide work. The existing probes do not yet cover flagged-hole status, failed-depth root-safety combinations, very large finite cyclic depth, or whole-sort failure/repair identity; those require the integrated acceptance cases in the plan.

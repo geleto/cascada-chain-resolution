@@ -8,7 +8,7 @@ Use one construction mode, with complete as the conservative default. The names 
 
 | Mode | Structural failure and iteration |
 | --- | --- |
-| Complete | Settle the captured Array's required structural work and validity before exposing it for iteration. A relevant structural failure produces an ordinary whole-Array PoisonError, with no repairable hidden Array. |
+| Complete | Settle the captured Array's required structural work and validity before exposing it for iteration. A relevant structural failure normally produces an ordinary whole-Array PoisonError, with no repairable hidden Array. Required preparation/comparison failure in mutating sort uses the explicit repairable-flag exception below. |
 | Sequential stream | Stream the structurally published prefix in numeric order. Retain guaranteed survivors at deterministic fallback positions after failure; path-poison occurrences whose intended positions cannot be established. Do not stream structurally poisoned occurrences. |
 | Unordered stream | Stream guaranteed surviving occurrences without waiting for their indexes. Accept deterministic fallback ordering after a positional failure; position uncertainty alone creates no element poison, extra marker, or Array-path poison. |
 
@@ -18,7 +18,17 @@ All modes use one captured-layout engine and the same ownership, command orderin
 
 All nine mutating Array method names called without ! return a transformed copy and preserve the source. With !, their direct result remains the JavaScript method result. The copying call uses its source Chain's mode: complete waits for structure; sequential/unordered can hand off a valid partial copy under their regional failure rules.
 
-An exposed copy's root cannot later become a call Error or retroactive path flag. In unordered mode, an ordering-only failure can therefore leave that copy healthy. Required whole-result validity, including with index validity and capacity, is established before handoff in every mode. See the [full result boundary](docs/array-method-specification.md#1-one-operation-separate-outcomes).
+An exposed copy's root cannot later become a call Error or retroactive path flag. Required whole-result validity, including with index validity and capacity, is established before handoff in every mode. Sorting additionally requires established ordering before result access, as specified below. Other position-only failures retain the mode's ordinary fallback. See the [full result boundary](docs/array-method-specification.md#1-one-operation-separate-outcomes).
+
+### Sorting requires order
+
+Sort is an explicit exception to unordered position-only recovery. A required sorting failure blocks the whole affected Array/result. Invoking sort requests ordering even when the Chain can otherwise stream unordered occurrences. Do not return healthy survivors from that sort and later attempt to poison an already exposed result. Required comparator/key/preparation success is therefore a publication prerequisite for sort and toSorted in every mode, including for otherwise fixed suffixes.
+
+The [selected contract](iterate-plan.md#13-selected-decisions) publishes no sort data writes until required preparation and comparison succeed. On their failure, `a!.sort()` reports failure and retains its captured pre-sort data under repairable Array-path status in every mode, including complete mode. Repair exposes that unchanged data without retrying sorting; no fallback permutation or repair-only baseline is retained. Publishing new own status is effective for identity even when payloads have not moved.
+
+On the same failure, `a.sort()` and `a.toSorted()` return ordinary result-root poison in every mode and preserve a; there is no repairable failed copy. After ordering succeeds, storage/publication failure follows its ordinary causal boundary and preserves committed effects, with no sort-specific rollback.
+
+Keep argument irrelevance: an unused comparator is not a sorting failure. Existing source blockers retain their normal causal boundary, and retained payloads keep their original producers and roles. The former healthy unordered sort fallback is superseded.
 
 ### Payloads are independent of structural publication
 
@@ -47,7 +57,7 @@ The clean-prefix size is structural, not a count of fulfilled or non-poison payl
 | A genuine path/scope failure outside regional handling | Ordinary own-path poison with current data retained, where that operation's contract provides it. It blocks traversal until repair/replacement. |
 | Independent observation/callback result failure | Fail that result only; it does not automatically poison entered Arrays. |
 
-Complete mode applies its whole-Array structural failure rule. It does not promote ordinary payload poison to Array poison. Irrelevant arguments and proved no-effect work introduce no failure in any mode.
+Complete mode applies its whole-Array structural failure rule, with the [mutating-sort exception](#sorting-requires-order). It does not promote ordinary payload poison to Array poison. Irrelevant arguments and proved no-effect work introduce no failure in any mode.
 
 ### Pure insertion with a failed position
 
@@ -117,7 +127,7 @@ Use entry publication, not iterator draining, to establish these dependencies. Q
 
 This includes a sequential occurrence whose payload survives at a fallback index. Repair exposes that retained payload there; it neither discovers the intended position nor reorders the Array. It does not resume an old captured iterator. Later captures see the repaired successor.
 
-Ordinary payload poison, permanent structural poison, and missing-output markers are Error data rather than repairable flags. Replacement, overwrite, deletion, or ordinary structural edits can remove their placements; status clearing does not. Whole-Array Error in complete mode has no hidden Array for repair.
+Ordinary payload poison, permanent structural poison, and missing-output markers are Error data rather than repairable flags. Replacement, overwrite, deletion, or ordinary structural edits can remove their placements; status clearing does not. Whole-Array Error in complete mode has no hidden Array for repair. Failed mutating sort is the explicit exception: required preparation/comparison failure retains pre-sort data under own status even in complete mode. Clearing it neither reruns sorting nor rolls back writes; no sort data writes were published at that failure boundary. Copying-sort root Error has no hidden copy to repair.
 
 For genuine own-path status, eligibility does not depend on an explicit-! origin. Failed computed-key writes, selected scope failures, and canonical external own-state failure retain their established selection/authority rules. Clearing a parent does not clear descendant status.
 
@@ -188,5 +198,6 @@ Aggregate grouping alone does not bound intermediate allocation or retained hist
 - Queries inspect captured marker/status/data outcomes without draining an iterator. Earlier snapshots remain unchanged after repair/replacement.
 - Genuine path blockers remain blockers in every mode; unaffected siblings stay usable without adding whole-Array status for regional failures.
 - Exact-path repair returns undefined without waiting for the payload, preserves fallback positions, and cannot recover ordinary Error data or a complete-mode root Error.
+- Sort preparation/comparison failure in every mode: mutating sort retains unchanged pre-sort data under repairable own status, copying sorts return root Error without changing source, and no partial permutation/fixed suffix escapes. Verify effective flag identity, payload producers, holes, earlier captures, and repair without sorting again. Later publication failure follows ordinary rules without rollback.
 - Self-modifying iteration, COW, aliases/cycles, retirement/re-entry, native isolation, and canonical metadata preserve ordering and last-use release.
 - Diagnostic work and retained history remain bounded under propagation, repeated failures, and fan-out.
