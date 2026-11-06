@@ -11,14 +11,16 @@ import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
 
 class ErrorQueryWork extends PathOperation {
+    // The initial part keeps synchronous discovery open while pending children
+    // register. Each completed part discovers its descendants before retiring.
+    pendingParts = 1
+
     constructor(chain, path, operationContext, firstDynamicSegment, collect = false) {
         super(chain, path, operationContext, undefined, false, firstDynamicSegment, path.length, true)
         if (collect) this.errors = new Set()
     }
     release() {
         super.release()
-        if (this.externalReadiness) markPromiseHandled(this.externalReadiness, this.operationContext)
-        this.externalReadiness = undefined
         this.errors = undefined
         this.resolveOutcome = undefined
         this.visited = undefined
@@ -29,7 +31,7 @@ class ErrorQueryWork extends PathOperation {
             const selected = this.metadataNode()
             if (!selected) return this.inspectValue(value)
             const captured = this.metadata.collect(selected, error => this.found(error))
-            if (languageValues.isPending(captured, this.operationContext)) this.externalReadiness = captured
+            this.wait(captured)
             this.completeExternalEffect()
             return this.open ? this.inspectValue(value) : this.result
         }
@@ -39,7 +41,7 @@ class ErrorQueryWork extends PathOperation {
                     this.completeExternalEffect()
                     return this.inspectValue(value)
                 })
-                return this.complete(undefined, () => this.errors ? null : false)
+                return this.inspectValue(undefined)
             },
             error => this.settle(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
         return internalSteps.continueGraphTransition(result, this.operationContext,
@@ -48,12 +50,9 @@ class ErrorQueryWork extends PathOperation {
     inspectValue(value) {
         if (errorUtils.isPoisonError(value)) this.found(value)
         if (!this.open) return this.result
-        const readiness = languageValues.isTraversable(value, this.operationContext)
-            ? collectFencedErrorWaits(value, this) : undefined
-        return this.complete(readiness, () => {
-            if (!this.errors) return false
-            return this.errors.size ? errorUtils.combineErrors(this.errors) : null
-        })
+        if (languageValues.isTraversable(value, this.operationContext)) collectFencedErrors(value, this)
+        this.completePart()
+        return this.open ? new Promise(resolve => { this.resolveOutcome = resolve }) : this.result
     }
     found(error) {
         if (!this.open) return
@@ -70,27 +69,22 @@ class ErrorQueryWork extends PathOperation {
         resolve?.(result)
         return result
     }
-    complete(readiness, result) {
-        if (!this.open) return this.result
-        if (this.externalReadiness) {
-            readiness = Promise.all([readiness, this.externalReadiness])
-            this.externalReadiness = undefined
-        }
-        if (!languageValues.isPending(readiness, this.operationContext))
-            return this.settle(result())
-        const outcome = new Promise(resolve => {
-            this.resolveOutcome = resolve
-        })
+    wait(readiness) {
+        if (!languageValues.isPending(readiness, this.operationContext)) return
+        if (!this.open) { markPromiseHandled(readiness, this.operationContext); return }
+        this.pendingParts++
         const completed = internalSteps.continueGraphTransition(
             readiness,
             this.operationContext,
-            () => this.settle(result()),
+            () => this.completePart(),
             undefined,
             this,
         )
-        // settle owns both early completion and traversal exhaustion.
         markPromiseHandled(completed, this.operationContext)
-        return outcome
+    }
+    completePart() {
+        if (!this.open || --this.pendingParts) return
+        this.settle(this.errors ? this.errors.size ? errorUtils.combineErrors(this.errors) : null : false)
     }
 }
 
@@ -147,8 +141,7 @@ function getErrors(chain, path, operationContext, firstDynamicSegment = path.len
 // The fenced walk follows only nodes whose counters contain relevant
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
-function collectFencedErrorWaits(value, queryWork) {
-    const waits = []
+function collectFencedErrors(value, queryWork) {
     try {
         errorUtils.catchExternalThrow(
             () => {
@@ -161,12 +154,6 @@ function collectFencedErrorWaits(value, queryWork) {
             failure => queryWork.settle(failure),
         )
     } finally { value = undefined }
-    // A synchronous Error proof abandons observed waits, not an aggregate.
-    if (!queryWork.open) {
-        for (const wait of waits) markPromiseHandled(wait, queryWork.operationContext)
-        return undefined
-    }
-    return waits.length > 1 ? Promise.all(waits) : waits[0]
 
     function walk(node) {
         const identity = captureIdentity(node, queryWork.operationContext)
@@ -195,8 +182,7 @@ function collectFencedErrorWaits(value, queryWork) {
             if (errorUtils.isPoisonError(child)) {
                 queryWork.found(child)
             } else if (languageValues.isPending(child, queryWork.operationContext)) {
-                const wait = collectPromiseErrors(placement)
-                if (languageValues.isPending(wait, queryWork.operationContext)) waits.push(wait)
+                collectPromiseErrors(placement)
             } else if (languageValues.isTraversable(child, queryWork.operationContext)) {
                 walk(child)
             }
@@ -204,7 +190,7 @@ function collectFencedErrorWaits(value, queryWork) {
     }
 
     function collectPromiseErrors(placement) {
-        return propertyVersions.observePromiseVersion(
+        const wait = propertyVersions.observePromiseVersion(
             placement.value,
             placement.sourceVersion,
             queryWork.operationContext,
@@ -218,10 +204,11 @@ function collectFencedErrorWaits(value, queryWork) {
                     return undefined
                 }
 
-                return collectFencedErrorWaits(value, queryWork)
+                collectFencedErrors(value, queryWork)
             },
             queryWork,
         )
+        queryWork.wait(wait)
     }
 }
 

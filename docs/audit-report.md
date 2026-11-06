@@ -2,13 +2,15 @@
 
 ## Unresolved findings and decisions
 
-**Complete.** The whole-project sweep, authorized repairs and final independent
+**Complete at `ed1e3e1`.** The whole-project sweep, authorized repairs and final independent
 review are finished. All 350 files and current supported operations are
 reconciled below. Final normal and traced suites each pass 6,238 tests, all 16
 reusable probes pass, and all 269 safeguards have named semantic witnesses.
-D05 records the remaining development dependency risk; D01-D04 are semantic
-choices or unproven simplification opportunities. No semantic architecture
-change was made by this audit.
+D05 records the remaining development dependency risk; D01-D03 are semantic
+choices. D04 records the subsequent query simplification and the remaining
+producer hypothesis. The original audit inventory and verification manifest
+below describe `ed1e3e1`; D04 follow-up evidence is separate. No semantic
+architecture change was made.
 
 ### D05 - Development glob advisories require an upstream migration decision
 
@@ -64,17 +66,77 @@ implementation-only cleanup. Next step: define the exact host-storage and
 failure contract, then compare ordinary writes, optional delivery cache writes,
 failed preflight and recovery against it. No such cutover was made.
 
-### D04 - Smaller producer and query representations remain hypotheses
+### D04 - Query completion simplified; producer redesign remains unproven
 
-**Unconfirmed simplification opportunity, not an unresolved runtime defect.** A
-single immutable producer with independent destination uses might replace part
-of copied-delivery machinery. Replacing it with a mutable source version loses
-historical delivery after overwrite/retirement. A generic eager capture engine
-also consumes unused search/flat data. No demonstrated smaller replacement
-preserves all these obligations. Next useful experiment must name the records
-and traversals it removes and pass copied-delivery, source re-entry, bounded
-pending-copy/push, short-circuit and failure-discard witnesses. S1/S4 remain
-search areas, not claims that every design has been exhausted.
+**Query experiment retained; no contract change.** The follow-up starts from
+clean commit `ed1e3e1f9b91976ec62f75879f3edd07a28a445f`. In
+[`observations.js`](../src/observations.js), one operation-local pending-part
+counter replaces recursive wait arrays, their `Promise.all` hierarchy and the
+separate external-metadata readiness field. Discovery registers descendants
+before completing its part; the initial discovery part prevents premature
+completion during synchronous traversal. Each actual pending transition uses
+the existing guarded continuation. Indexed pruning, captured property versions,
+early `hasError` success, complete `getErrors` collection and failure handling
+retain their existing paths. No producer or publication mechanism changes.
+
+**Executed comparison:** a public query follows successively delivered
+`{ next: pending }` nodes, with only the final dependency unresolved. The source
+Chain and result remain live across GC. Under Node `v24.14.1`, retained Promise
+counts for `hasError` were:
+
+| Delivered stages | Original | Simplified |
+| --- | --- | --- |
+| 16 | 82 | 18 |
+| 64 | 273 | 17 |
+| 128 | 529 | 17 |
+
+`getErrors` retains 17 at all three sizes with the simplified implementation.
+The [retained regression](../test/query-frontier-work.test.js) and its
+[GC fixture](../test/fixtures/query-frontier-work.mjs) check bounded growth with
+collection tolerance, not these exact counts. Substituting the
+original observations module fails that bound; disabling the Promise tracker
+fails its independent control. Healthy checks require pending descendants to
+delay the result, then verify the final query and exported source. This removes
+spent completion history while required work remains pending.
+
+There is an allocation tradeoff: a separate 64-leaf wide query creates 329
+Promises versus 268 before. A 64-stage query with pending side branches creates
+1,155 versus 1,156 and eliminates 64 query aggregates. These are allocation
+counts, not elapsed-time benchmarks. Retain the smaller completion protocol and
+bounded retention; do not claim a universal speed or allocation improvement.
+
+**Executed verification:** the full Mocha suite passes **6,240 tests** normally
+and **6,240 with publication tracing**, under strict unhandled rejections.
+Tracing is propagated to child workers through `NODE_OPTIONS`; 364 loader
+instances and 241 execution receipts match the original audit's per-script
+counts plus the two new fixture executions. The complete safeguard registry
+passes **269/269**, with 1,075 semantic failures and no fallback runs. The known
+faulted reception worker still emits its 13 witnesses before exiting 7, as
+qualified in the original audit below. Full-suite coverage includes copied
+delivery/re-entry, bounded pending copy/push, short-circuit and failure-discard
+checks. The focused traced query/lifetime run also passed 281 tests.
+
+The full command is `node --unhandled-rejections=strict
+node_modules/mocha/bin/mocha.js "test/**/*.test.js" --reporter dot`; the traced
+run adds `--import=<absolute file URL of test/trace-runtime.js>` to
+`NODE_OPTIONS`. Safeguards use `node test/safeguards/run.mjs --skip-baseline
+--parallel=3 --report=<temporary report path>` after the healthy full run.
+Source and test code remained unchanged throughout final verification;
+`observations.js` SHA-256 is
+`d778bf42f28479c7510bacd266e2985d08ab7354d1a53ea090c7da4b27b81276`.
+The original audit's `audit-verification.json` remains unchanged; its expanded
+model and probe results are historical, not fresh follow-up runs. Working logs,
+input hashes and before/after probes are in `%TEMP%/cascada-d04-ed1e3e1/`.
+
+**Remaining producer hypothesis:** copied delivery already captures one
+completion independently of later source writes. A broader immutable-producer
+design must also replace gate and mutation-version authority; direct source
+sharing loses historical delivery after overwrite/retirement. No smaller
+replacement was demonstrated, so that machinery is retained. A generic eager
+capture engine still consumes unused search/flat data. S1/S4 remain search
+areas; future producer work must remove an actual protocol and pass copied
+delivery, source re-entry, bounded pending-copy/push, short-circuit and
+failure-discard witnesses.
 
 ## Baseline and evidence policy
 
@@ -231,7 +293,7 @@ alone is never treated as an independent semantic oracle.
 
 | Search | Candidate invariant, deletion target and counterexample | Disposition |
 | --- | --- | --- |
-| S1 Capture/producer/query | Share actual capture without duplicating admission transactions; one immutable producer could replace destination adapters. A snapshot must reject unresolved data without subscribing while ordinary import installs a producer; a historical copy must outlive source overwrite. | Retain shared managed/snapshot walker and concrete readers. D04 remains an experiment, not a clear repair. |
+| S1 Capture/producer/query | Share actual capture without duplicating admission transactions; one immutable producer could replace destination adapters. A snapshot must reject unresolved data without subscribing while ordinary import installs a producer; a historical copy must outlive source overwrite. | Retain shared managed/snapshot walker and concrete readers. D04 follow-up removes recursive query completion history; the producer alternative remains unproven. |
 | S2 Publication | One prepared placement outcome supplies storage, structure, parents and counters. An added generic commit record must remove a producer, not merely wrap existing callbacks. Required mutation failure and optional cache failure disprove one undifferentiated write path. | Existing centralized commit is worth retaining; no additional coordinator justified. |
 | S3 Selection | One cursor could remove parallel key continuations, but mutation needs reconstruction, entry does not consume unused suffixes, and metadata authority differs from native access. Final selected node cannot reconstruct original static provenance. | Retain shared key consumption and explicit route duties. Earlier merged-walker experiment is evidence about that candidate only. |
 | S4 Arrays | One mapping/shape engine must retain selected-range work, sparse presence and result-specific short-circuiting. Eager capture of every search or flat descendant is a counterexample. | Current flat repair removes conceptual-depth recursion for a demonstrated work defect. Persistent layouts and partial publication remain future semantics; no parallel production layout engine added. |
