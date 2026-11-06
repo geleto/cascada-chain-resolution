@@ -61,6 +61,7 @@ describe("captured Array length knowledge", () => {
             // Derivation can share the now-known range while the older question
             // still waits for its own prefix. Later writes must preserve the shared backing.
             const appended = runtime.run(chain, [], "concat", [[9]], context, {})
+            const output = new runtime.Chain(appended, context)
             assert.equal(arrayBacking(appended, context), storage)
             hold.resolve()
             await entry
@@ -69,7 +70,7 @@ describe("captured Array length knowledge", () => {
             expected.length = 8
             if (created) expected[5] = 5
             expected[7] = 7
-            assert.deepEqual(await runtime.export(new runtime.Chain(appended, context), [], context), expected.concat(9))
+            assert.deepEqual(await runtime.export(output, [], context), expected.concat(9))
             assert.deepEqual(await runtime.export(chain, [], context), expected)
             assert.equal(storage.length, 9)
         })
@@ -113,6 +114,7 @@ describe("captured Array length knowledge", () => {
         const context = { execution: new Execution(), errorContext: "occupied tail" }, storage = [1, 2]
         const chain = new runtime.Chain(storage, context)
         const longer = runtime.run(chain, [], "concat", [[3]], context, {})
+        const retained = new runtime.Chain(longer, context)
         const hold = Promise.withResolvers()
         const entry = runtime.enter(chain, [5], context, true, inside => hold.promise.then(() =>
             runtime.assignPath(inside, [], 6, context)))
@@ -123,8 +125,23 @@ describe("captured Array length knowledge", () => {
         hold.resolve()
         await entry
         assert.deepEqual(runtime.export(chain, [], context), [1, 2, , , , 6])
-        assert.deepEqual(runtime.export(new runtime.Chain(longer, context), [], context), [1, 2, 3])
+        assert.deepEqual(runtime.export(retained, [], context), [1, 2, 3])
     })
+
+    for (const start of [0, 1]) {
+        it(`preserves source length when a shared slice is extended, start=${start}`, () => {
+            const context = { execution: new Execution(), errorContext: "derived tail growth" }
+            const source = new runtime.Chain([1, 2], context)
+            const sliced = new runtime.Chain(runtime.run(source, [], "slice", [start], context, {}), context)
+            const grown = new runtime.Chain(runtime.run(sliced, [], "concat", [[3]], context, {}), context)
+
+            assert.equal(runtime.lookupPath(source, ["length"], context), 2)
+            assert.deepEqual(runtime.export(source, [], context), [1, 2])
+            assert.deepEqual(runtime.export(sliced, [], context), [1, 2].slice(start))
+            assert.deepEqual(runtime.export(grown, [], context), [...[1, 2].slice(start), 3])
+            assert.equal(context.execution.fatalError, null)
+        })
+    }
 
     for (const projected of [false, true]) {
         it(`preserves shared backing without a physical tail, projected=${projected}`, () => {
@@ -132,12 +149,13 @@ describe("captured Array length knowledge", () => {
             const chain = new runtime.Chain(storage, context)
             if (projected) runtime.enter(chain, [5], context, true, () => undefined)
             const retained = runtime.run(chain, [], "slice", [], context, {})
+            const output = new runtime.Chain(retained, context)
             assert.equal(arrayBacking(retained, context), storage)
             assert.equal(storage.length, 2)
             runtime.assignPath(chain, [0], 9, context)
             assert.notEqual(arrayBacking(chain._state.value, context), storage)
             assert.deepEqual(runtime.export(chain, [], context), [9, 2])
-            assert.deepEqual(runtime.export(new runtime.Chain(retained, context), [], context), [1, 2])
+            assert.deepEqual(runtime.export(output, [], context), [1, 2])
         })
     }
 

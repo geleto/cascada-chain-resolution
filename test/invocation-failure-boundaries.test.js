@@ -5,7 +5,8 @@ import * as r from "cascada-chain-resolution"
 import { OrderedThenable, ChainedThenable } from "./ordered-thenable.js"
 
 describe("invocation completion failure boundaries", () => {
-    it("fails execution for every normalized internal rejection, including poison", () => {
+    it("fails execution for every normalized internal rejection, including poison", function () {
+        this.timeout(15000)
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/invocation-completion-failure.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })

@@ -5,7 +5,7 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import { runInNewContext } from "node:vm"
 import assert from "node:assert/strict"
 
-import { deferred, errorCause, expect, flushMicrotasks, readPath, thrownBy } from "./support.js"
+import { deferred, errorCause, expect, flushMicrotasks, readPath } from "./support.js"
 
 describe("managed class copy-on-write", () => {
     for (const declaration of ["default", "identity", "class", "external override"])
@@ -506,27 +506,6 @@ describe("managed class copy-on-write", () => {
         expect(failure instanceof Error).to.be(true)
         expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(source.value).to.be(1)
-    })
-
-    it("does not emulate internal slots for a managed subclass", () => {
-        const testContext = { execution: new Execution(), errorContext: "test operation" }
-        class FalseDate extends Date {}
-        managedStateClass(FalseDate)
-        const source = new FalseDate(0)
-        source.value = 1
-        const chain = new Chain(importValue(
-            source,
-            { ...testContext, errorContext: "managed Date subclass" },
-        ), testContext)
-
-        assignPath(chain, ["value"], 2, testContext)
-        const copy = chain._state.value
-
-        expect(copy instanceof FalseDate).to.be(true)
-        expect(copy.value).to.be(2)
-        expect(thrownBy(() => copy.getTime()) instanceof TypeError).to.be(
-            true,
-        )
     })
 
     it("normalizes managed and external array subclasses", () => {

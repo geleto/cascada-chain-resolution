@@ -4,7 +4,7 @@
 
 Managed export uses captured identity partitions under the [write-based contract](data-limitations.md#managed-identity). Capture source-free records and complete required data/Error collection first. On success, resolve captured Array lengths and identity grouping before allocating one final object per canonical key. Failed capture discards output and releases shape questions without waiting for shape or identity. Assembly has no waits, provisional duplicate shells, or rewiring pass.
 
-Export enforces the external-capability restriction: an identity recorded in this execution's external binding map is rejected with `ExternalCapabilityEscape`, including invalid bindings and identities reached after Promise fulfillment. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
+Export enforces the external-capability restriction: an identity recorded in this execution's external registration set is rejected with `ExternalCapabilityEscape`, including identities reached after Promise fulfillment. Duplicate registration rejects the new context import without invalidating the existing binding. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
 
 ## Consumers and snapshots
 

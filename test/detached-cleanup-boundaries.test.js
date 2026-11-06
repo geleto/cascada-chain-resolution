@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-describe("cleanup failure boundaries", () => {
+describe("cleanup failure boundaries", function () {
+    this.timeout(15000)
     it("contains runtime cleanup defects before and after execution failure", () => {
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/detached-cleanup-failure.js", import.meta.url))],

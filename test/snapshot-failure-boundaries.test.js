@@ -39,7 +39,8 @@ describe("external snapshot failure boundaries", () => {
         })
     }
 
-    it("keeps internal snapshot and managed-selection classification defects on the fatal path", () => {
+    it("keeps internal snapshot and managed-selection classification defects on the fatal path", function () {
+        this.timeout(15000)
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/snapshot-internal-failure.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })

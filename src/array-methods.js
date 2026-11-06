@@ -1,5 +1,5 @@
 import { captureIdentity, compareIdentities, IdentityPublication } from "./captured-identity.js"
-import { ArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor } from "./array-view.js"
+import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 import * as arrayRemaps from "./array-remap.js"
@@ -12,11 +12,12 @@ import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { PlacementConstruction } from "./parent-placements.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
+import { flattenCapturedArrays, cyclicFlatInputs } from "./array-flat.js"
+import { FlatCapture, findFlatAncestor } from "./array-flat-capture.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
 const arrayConcat = Array.prototype.concat
-const arrayFlat = Array.prototype.flat
 const arraySort = Array.prototype.sort
 
 // Dispatch precedence is direct output, observation, remap producer, then the
@@ -370,65 +371,51 @@ function createConcatRemap({ parts, receiverRemap }, invocationWork) {
 
 function prepareFlatRemap([depth = 1], invocationWork) {
     depth = Math.max(depth, 0)
-    return internalSteps.continueGraphTransition(
-        prepareFlatArray(
-            invocationWork.receiver,
-            depth,
-            undefined,
-            invocationWork,
-        ),
-        invocationWork.operationContext,
-        prepared => {
-            if (errorUtils.isPoisonError(prepared)) return prepared
-            return Reflect.apply(arrayFlat, prepared, [depth])
-        },
-        undefined,
-        invocationWork,
-    )
-}
-
-function prepareFlatArray(array, depth, ancestry, invocationWork) {
-    return runArrayStep(invocationWork, () => internalSteps.continueGraphTransition(
-        depth === Infinity && hasArrayAncestor(ancestry, array, invocationWork),
-        invocationWork.operationContext, cycle => runArrayStep(invocationWork, () => {
-        try {
-            if (cycle) return errorUtils.validationError(
-                "Cannot flat an Array cycle to unlimited depth",
+    const capture = new FlatCapture(invocationWork, action => runArrayStep(invocationWork, action))
+    invocationWork.discardPreparedOutput = capture.discard
+    return internalSteps.continueGraphTransition(capture.start(invocationWork.receiver, depth),
+        invocationWork.operationContext, prepared => {
+            const result = internalSteps.continueGraphTransition(validateFlatCapture(prepared, depth, invocationWork),
                 invocationWork.operationContext,
-                errorUtils.ERROR_KIND.InvalidArrayOperation,
-            )
-            const source = arrayRemaps.createRemap(array, invocationWork.operationContext, 0, undefined,
-                action => runArrayStep(invocationWork, action))
-            const nestedAncestry = depth === Infinity
-                ? { identity: captureIdentity(array, invocationWork.operationContext), parent: ancestry }
-                : undefined
-            const parts = []
-            for (const key of Object.keys(source))
-                parts.push(prepareFlatProperty(source[key], depth, nestedAncestry, invocationWork))
-            // Consumed placements carry final presence. Nested remaps come only
-            // from present Array values, so no source-key map needs to survive.
-            return internalSteps.prepareInputs(parts, invocationWork.operationContext,
-                values => values.filter(value => !propertyVersions.isPropertyPlacement(value) || value.present !== false),
-                invocationWork)
-        } finally { array = undefined }
-    }), undefined, invocationWork))
-}
-
-function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
-    return runArrayStep(invocationWork, () => {
-        if (errorUtils.isPoisonError(placement) || depth === 0) {
-            try { return errorUtils.isPoisonError(placement) ? placement : placement.resolvePresence() }
-            finally { placement = undefined }
-        }
-        return internalSteps.continueGraphTransition(
-            placement.resolveValue(), invocationWork.operationContext,
-            value => {
-                try {
-                    return isLogicalArray(value, invocationWork.operationContext)
-                        ? prepareFlatArray(value, depth - 1, ancestry, invocationWork) : placement
-                } finally { placement = undefined }
+                failure => failure ?? flattenCapturedArrays(prepared, depth) ?? invalidArrayLength(invocationWork),
+                undefined, invocationWork)
+            return internalSteps.continueGraphTransition(result, invocationWork.operationContext, result => {
+                if (errorUtils.isPoisonError(result)) capture.discard()
+                capture.release()
+                invocationWork.discardPreparedOutput = undefined
+                return result
             }, undefined, invocationWork)
-    })
+        }, undefined, invocationWork)
+}
+function validateFlatCapture(root, depth, work) {
+    const nodes = new Set(), pending = [root], errors = new Set()
+    while (pending.length) {
+        const node = pending.pop()
+        if (nodes.has(node)) continue
+        nodes.add(node)
+        for (const part of node.parts) {
+            if (part.error) errors.add(part.error)
+            if (part.child) pending.push(part.child)
+        }
+    }
+    if (depth !== Infinity) return errors.size ? errorUtils.combineErrors(errors) : undefined
+    const cyclic = cyclicFlatInputs(root)
+    return internalSteps.continueGraphTransition(collect(root), work.operationContext, cycles =>
+        cycles || errors.size ? errorUtils.combineErrors(cycles ? [...errors, cycles] : errors) : undefined,
+        undefined, work)
+
+    function collect(node, ancestry) {
+        if (!cyclic.has(node)) return undefined
+        return internalSteps.continueGraphTransition(findFlatAncestor(ancestry, node.identity, work),
+            work.operationContext, ancestor => {
+                if (ancestor) return errorUtils.validationError(
+                    "Cannot flat an Array cycle to unlimited depth", work.operationContext,
+                    errorUtils.ERROR_KIND.InvalidArrayOperation)
+                const next = { node, identity: node.identity, parent: ancestry }, parts = []
+                for (const { child } of node.parts) if (child) parts.push(collect(child, next))
+                return internalSteps.prepareInputs(parts, work.operationContext, () => undefined, work)
+            }, undefined, work)
+    }
 }
 
 function identityInput(value, invocationWork) {

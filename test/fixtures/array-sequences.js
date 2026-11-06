@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
@@ -14,7 +15,7 @@ import { verifyRefCounts } from "../verify-refcounts.js"
 // Compare observed, verified-without-extra-reads, and uninstrumented runs.
 // The observation methods under test remain in all three modes.
 
-// Slots: { value } is data, { error } ordinary Error data, and { poison,
+// Slots: { value } is data, { error } is rejected-payload poison, and { poison,
 // baseline, absent } a failed prefix retaining the slot it replaced.
 function applyElement(slots, index, effect, value) {
     const current = slots[index]
@@ -336,8 +337,8 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
     return { errors, final: finals.join("|") }
 }
 
-const programs = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6
-const start = Number(process.env.CASCADA_SEQUENCE_START ?? 0)
+const programs = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 16, 1, Math.floor(Number.MAX_SAFE_INTEGER / 6)) * 6
+const start = readIntegerSetting("CASCADA_SEQUENCE_START", 0, 0, programs - 1)
 const coverage = new Set()
 let runs = 0
 const totals = await runGeneratedCases({

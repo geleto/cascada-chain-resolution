@@ -107,8 +107,8 @@ describe("receiving boundary policy", () => {
     for (const timing of ["ready", "sync", "pending"]) for (const importedFirst of [false, true]) {
         it(`uses the same category before and after explicit import: ${shape}/${timing}/${importedFirst}`, async () => {
             const ctx = context(), pending = Promise.withResolvers()
-            // A contextual leaf isolates category selection from the open
-            // first-preparer attribution problem.
+            // A contextual leaf isolates category selection from the documented
+            // first-preparer source-attribution exception.
             const poison = r.createPoisonError(new Error("data"), ctx, r.ERROR_KIND.ContextValueFailed)
             class Data { constructor() { this.bad = poison } }
             const raw = shape === "array" ? [poison] :

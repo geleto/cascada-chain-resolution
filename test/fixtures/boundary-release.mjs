@@ -62,7 +62,7 @@ async function lateDelivery(route, mode, pendingSibling) {
     const context = new r.ContextChain({ resource, api: r.externalState({ get() { return make() } }) },
         ctx, { resource: {}, api: {} })
     let held = new r.Chain(route === "external-call"
-        ? await r.run(context, ["api"], "get", [], ctx, {})
+        ? r.run(context, ["api"], "get", [], ctx, {})
         : route === "import" ? r.import(make(), ctx) : r.importMethodResult(make(), ctx), ctx)
     await collect()
     assert(root.deref() && payload.deref(), "A retained result still owns its data")

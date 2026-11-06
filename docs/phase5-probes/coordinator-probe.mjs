@@ -57,7 +57,8 @@ for (const rejection of [false, true]) {
     histories++
 }
 
-// A later binding conflict must not replace the pending mutation's own failure.
+// A duplicate registration rejects only the new context. It cannot replace the
+// valid binding's pending mutation failure or enter an earlier metadata capture.
 // A prior child poison must remain its own cause, with Object.is source equality.
 let conflictHistories = 0
 for (const mode of ['native', 'ordered'])
@@ -81,20 +82,23 @@ for (const completionFirst of [false, true]) {
         signal.reject(cause)
         await collection
     }
-    new r.ContextChain({ second }, conflictCtx, { second: {} })
+    const competitor = new r.ContextChain({ second }, conflictCtx, { second: {} })
+    const conflict = r.lookupPath(competitor, [], conflictCtx)
+    assert.equal(conflict.kind, r.ERROR_KIND.ExternalLocationConflict)
+    assert.equal(conflict.errorContext, conflictCtx.errorContext)
     if (!completionFirst) signal.reject(cause)
     const ownFailure = await pending
     assert.equal(ownFailure.cause, cause)
     assert(Object.is(ownFailure.errorContext, +0))
     const errors = await collection
     const leaves = errors.errors ?? [errors]
-    assert.equal(leaves.length, completionFirst ? 2 : 3)
+    assert.equal(leaves.length, 2)
     assert(leaves.some(error => error.cause === cause && Object.is(error.errorContext, -0)))
     assert(leaves.some(error => error.cause === cause && Object.is(error.errorContext, +0)))
-    assert.equal(leaves.some(error => error.kind === r.ERROR_KIND.ExternalLocationConflict && error.errorContext === conflictCtx.errorContext), !completionFirst)
-    assert.equal(r.repairPath(chain, ['second'], firstCtx).kind, r.ERROR_KIND.ExternalLocationConflict)
-    assert.equal((r.getErrors(chain, [], firstCtx).errors ?? []).length, 3)
+    assert.equal(leaves.some(error => error.kind === r.ERROR_KIND.ExternalLocationConflict), false)
+    assert.equal(r.repairPath(chain, ['second'], firstCtx), undefined)
+    assert.equal(r.getErrors(chain, [], firstCtx), failed)
     assert.equal(execution.fatalError, null)
     conflictHistories++
 }
-console.log(JSON.stringify({ histories, conflictHistories, checks: 'captured queries, retirement, causal errors, native failure ownership and blocked repair' }))
+console.log(JSON.stringify({ histories, conflictHistories, checks: 'captured queries, retirement, causal errors, atomic duplicate rejection and valid binding repair' }))

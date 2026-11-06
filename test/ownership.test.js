@@ -568,7 +568,7 @@ describe("bounded graph ownership", () => {
     }
 
     it("preserves captured generations and releases spent pending inputs", function () {
-        this.timeout(30000)
+        this.timeout(35000)
         const result = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/ownership-interactions.js", import.meta.url))],
         { encoding: "utf8", timeout: 30000 })
@@ -577,7 +577,7 @@ describe("bounded graph ownership", () => {
 
     for (const fixture of ["ownership-destinations", "array-point-work", "array-enumeration-work", "identity-work", "entry-history-work"]) {
         it("verifies " + fixture, function () {
-            this.timeout(30000)
+            this.timeout(35000)
             const result = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
                 fileURLToPath(new URL("./fixtures/" + fixture + ".js", import.meta.url))],
             { encoding: "utf8", timeout: 30000 })
@@ -586,7 +586,7 @@ describe("bounded graph ownership", () => {
     }
 
     it("bounds reactivation and Array extension work", function () {
-        this.timeout(30000)
+        this.timeout(35000)
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/ownership-work.js", import.meta.url))],
         { encoding: "utf8", timeout: 30000 })

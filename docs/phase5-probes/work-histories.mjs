@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
-import { normalizeModuleURL } from '../../test/module-url.js'
+import { instrumentRuntime } from '../../test/runtime-transform.js'
 
 // Measures current dependency state separately from total work. Public calls
 // create all runtime state; metadata reads and loader hooks only observe it.
-let counts, substitutions = 0
+let counts
 globalThis.reviewHistoryCounts = () => counts
 globalThis.ReviewHistoryUses = class extends Set {
     add(use) {
@@ -28,9 +27,9 @@ const changes = new Map([
             '$&\n    globalThis.reviewHistoryCounts().captures++;'],
         ['function createVersionFromPlacement(placement) {',
             '$&\n    globalThis.reviewHistoryCounts().createdVersions++;'],
-        ['function copyPlacement(placement, owner, key, operationContext, writeBack = true) {',
+        [/function copyPlacement(?:Untraced)?\(placement, owner, key, operationContext, writeBack = true\) \{/g,
             '$&\n    globalThis.reviewHistoryCounts().copiedPlacements++;'],
-        ['for (const sourceKey of Object.keys(versions ?? {})) {',
+        ['for (const [sourceKey, version] of ownPlacementVersionEntries(source, operationContext)) {',
             '$&\n        globalThis.reviewHistoryCounts().overlayVisits++;'],
         ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation) {',
             '$&\n    const measured = globalThis.reviewHistoryCounts(); measured.live++; let measuredClosed = false;'],
@@ -42,25 +41,12 @@ const changes = new Map([
             'globalThis.reviewHistoryCounts().subscriptions++; $&'],
     ]],
 ])
-const root = normalizeModuleURL(new URL('../../src/', import.meta.url).href)
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context), normalized = normalizeModuleURL(url)
-    if (!normalized.startsWith(root) || process.argv.includes('--no-op-loader')) return loaded
-    const edits = changes.get(normalized.slice(root.length))
-    if (!edits) return loaded
-    let source = String(loaded.source).replaceAll('\r\n', '\n')
-    for (const [anchor, replacement] of edits) {
-        assert.equal(source.split(anchor).length - 1, 1, anchor)
-        source = source.replace(anchor, replacement)
-        substitutions++
-    }
-    return { ...loaded, source }
-} })
+const verifyInstrumentation = instrumentRuntime(changes, !process.argv.includes('--no-op-loader'))
 const r = await import('../../src/index.js')
 const { metaOf } = await import('../../src/meta.js')
 const { OrderedThenable } = await import('../../test/ordered-thenable.js')
 const { verifyRefCounts } = await import('../../test/verify-refcounts.js')
-assert.equal(substitutions, 8, 'Every work counter must be installed')
+verifyInstrumentation('Every work counter must be installed')
 
 const routes = ['push-pop', 'unshift-pop', 'unshift-shift', 'concat-shift',
     'concat-slice', 'alternating-ends', 'splice-window', 'sparse-assignment']
@@ -149,4 +135,8 @@ for (const sample of samples) {
         assert(sample.issued[counter] <= 2.5 * smaller.issued[counter] + 16,
             `${sample.route}/${sample.delivery}/${sample.readers}: superlinear measured ${counter}`)
 }
+for (const counter of ['captures', 'createdVersions', 'copiedPlacements', 'overlayVisits',
+    'live', 'subscriptions', 'uses', 'peakUses'])
+    assert(samples.some(sample => sample.issued[counter] > 0),
+        `History work instrumentation must count ${counter}`)
 console.log(JSON.stringify({ cases: samples.length, samples }))

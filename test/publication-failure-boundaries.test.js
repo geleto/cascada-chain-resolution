@@ -5,7 +5,8 @@ import * as r from "cascada-chain-resolution"
 import { OrderedThenable, ChainedThenable } from "./ordered-thenable.js"
 
 describe("captured publication failure boundaries", () => {
-    it("fails execution when normalized publication readiness rejects", () => {
+    it("fails execution when normalized publication readiness rejects", function () {
+        this.timeout(15000)
         const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/publication-rejection-audit.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })

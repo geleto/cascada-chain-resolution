@@ -126,7 +126,8 @@ describe("managed receiver capture", () => {
         assert.equal(calls, 1)
     })
 
-    it("allocates one capture per logical node across multiple representations", () => {
+    it("allocates one capture per logical node across multiple representations", function () {
+        this.timeout(35000)
         const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
             "test/fixtures/managed-capture-work.js"], { encoding: "utf8", timeout: 30000 })
         assert.equal(result.status, 0, result.stdout + result.stderr)

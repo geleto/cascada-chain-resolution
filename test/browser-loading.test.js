@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 
-describe("portable module loading in a Node VM", () => {
+describe("portable module loading in a Node VM", function () {
+    this.timeout(15000)
     it("loads through relative imports without consulting a host's process global", () => {
         const sourceRoot = new URL("../src/", import.meta.url).href
         const result = spawnSync(process.execPath,

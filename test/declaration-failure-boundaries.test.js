@@ -112,7 +112,8 @@ describe("classification and declaration failure boundaries", () => {
         assert.equal(metadata.identityDeclarationOf(source), undefined)
     })
 
-    it("makes implementation defects fatal in classification and declarations", () => {
+    it("makes implementation defects fatal in classification and declarations", function () {
+        this.timeout(15000)
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/classification-declaration-failure.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })

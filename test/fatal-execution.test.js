@@ -19,7 +19,8 @@ function failedBy(operationContext, reason) {
     return thrownBy(() => errorUtils.failExecution(operationContext, reason))
 }
 
-describe("fatal execution", () => {
+describe("fatal execution", function () {
+    this.timeout(15000)
     for (const delivery of ["native", "ordered"])
     for (const outcome of ["raw", "poison"])
     it(`fails all pending results on ${outcome} internal-result rejection, ${delivery}`, async () => {

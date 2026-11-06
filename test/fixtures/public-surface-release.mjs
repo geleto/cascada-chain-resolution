@@ -99,11 +99,15 @@ for (const [name, op] of Object.entries(cases)) {
     const weak = new WeakRef(source.payload)
     let chain = new r.Chain(r.import(source, ctx), ctx)
     source = undefined
-    let result
-    try { result = await op(ctx, chain) } catch (failure) { result = failure }
+    let result, resultHolder
+    try {
+        const output = op(ctx, chain)
+        if (name === "array-mutate-coercion") resultHolder = new r.Chain(output, ctx)
+        result = await output
+    } catch (failure) { result = failure }
     // Results that legitimately contain graph data are reported, not judged.
     chain = undefined
-    rows.push({ case: name, result: describe(result), weak, keep: [ctx, result] })
+    rows.push({ case: name, result: describe(result), weak, keep: [ctx, result, resultHolder] })
     result = undefined
 }
 
@@ -200,4 +204,10 @@ await settle(30)
 // may retain the source. This is a live-output control, not a release obligation.
 const failures = rows.filter(row => row.case !== 'array-mutate-coercion' && row.weak.deref()).map(row => row.case)
 assert.deepEqual(failures, [], 'Completed public commands retain dropped source graphs')
+const live = rows.find(row => row.case === 'array-mutate-coercion')
+assert.deepEqual(r.export(live.keep[2], [], live.keep[0]), [1, 1, 1])
+r.assignPath(live.keep[2], [], null, live.keep[0])
+live.keep.length = 1
+await settle(30)
+assert.equal(live.weak.deref(), undefined, 'Released live output must no longer retain its source')
 console.log(rows.length + ' public-surface lifetime cases passed')

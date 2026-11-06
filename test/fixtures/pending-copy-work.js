@@ -78,6 +78,9 @@ for (const route of ['unshift', 'splice', 'reverse', 'fill', 'record', 'array'])
         samples.push({ route, size, delivery, issued, partial, settled: { ...counts } })
     }
 }
+for (const field of ['live', 'peakUses', 'subscriptions'])
+    assert(samples.some(sample => sample.issued[field] > 0),
+        `Pending-copy instrumentation must count ${field}`)
 console.log(JSON.stringify({ samples }))
 if (!reportOnly) for (const sample of samples) {
     assert(sample.issued.peakUses <= 8 * sample.size,

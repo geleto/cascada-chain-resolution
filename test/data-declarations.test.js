@@ -289,18 +289,23 @@ describe("data declarations", () => {
         class Managed {}
         const value = new Managed()
         let reads = 0
+        let availableThen
         Object.defineProperty(value, "then", {
             enumerable: true,
             get() {
                 reads++
-                return reads === 1 ? undefined : () => {}
+                return availableThen
             },
         })
 
         expect(managedState(value)).to.be(value)
-        new Chain(value, testContext)
+        // Configuration does not admit the input. Establish a stable supported
+        // thenable before it first crosses the runtime boundary.
+        availableThen = onFulfilled => onFulfilled(7)
+        const chain = new Chain(value, testContext)
 
         expect(reads).to.be(2)
+        expect(lookupPath(chain, [], testContext)).to.be(7)
         expect(metadata.metaOf(value, testContext)).to.be(undefined)
         expect(metadata.identityDeclarationOf(value)).to.be(
             metadata.DECLARATION_MANAGED,
@@ -343,7 +348,7 @@ describe("data declarations", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Base {
             then(resolve) {
-                resolve("assimilated")
+                return resolve("assimilated")
             }
         }
         class Registered extends Base {}

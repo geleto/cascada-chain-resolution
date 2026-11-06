@@ -11,9 +11,6 @@ const routes = [
     ["ContextChain input", ({ source, ctx, deliver }) => () => r.lookupPath(new r.ContextChain(deliver(source), ctx), [], ctx)],
     ...[
         ["lookup", (chain, ctx) => r.lookupPath(chain, ["value"], ctx)],
-        ["assignment", (chain, ctx) => r.assignPath(chain, ["value"], 2, ctx)],
-        ["deletion", (chain, ctx) => r.deletePath(chain, ["value"], ctx)],
-        ["repair", (chain, ctx) => r.repairPath(chain, ["value"], ctx)],
         ["export", (chain, ctx) => r.export(chain, [], ctx)],
         ["hasError", (chain, ctx) => r.hasError(chain, [], ctx)],
         ["getErrors", (chain, ctx) => r.getErrors(chain, [], ctx)],

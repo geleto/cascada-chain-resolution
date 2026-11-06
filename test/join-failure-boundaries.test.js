@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import * as r from "cascada-chain-resolution"
 
-describe("prepared join failure boundaries", () => {
+describe("prepared join failure boundaries", function () {
+    this.timeout(15000)
     it("rejects real string-size overflow without failing unrelated operation work", () => {
         const sourceRoot = new URL("../src/index.js", import.meta.url).href
         const result = spawnSync(process.execPath,

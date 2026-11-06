@@ -1,3 +1,4 @@
+import { readShard } from "../generated-settings.js"
 // Extended delivery differential, adapted from the Phase 3 review's exhaustive
 // pair probe. The ready execution is the oracle, not runtime identity metadata.
 // A bounded persistent model independently checks identity. Delivery comparison
@@ -215,7 +216,7 @@ function vocabulary() {
 
 
 const sample = process.argv[2] === "sample"
-const [part, parts] = (sample ? "0/512" : process.argv[2] ?? "0/1").split("/").map(Number)
+if (process.argv.length > 3) throw new Error("Expected sample or one publication-pair index/count shard")
 const { pending, all } = vocabulary()
 // Keep essential combinations in the bounded sample independently of its stride.
 const required = new Set([
@@ -224,6 +225,8 @@ const required = new Set([
 ])
 const profiles = [{ name: "runtime" }, { name: "imported", imported: true },
     { name: "cycle", cycle: true }, { name: "entry", nested: true }]
+const [part, parts] = readShard(sample ? "0/512" : process.argv[2] ?? "0/1",
+    "publication-pair shard", profiles.length * pending.length * all.length)
 let index = 0, pairs = 0, runs = 0, modeled = 0, modeledFailures = 0, extraPairs = 0
 const coverage = new Set()
 for (const profile of profiles) for (const first of pending) for (const second of all) {

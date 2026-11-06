@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
 import { ready as syncReady, rejected as syncRejected, OrderedThenable } from "../ordered-thenable.js"
@@ -269,8 +270,8 @@ function coverFailureFollowups(ops, coverage) {
     }
 }
 
-const programs = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6
-const start = Number(process.env.CASCADA_SEQUENCE_START ?? 0)
+const programs = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 16, 1, Math.floor(Number.MAX_SAFE_INTEGER / 6)) * 6
+const start = readIntegerSetting("CASCADA_SEQUENCE_START", 0, 0, programs - 1)
 const coverage = new Set()
 let runs = 0
 const totals = await runGeneratedCases({

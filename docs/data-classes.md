@@ -38,6 +38,6 @@ Arrays, including cross-realm Arrays and subclasses, use the Array path and norm
 
 ## Invocation and export
 
-`run` uses one managed boundary for records and class instances. It prepares the complete receiver graph and exports every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, validate it after invocation, and publish it through the ordinary mutation transition. One direct result Promise extends the invocation.
+`run` uses one managed boundary for records and class instances. It captures the complete receiver graph and exports every explicit argument before invoking a method on a detached native receiver. Source leases end when capture finishes. Observations are trusted read-only calls whose private receiver preserves the captured logical identity. Mutations use new receiver identities, validate the completed state, and publish it through the ordinary mutation transition. One direct result Promise extends the invocation.
 
 A mutation returning `this` returns the published receiver. Every other result is imported without copying. Shared-graph import of a non-receiver mutation result preserves exact identities while protecting descendants still reachable from the receiver. Public export creates independent metadata-free managed-class copies with their admitted prototypes and keeps external identities exact.

@@ -3,7 +3,7 @@
 function infrastructureFailure(failure) {
     const detail = JSON.stringify([failure.err ?? {}, failure.stack])
     if (/Timeout of \d+ms exceeded|ETIMEDOUT|worker deadline exceeded/.test(detail)) return "timeout"
-    if (/SyntaxError:|ERR_MODULE_NOT_FOUND|Cannot find module|ERR_CHILD_PROCESS_STDIO_MAXBUFFER|spawn[^\n]*ENOENT|fault no longer matches|Missing traced function/.test(detail))
+    if (/SyntaxError:|ERR_MODULE_NOT_FOUND|Cannot find module|ERR_CHILD_PROCESS_STDIO_MAXBUFFER|spawn[^\n]*ENOENT|fault no longer matches|Missing traced function|Runtime counter anchor/.test(detail))
         return "startup"
 }
 

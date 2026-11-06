@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import * as r from "cascada-chain-resolution"
 
-describe("Array sort failure boundaries", () => {
+describe("Array sort failure boundaries", function () {
+    this.timeout(15000)
     for (const method of ["sort", "toSorted"]) for (const pending of [false, true]) {
         for (const outcome of ["throw", "return Error", "return poison", "invalid", "Promise"]) {
             it(`${method} keeps explicit comparator failure recoverable: ${outcome}, pending=${pending}`, async () => {

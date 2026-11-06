@@ -5,7 +5,8 @@ import * as r from "cascada-chain-resolution"
 import { OrderedThenable, ChainedThenable } from "./ordered-thenable.js"
 
 describe("prepared input failure boundaries", () => {
-    it("makes normalized argument preparation rejection fatal, including retained payloads", () => {
+    it("makes normalized argument preparation rejection fatal, including retained payloads", function () {
+        this.timeout(15000)
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/argument-preparation-failure.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })

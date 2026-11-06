@@ -174,7 +174,7 @@ The expanded [method probe](../test/experiments/array-method-specification-probe
 | Evidence | Coverage |
 | --- | --- |
 | Coupled copying | 63,264 selector queries and 44,328 sparse-placement checks against native copyWithin. |
-| Coordinates | 238,383 normalization/length witnesses. The shared-argument fallback counterexample predates the independent-argument rule and is not production acceptance; replace it with separate API-argument and shared-internal-fact witnesses. |
+| Coordinates | 238,383 normalization/length witnesses, plus an arithmetic distinction between independent argument positions and shared internal facts. Artificial bounds do not model supported failed run inputs; production evaluator acceptance remains required. |
 | Sorting | 1,386 permutation cases with fixed undefined/hole suffixes under the earlier fallback proposal. Healthy failure fallback/early-suffix witnesses must be replaced for the selected whole-sort failure boundary. |
 | Flattening | 70 depth domains, including holes and repeated aliases. |
 | Runtime integration | Four fulfillment/rejection and pre-delivery-detachment cases: indexed publication before callbacks, captured queries, alias/cycle export, retirement, and re-entry without resubscription. |

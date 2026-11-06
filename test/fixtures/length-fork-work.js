@@ -10,6 +10,16 @@ const verifyInstrumentation = instrumentRuntime(new Map([["array-length.js", [[
 const r = await import("../../src/index.js")
 verifyInstrumentation("Length work requires its runtime counter loader")
 const { metaOf } = await import("../../src/meta.js")
+const { LengthState } = await import("../../src/array-length.js")
+
+// A loaded replacement alone cannot certify a zero-work measurement.
+// First exercise a known lazy frontier using the same state filter and hook.
+measured = new LengthState(0)
+measured.add(6)
+visits = 0
+assert.equal(measured.maximum, 6)
+assert(visits > 0, "Length work instrumentation must count an active refresh")
+measured = undefined
 
 for (const size of [2, 8, 32]) for (const imported of [false, true]) for (const view of [false, true])
 for (const producer of ["cow", "method result"]) {

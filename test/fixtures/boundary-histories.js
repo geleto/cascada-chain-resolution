@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import { fileURLToPath } from "node:url"
@@ -277,4 +278,4 @@ async function runRetiredBoundaryHistory(spec) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url))
-    console.log(JSON.stringify(await runBoundaryHistories(Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16))))
+    console.log(JSON.stringify(await runBoundaryHistories(readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 16, 4))))

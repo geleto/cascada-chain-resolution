@@ -30,12 +30,10 @@ function handlerFor(fault, fresh) {
             if (key === "length") inspect(this, "lengthDescriptor")
             return Reflect.getOwnPropertyDescriptor(target, key)
         },
-        set(target, key, value, receiver) {
-            if (key === "length") inspect(this, "lengthWrite")
-            return Reflect.set(target, key, value, receiver)
-        },
         defineProperty(target, key, descriptor) {
-            inspect(this, key === "length" ? "lengthDefine" : "indexDefine")
+            // Runtime-owned storage must accept ordinary valid length changes.
+            // Element definitions retain their supported failure boundary.
+            if (key !== "length") inspect(this, "indexDefine")
             return Reflect.defineProperty(target, key, descriptor)
         },
     }
@@ -100,8 +98,6 @@ const healthy = issue(), cases = []
 assert(healthy.counts.lengthRead > 0)
 assert(healthy.counts.extensible > 0)
 assert(healthy.counts.lengthDescriptor > 0)
-assert(healthy.counts.lengthWrite > 0)
-assert(healthy.counts.lengthDefine > 0)
 assert(healthy.counts.indexDefine > 0)
 for (const fresh of [false, true]) for (const [kind, count] of Object.entries(healthy.counts))
     for (let ordinal = 1; ordinal <= count; ordinal++) cases.push(issue({ kind, ordinal }, fresh))

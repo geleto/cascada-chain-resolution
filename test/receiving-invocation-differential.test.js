@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "./generated-settings.js"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -14,7 +15,8 @@ describe("receiving and invocation differential", function () {
         await assert.rejects(() => jointPathHistory(receivingPrograms(1)[0], "import", "ordered", "native", "joint-capture"),
             /joint earlier export excludes the later write/)
     })
-    it("witnesses six executed production faults and rejects a no-op loader", () => {
+    it("witnesses six executed production faults and rejects a no-op loader", function () {
+        this.timeout(150000)
         const run = (fault, enabled) => spawnSync(process.execPath, [...process.execArgv,
             "--unhandled-rejections=strict", "--import", "./test/safeguards/fault-hook.mjs",
             fileURLToPath(new URL("./fixtures/receiving-invocation-differential.mjs", import.meta.url))], {
@@ -34,8 +36,7 @@ describe("receiving and invocation differential", function () {
         for (const fault of receivingFaults) verifyDetected(fault, run(fault, true))
     })
     it("replays bounded histories with independent graph and causal oracles", () => {
-        const seeds = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 8)
-        assert(Number.isInteger(seeds) && seeds >= 8)
+        const seeds = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 8, 8)
         const child = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict", "--max-old-space-size=256",
             fileURLToPath(new URL("./fixtures/receiving-invocation-differential.mjs", import.meta.url))],
         { encoding: "utf8", timeout: 110000,

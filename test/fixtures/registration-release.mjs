@@ -25,11 +25,37 @@ function conflicted() {
     return { ctx: first.ctx, survivor: first.survivor, error, refs: [first.weak, new WeakRef(sibling)] }
 }
 const conflictOnly = conflicted()
+function constructorFailure(Constructor, keepHolder) {
+    const ctx = { execution: new r.Execution(), errorContext: "constructor nested reflection" }
+    const payload = { data: [1, 2, 3] }
+    const bad = new Proxy({}, { ownKeys() { throw new Error("constructor nested reflection failed") } })
+    const holder = new Constructor({ payload, bad }, ctx)
+    const poison = r.getErrors(holder, [], ctx)
+    assert(r.isPoisonError(poison))
+    assert.equal(poison.cause?.message, "constructor nested reflection failed")
+    assert.equal(poison.errorContext, ctx.errorContext)
+    assert.equal(ctx.execution.fatalError, null)
+    return { ctx, poison, weak: new WeakRef(payload), holder: keepHolder ? holder : undefined }
+}
+// A whole-context registration failure need not leave healthy data in its
+// holder. Partial reflection failure exercises the constructor's retained native
+// receiver while its unformatted poison survives beside a successful sibling.
+const constructorFailures = [r.Chain, r.ContextChain].map(Constructor => ({
+    name: Constructor.name,
+    dropped: constructorFailure(Constructor, false),
+    live: constructorFailure(Constructor, true),
+}))
 await collect()
 assert.equal(dropped.weak.deref(), undefined, "Registry retains a dropped context's sibling")
 assert(live.weak.deref(), "A live context still owns its registered siblings")
 assert.equal(r.run(live.holder, ["survivor"], "read", [], live.ctx, {}), 1)
 assert(conflictOnly.refs.every(ref => !ref.deref()), "Rejected import Error retains discarded context resources")
+for (const { name, dropped, live } of constructorFailures) {
+    assert.equal(dropped.weak.deref(), undefined,
+        `${name}: unformatted nested constructor failure retains a discarded healthy sibling`)
+    assert(live.weak.deref(), `${name}: a live holder must retain its healthy sibling`)
+    assert.deepEqual(r.export(live.holder, ["payload"], live.ctx), { data: [1, 2, 3] })
+}
 
 // Collection cannot turn the surviving identity back into observation-only
 // state or grant it a new canonical binding in the same execution.

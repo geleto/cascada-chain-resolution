@@ -27,7 +27,8 @@ function expectClosed(chain) {
 }
 
 describe("enter", () => {
-    it("initializes when imported without the package facade", () => {
+    it("initializes when imported without the package facade", function () {
+        this.timeout(15000)
         const fixture = fileURLToPath(new URL(
             "./fixtures/enter-direct-import.js",
             import.meta.url,
@@ -35,9 +36,10 @@ describe("enter", () => {
         const child = spawnSync(
             process.execPath,
             [fixture],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: 10000, windowsHide: true },
         )
 
+        expect(child.error).to.be(undefined)
         expect(child.status).to.be(0)
         expect(JSON.parse(child.stdout)).to.eql({
             callbackCount: 1,

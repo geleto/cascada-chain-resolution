@@ -157,21 +157,25 @@ describe("operation context", () => {
         const firstOperationContext = operationContext(first, "first Array")
         const secondOperationContext = operationContext(second, "second Array")
         const value = [1, 2]
-        new runtime.Chain(value, firstOperationContext)
-        new runtime.Chain(value, secondOperationContext)
+        const firstChain = new runtime.Chain(runtime.import(value, firstOperationContext), firstOperationContext)
+        const secondChain = new runtime.Chain(runtime.import(value, secondOperationContext), secondOperationContext)
 
         expect(metadata.incrementReadLease(value, firstOperationContext)).to.be(true)
         expect(metadata.hasReadLease(value, firstOperationContext)).to.be(true)
         expect(metadata.hasReadLease(value, secondOperationContext)).to.be(false)
         metadata.decrementReadLease(value, firstOperationContext)
 
-        metadata.incrementReadLease(value, firstOperationContext)
-        expect(ArrayView.tryShareStorage(value, firstOperationContext)).to.be(true)
+        runtime.run(firstChain, [], "push", [3], firstOperationContext, { mutationScopeDepth: 0 })
+        const firstArray = runtime.lookupPath(firstChain, [], firstOperationContext)
+        metadata.incrementReadLease(firstArray, firstOperationContext)
+        expect(ArrayView.tryShareStorage(firstArray, firstOperationContext)).to.be(true)
 
-        expect(metadata.requiresCopyOnWrite(value, firstOperationContext)).to.be(true)
-        expect(metadata.requiresCopyOnWrite(value, secondOperationContext)).to.be(false)
-        expect(metadata.metaOf(value, firstOperationContext).arrayRange.backing).to.be(value)
+        expect(metadata.requiresCopyOnWrite(firstArray, firstOperationContext)).to.be(true)
+        expect(metadata.metaOf(firstArray, secondOperationContext)).to.be(undefined)
+        expect(runtime.export(secondChain, [], secondOperationContext)).to.eql([1, 2])
+        expect(value).to.eql([1, 2])
         expect(metadata.metaOf(value, secondOperationContext).arrayRange).to.be(undefined)
+        metadata.decrementReadLease(firstArray, firstOperationContext)
     })
 
     it("shares graph facts only between Chains in one execution", () => {
@@ -233,13 +237,14 @@ describe("operation context", () => {
         let samples = 0
         let invocations = 0
         const resolved = {}
+        const then = resolve => {
+            invocations++
+            return resolve(resolved)
+        }
         const thenable = Object.defineProperty({}, "then", {
             get() {
                 samples++
-                return resolve => {
-                    invocations++
-                    return resolve(resolved)
-                }
+                return then
             },
         })
         const first = new runtime.Execution()
@@ -247,9 +252,9 @@ describe("operation context", () => {
         const firstOperationContext = operationContext(first, "first thenable")
         const secondOperationContext = operationContext(second, "second thenable")
 
-        const firstChain = new runtime.Chain(thenable, firstOperationContext)
-        const sibling = new runtime.Chain(thenable, firstOperationContext)
-        const secondChain = new runtime.Chain(thenable, secondOperationContext)
+        const firstChain = new runtime.Chain(runtime.import(thenable, firstOperationContext), firstOperationContext)
+        const sibling = new runtime.Chain(runtime.import(thenable, firstOperationContext), firstOperationContext)
+        const secondChain = new runtime.Chain(runtime.import(thenable, secondOperationContext), secondOperationContext)
         await flushMicrotasks()
 
         expect(samples).to.be(3)
@@ -331,8 +336,8 @@ describe("operation context", () => {
         const firstOperationContext = operationContext(first, "first index")
         const secondOperationContext = operationContext(second, "second index")
         const value = { child: {} }
-        new runtime.Chain(value, firstOperationContext)
-        new runtime.Chain(value, secondOperationContext)
+        new runtime.Chain(runtime.import(value, firstOperationContext), firstOperationContext)
+        new runtime.Chain(runtime.import(value, secondOperationContext), secondOperationContext)
 
         refcounts.buildRefIndex(value, firstOperationContext)
 

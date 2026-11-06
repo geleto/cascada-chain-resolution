@@ -46,6 +46,7 @@ for (const method of ['concat', 'push', 'unshift', 'splice', 'toSpliced', 'with'
     await issue(method, 'ready', 'discarded')
     await issue(method, 'ready', 'live')
 }
+assert(rows.length > 0, `No lifetime cases match METHOD: ${process.env.METHOD}`)
 if (process.env.FORMAT_STACKS) for (const row of rows) if (row.poison) void row.poison.stack
 if (process.env.DROP_POISONS) for (const row of rows) row.poison = undefined
 for (let turn = 0; turn < 30; turn++) { await new Promise(setImmediate); globalThis.gc() }

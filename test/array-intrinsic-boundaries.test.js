@@ -9,7 +9,8 @@ function runFixture(script) {
     assert.equal(result.status, 0, result.stdout + result.stderr)
 }
 
-describe("trusted Array intrinsic boundaries", () => {
+describe("trusted Array intrinsic boundaries", function () {
+    this.timeout(15000)
     it("rejects sparse concat overflow before native copying or backing extension", () => {
         runFixture(`
             import assert from "node:assert/strict"
@@ -62,7 +63,7 @@ describe("trusted Array intrinsic boundaries", () => {
         `)
     })
 
-    it("keeps private concat and flat intrinsic defects fatal with their causal context", () => {
+    it("keeps private concat and flat algorithm defects fatal with their causal context", () => {
         runFixture(`
             import assert from "node:assert/strict"
             import { registerHooks } from "node:module"
@@ -78,14 +79,17 @@ describe("trusted Array intrinsic boundaries", () => {
                 const result = next(url, context)
                 if (url !== target) return result
                 let source = String(result.source)
-                for (const method of ["concat", "flat"]) {
-                    const name = method === "concat" ? "arrayConcat" : "arrayFlat"
+                for (const method of ["concat"]) {
+                    const name = "arrayConcat"
                     const marker = "const " + name + " = Array.prototype." + method
                     assert(source.includes(marker), "Array intrinsic anchor needs updating")
                     source = source.replace(marker, "const " + name + " = function (...args) { " +
                         'globalThis.arrayIntrinsicFault("' + method + '"); ' +
                         "return Reflect.apply(Array.prototype." + method + ", this, args) }")
                 }
+                const marker = "flattenCapturedArrays(prepared, depth)"
+                assert.equal(source.split(marker).length - 1, 1, "Flat expansion anchor needs updating")
+                source = source.replace(marker, '(globalThis.arrayIntrinsicFault("flat"), ' + marker + ')')
                 return { ...result, source }
             } })
             const r = await import(${JSON.stringify(sourceRoot + "index.js")})

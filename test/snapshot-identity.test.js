@@ -316,7 +316,8 @@ describe("snapshot canonical identity", () => {
         assert.deepEqual(await exported, { value: 7 })
     })
 
-    it("releases snapshot sources while identity grouping is pending", () => {
+    it("releases snapshot sources while identity grouping is pending", function () {
+        this.timeout(25000)
         const result = spawnSync(process.execPath, [...process.execArgv, "--expose-gc",
             fileURLToPath(new URL("./fixtures/snapshot-identity-lifetime.js", import.meta.url))],
         { encoding: "utf8", timeout: 20000 })

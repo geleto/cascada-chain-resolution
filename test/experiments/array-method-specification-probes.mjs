@@ -84,19 +84,26 @@ for (let length = 0; length <= 8; length++) for (const value of raw) {
         }
     }
 }
-// A shared failed input needs a single hypothetical binding, not independent
-// extrema for its different roles. The chosen failure layout is still poison.
+// API argument positions are independent, even when they receive one Promise or
+// Error. These artificial bounds test arithmetic, not supported failed inputs.
+// Repeated uses of one internal captured fact retain their shared binding.
 {
-    const a = range(0,5), candidates = [1,2].map(p => { const b = a.slice(); b.splice(p,p,'X'); return b })
-    const invalid = a.slice(); invalid.splice(2,1,'X')
-    assert(!candidates.some(b => JSON.stringify(b) === JSON.stringify(invalid)))
-    const fallback = a.slice(); fallback.splice(2,2,'X')
-    assert(candidates.some(b => JSON.stringify(b) === JSON.stringify(fallback)))
+    const a = range(0,5), independent = [], shared = []
+    for (const start of [1,2]) for (const count of [1,2]) {
+        const b = a.slice(); b.splice(start,count,'X'); independent.push(b)
+        if (start === count) shared.push(b)
+    }
+    const chosen = a.slice(); chosen.splice(2,1,'X')
+    const contains = (worlds, value) => worlds.some(b => JSON.stringify(b) === JSON.stringify(value))
+    assert(contains(independent, chosen))
+    assert(!contains(shared, chosen))
+    for (const split of [1,2]) assert.equal(a.slice(0,split).length + a.slice(split).length, a.length)
 }
-report.coordinates = { checks: normalizerChecks, sharedBindingCounterexample: 'detected' }
+report.coordinates = { checks: normalizerChecks, independentArguments: 'distinct from shared internal facts' }
 
-// Permutation failure changes positions, never membership. Fixed undefined/hole
-// partitions are independent of the comparator once classification is complete.
+// Successful permutations preserve membership and fixed undefined/hole partitions.
+// These private facts do not permit result publication before required sorting
+// succeeds. Whole-sort failure/status/repair needs production integration tests.
 function permutations(values) {
     if (!values.length) return [[]]
     return values.flatMap((v,i) => permutations(values.filter((_,j) => i !== j)).map(rest => [v,...rest]))
@@ -114,7 +121,8 @@ for (let count = 0; count <= 5; count++) for (let undefs = 0; undefs <= 2; undef
         sortChecks++
     }
 }
-report.sort = { permutationChecks: sortChecks, fixedSuffix: 'preserved' }
+report.sort = { permutationChecks: sortChecks, privateFixedSuffix: 'preserved',
+    wholeSortFailure: 'not implemented by this partition probe' }
 
 // Each flatten occurrence has a path, so aliases or duplicate values are not
 // merged. The shallowest allowed depth is a finite failure skeleton; uncertain

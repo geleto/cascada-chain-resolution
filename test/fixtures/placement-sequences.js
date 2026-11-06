@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import { runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
@@ -34,7 +35,7 @@ assert.throws(() => check({ n: 2 }, { value: { n: 1 }, poisoned: false }))
 assert.throws(() => check({ n: 1 }, { value: { n: 1 }, poisoned: true }))
 assert.throws(() => check([1, undefined, 2], { value: [1, , 2], poisoned: false }))
 
-const seedCount = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 32)
+const seedCount = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 32, 1)
 const traces = new Set()
 const cases = []
 for (let index = 0; index < seedCount; index++) {

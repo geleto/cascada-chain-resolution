@@ -104,6 +104,7 @@ for (const timing of ["ready", "sync", "native", "ordered"]) {
             : pending.promise ?? pending
     }
     const operation = r.run(chain, [], "change", [() => resource, form, finish], ctx, { mutationScopeDepth: 0 })
+    const resultHolder = new r.Chain(operation, ctx)
     if (timing === "native" || timing === "ordered") {
         assert(r.isPending(operation, ctx), "The direct completion must actually suspend")
         pending.resolve(returned)
@@ -121,7 +122,7 @@ for (const timing of ["ready", "sync", "native", "ordered"]) {
     } else {
         assert.equal(scope, null, label)
         assert.equal(r.isPoisonError(result), false, label)
-        if (registered) assert.equal(r.export(new r.Chain(result, ctx), [], ctx).kind,
+        if (registered) assert.equal(r.export(resultHolder, [], ctx).kind,
             r.ERROR_KIND.ExternalCapabilityEscape, label)
         assert.equal(await r.run(chain, [], "bump", [], later, { mutationScopeDepth: 0 }), 2, label)
     }

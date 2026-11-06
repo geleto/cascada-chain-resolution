@@ -15,8 +15,9 @@ The runtime recognizes these value categories:
 - **Promise:** a supported thenable consumed for availability after preserving
   Error, Function, and admitted-category semantics.
 - **Error value:** a recoverable `PoisonError` or `CompoundPoisonError`, both
-  synchronously recognizable ordinary non-thenable Errors. A raw native Error must
-  be contextualized at its causal boundary. Fatal `FatalError` is excluded.
+  synchronously recognizable ordinary non-thenable Errors. A returned or fulfilled
+  native Error is healthy exact data; a host throw or rejection is contextualized
+  at its causal boundary. Fatal `FatalError` is excluded from language data.
 - **Managed value:** an Array, record, managed class instance, or internal
   `ArrayView`. Managed values have traversable language properties.
 - **External value:** any other non-null non-Promise object. It retains exact
@@ -67,9 +68,10 @@ context `{ execution, errorContext }`; its execution must match the Chain, while
 its error context identifies that operation's source.
 
 This Chain/context pairing is trusted kernel integration control supplied by the
-higher runtime, even though the package exports the kernel surface. A missing
-context, cross-execution binding, or new operation through a closed entered Chain
-is fatal before graph access. Script data cannot supply these control facts; a
+higher runtime, even though the package exports the kernel surface. A malformed
+root integration call may throw an ordinary JavaScript programming error. A
+cross-execution binding or new operation through a closed entered Chain remains
+fatal before graph access. Script data cannot supply these control facts; a
 separate general host-facing facade would validate its own invocation before
 calling the kernel rather than adding another kernel execution path.
 
@@ -246,16 +248,17 @@ contextualized to the import operation.
 Import:
 
 - records origin and protects newly imported managed storage from mutation;
-- reuses already admitted identities without changing origin or reinspecting host storage; cached re-entry restores retired relationships from maintained forward state, while method-result admission revisits the required graph to enforce its boundary restrictions;
+- reuses already prepared managed identities without changing their value, identity, origin, or pending producers; cached re-entry restores retired relationships from maintained forward state, and method-result preparation stops at prepared references after its direct boundary checks;
 - consumes nested possible Promises and retains continuations only for returned pending work; and
 - does not build subtree counters.
 
 Newly reached host objects receive external metadata recording their admitted
 category and origin. Ordinary import traverses only new managed identities and stops at
-external identities, Functions, and Errors. A nested native Error remains
-physical host data while a fixed placement overlay stores its logical wrapper.
-Import commits no metadata or placement version from a synchronous segment
-whose enumeration or descriptor lookup fails. A nested pending Promise property is not replaced: its Promise version keeps the logical value
+external identities, Functions, and Errors. A nested native Error remains healthy
+exact data. Failed container enumeration leaves that identity unadmitted and
+reuses its poison within the preparation. A failed placement descriptor instead
+installs fixed poison at that key, with no unknown physical edge; successfully
+captured siblings still commit. A nested pending Promise property is not replaced: its Promise version keeps the logical value
 while imported storage retains the Promise. A synchronously consumed custom
 thenable likewise remains physical host data, but its final value uses a fixed
 overlay rather than a Promise version. Frozen imported managed data
@@ -327,8 +330,8 @@ The final target has operation-specific behavior:
 | Target state | Assignment | Deletion | Lookup | Export | `hasError` | `getErrors` |
 | --- | --- | --- | --- | --- | --- | --- |
 | Missing | Create it | No-op | `undefined` | `undefined` | `false` | `null` |
-| Primitive or `null` | Replace it | Delete it | Return it | Return it | `false` | `[]` |
-| Error | Replace it | Delete it | Return it | Return it | `true` | `error` |
+| Primitive, `null`, or healthy native Error | Replace it | Delete it | Return it | Return it | `false` | `null` |
+| Poison | Replace it | Delete it | Return it | Return it | `true` | `error` |
 | Tracked | Replace it | Delete it | Return it | Copy, one Error, or combined Errors | Query branch | Query branch |
 
 An empty assignment path replaces the root. An empty deletion path replaces
@@ -368,7 +371,7 @@ A placement version retains a logical value separately from physical storage.
 A Promise version is created when consumption of a thenable remains pending.
 Its `promiseBacked` discriminator stays true after settlement; its `value` may
 already be ready. A fixed placement version retains a ready logical value over
-unchanged physical storage, such as a contextualized native Error or the result
+unchanged physical storage, such as placement poison or the result
 of synchronous thenable consumption. Both use the same parent-key map.
 
 A version may update a placement only while it is the exact version installed
@@ -736,10 +739,11 @@ result without cancelling settlement needed by the still-live execution. An
 execution-fatal resumption stops before settlement as well as Array work.
 
 A managed-record or managed-class call exports every explicit argument and
-prepares the complete receiver graph, resolves its method once from the prepared
-receiver, and only then isolates a mutation receiver. A direct result Promise
-extends receiver protection or private mutation until settlement; a nested
-result Promise is ordinary imported data. A mutation validates and admits the
+captures its complete receiver graph. It resolves the method once after clean
+preparation and invokes it on a fresh detached receiver copy in either mode.
+Source protection ends after capture; a direct result Promise retains the native
+working copy until required finalization, while a nested result Promise is
+ordinary imported data. A mutation validates and admits the
 completed receiver before publishing it through the ordinary transition. It
 returns the published receiver for `this`; every other result is imported, and
 common method-result import preserves their admission and relationships, with result delivery retaining them through direct reception.

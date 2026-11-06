@@ -166,11 +166,11 @@ describe("Chain root state", () => {
         const chain = new Chain(pendingRoot.promise, testContext)
         const root = { branch: { x: 1 } }
 
-        const read = lookupPath(chain, ["branch"], testContext)
+        const read = new Chain(lookupPath(chain, ["branch"], testContext), testContext)
         assignPath(chain, ["branch", "x"], 2, testContext)
 
         pendingRoot.resolve(root)
-        const oldBranch = await read
+        const oldBranch = await lookupPath(read, [], testContext)
         await flushMicrotasks()
 
         expect(oldBranch).to.eql({ x: 1 })
@@ -210,12 +210,12 @@ describe("Chain root state", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const lookupRoot = deferred()
         const lookupChain = new Chain(lookupRoot.promise, testContext)
-        const read = lookupPath(lookupChain, [], testContext)
+        const read = new Chain(lookupPath(lookupChain, [], testContext), testContext)
 
         lookupRoot.resolve({ observed: true })
         assignPath(lookupChain, [], { replacement: "lookup" }, testContext)
 
-        expect(await read).to.eql({ observed: true })
+        expect(await lookupPath(read, [], testContext)).to.eql({ observed: true })
         expect(lookupChain._state.value).to.eql({ replacement: "lookup" })
 
         const exportRoot = deferred()

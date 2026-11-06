@@ -41,7 +41,12 @@ for (const settledFirst of [false, true]) {
         if (route === "argument" || route === "receiver") assert.equal(delivered.value, true)
         else assert.equal(delivered.value.left, delivered.value.right)
     }
-    const fatal = new r.FatalError(new Error("host propagates fatal"), ctx.errorContext)
+    let fatal
+    try {
+        r.failExecution({ execution: new r.Execution(), errorContext: ctx.errorContext },
+            new Error("host propagates fatal"))
+    } catch (failure) { fatal = failure }
+    assert(r.isFatalError(fatal))
     const thrower = new r.Chain(r.externalState({ fail() { throw fatal } }), ctx)
     assert.throws(() => r.run(thrower, [], "fail", [], ctx, {}), failure => failure === fatal)
     assert.deepEqual(reports, [fatal])

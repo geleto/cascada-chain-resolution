@@ -9,9 +9,9 @@ A managed lease protects a value that unfinished work still needs. Leases are co
 Use a managed lease for:
 
 - **Arguments awaiting consumption:** while receiver selection or controlled argument processing still needs the original managed values. Release their protection when they have been consumed, copied, or safely retained.
-- **Receiver preparation:** while resolving the graph needed by a managed call. This preparation lease ends when the working receiver is isolated; protection of the mutation's pre-operation scope has its own lifetime through publication.
+- **Receiver preparation:** while capturing the graph needed by a managed call. This preparation lease ends once exact placements have been captured; protection of the mutation's pre-operation scope has its own lifetime through publication.
 - **Managed rollback:** temporarily protect the selected scope's captured value while its mutation works privately. Use existing ownership and version mechanisms; release operation-only protection after successful publication or transfer retention to the poisoned placement on failure.
-- **Managed observations:** while a method or controlled operation can still read its captured receiver, including through its direct Promise.
+- **Managed observations:** while a controlled operation still needs managed source data. Native methods use detached receiver assembly, so their direct Promise retains that private receiver without extending source leases.
 - **Observation-only managed entry:** while its callback can use the captured value. Escaping results receive their own bounded delivery protection before entry releases its lease.
 - **Pending managed path selection:** while an unresolved key prevents capture of the final target, protect the longest reached managed prefix. Reuse that protection across further pending keys.
 
@@ -49,7 +49,7 @@ Controlled writes copy only the affected managed structure required by the opera
 
 For a native managed mutating call that reaches invocation, full receiver isolation has graph-sized work and allocation even on success. This is an accepted cost of automatic rollback. Preparation resolves required state and collects Errors before method selection; mutation then uses one complete copier, without first performing observational materialization. Controlled writes retain path COW and Array sharing. Do not make recovery depend on whether the receiver happened to be shared, and do not copy unrelated scope descendants.
 
-Managed observation and mutation use the same receiver graph copier. Observation first identifies containers whose native storage does not match their logical state, together with affected ancestors; other containers map to their existing identity. Mutation starts with no reusable containers. In both cases the copier allocates each copied identity before its children, preserving aliases and cycles. The difference is which nodes need copying, not how their contents are copied.
+Managed observation and mutation use the same source-free receiver capture and native graph assembly. Both assemble fresh containers from complete captured placements and shape, allocating shells before filling their children to preserve aliases and cycles. Ordinary observations preserve captured logical identities on those private representations; mutation starts new identities. Pending capture keeps exact versions and output records, allowing source protection to end before native invocation.
 
 COW never substitutes another identity for an explicitly mutated external resource. A managed parent containing an external identity still uses ordinary COW; copying the parent grants no new authority over the external child.
 
@@ -82,7 +82,7 @@ Use gates for:
 - **Mutating entry:** install the gate before invoking its callback and issue contained work through a private Chain.
 - **Pending mutation path selection:** gate the longest reached managed prefix while selection remains unfinished.
 - **Mutable external observations and read-only entry:** reserve observation access, waiting for earlier overlapping mutations while allowing other observations to proceed.
-- **External mutation, repair, and mutating entry:** reserve exclusive access to the selected subtree before waiting for inputs or performing native work.
+- **External mutation and mutating entry:** reserve exclusive access to the selected subtree before waiting for inputs or performing native work. Repair uses managed placement ordering and versioned external metadata without its own native reservation.
 
 A ready ordinary managed mutation needs no new gate. An independent pending result does not justify retaining a gate after its promised state change is complete. A gate on a managed placement uses existing property versions; an external gate is ordering state outside the native object. Native properties never contain runtime gates or pending assignment placeholders.
 

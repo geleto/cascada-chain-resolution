@@ -34,6 +34,26 @@ function run(loaders, replacement, script = source, extraEnv) {
 describe("runtime worker loader evidence", function () {
     this.timeout(20000)
 
+    it("rejects a completed-work selector that executes no lifetime cases", () => {
+        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--expose-gc",
+            "test/fixtures/completed-work-retention.js", "nonexistent-audit-case"],
+        { encoding: "utf8", timeout: 15000 })
+        assert.ifError(result.error)
+        assert.equal(result.status, 1)
+        assert.match(result.stderr, /No completed-work retention cases match/)
+    })
+
+    for (const name of ["lifetime-overflow", "lifetime-remaps"]) {
+        it(`rejects an unknown method in the ${name} review probe`, () => {
+            const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--expose-gc",
+                `docs/phase5-probes/${name}.mjs`],
+            { env: { ...process.env, METHOD: "nonexistent-audit-method" }, encoding: "utf8", timeout: 15000 })
+            assert.ifError(result.error)
+            assert.equal(result.status, 1)
+            assert.match(result.stderr, /No lifetime cases match METHOD/)
+        })
+    }
+
     it("normalizes Windows drive casing without changing path casing", () => {
         assert.equal(normalizeModuleURL("file:///C:/Projects/a%20b.js"), "file:///c:/Projects/a%20b.js")
         assert.notEqual(normalizeModuleURL("file:///c:/Projects/A.js"), normalizeModuleURL("file:///c:/Projects/a.js"))
@@ -104,6 +124,48 @@ describe("runtime worker loader evidence", function () {
             assert.ifError(result.error)
             assert.equal(result.status, 1)
             assert.match(result.stderr, /work requires its runtime counter loader/)
+        })
+    }
+
+    for (const [name, anchor, replacement, assertion] of [
+        ["./fixtures/array-enumeration-work.js", "globalThis.countRangeKey = () => produced++",
+            "globalThis.countRangeKey = () => undefined", "Range-key instrumentation must count each streamed candidate"],
+        ["./fixtures/length-fork-work.js", "globalThis.__countLengthNode = state => { if (state === measured) visits++ }",
+            "globalThis.__countLengthNode = () => undefined", "Length work instrumentation must count an active refresh"],
+        ...["live", "peakUses", "subscriptions"].map(field => ["./fixtures/pending-copy-work.js",
+            "counts = { live: 0, subscriptions: 0, uses: 0, peakUses: 0 }",
+            `counts = new Proxy({ live: 0, subscriptions: 0, uses: 0, peakUses: 0 }, { set(target, key, value) {
+                if (key !== ${JSON.stringify(field)}) target[key] = value; return true
+            } })`, `Pending-copy instrumentation must count ${field}`]),
+        ...["captures", "peakUses"].map(field => ["../docs/phase5-probes/work-histories.mjs",
+            "counts = { captures: 0, createdVersions: 0, copiedPlacements: 0, overlayVisits: 0,\n            live: 0, subscriptions: 0, uses: 0, peakUses: 0 }",
+            `counts = new Proxy({ captures: 0, createdVersions: 0, copiedPlacements: 0, overlayVisits: 0,
+                live: 0, subscriptions: 0, uses: 0, peakUses: 0 }, { set(target, key, value) {
+                if (key !== ${JSON.stringify(field)}) target[key] = value; return true
+            } })`, `History work instrumentation must count ${field}`]),
+    ]) {
+        it(`rejects an inactive ${name} counter even when its loader ran: ${assertion}`, () => {
+            const fixture = new URL(name, import.meta.url).href
+            const script = `
+                import assert from 'node:assert/strict';
+                import { registerHooks } from 'node:module';
+                registerHooks({ load(url, context, next) {
+                    const result = next(url, context);
+                    if (url !== ${JSON.stringify(fixture)}) return result;
+                    const source = String(result.source).replaceAll('\\r\\n', '\\n');
+                    const anchor = ${JSON.stringify(anchor)};
+                    assert.equal(source.split(anchor).length - 1, 1, 'counter-control-anchor');
+                    return { ...result, source: source.replace(anchor, ${JSON.stringify(replacement)}) };
+                } });
+                await import(${JSON.stringify(fixture)});
+            `
+            const result = spawnSync(process.execPath,
+                ["--unhandled-rejections=strict", "--input-type=module", "-e", script],
+                { encoding: "utf8", timeout: 15000 })
+            assert.ifError(result.error)
+            assert.equal(result.status, 1)
+            assert(result.stderr.includes(assertion), result.stderr)
+            assert.doesNotMatch(result.stderr, /counter-control-anchor|Runtime counter anchor/)
         })
     }
 

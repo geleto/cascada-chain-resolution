@@ -5,6 +5,7 @@ import { assertGraph } from "../graph-oracle.js"
 import { ready, rejected, OrderedThenable } from "../ordered-thenable.js"
 import { createRandom } from "../native-equivalence-support.js"
 import { runGeneratedCases, reportGeneratedStage } from "../generated-runner.js"
+import { readIntegerSetting } from "../generated-settings.js"
 
 export const routes = ["import", "method-result", "host-result", "observation", "snapshot", "managed-result"]
 export const deliveries = ["ready", "synchronous", "native", "ordered", "reversed"]
@@ -416,4 +417,4 @@ export async function runProductionWitness(name) {
 if (process.argv[1] === fileURLToPath(import.meta.url))
     console.log(JSON.stringify(process.env.CASCADA_RECEIVING_WITNESS
         ? await runProductionWitness(process.env.CASCADA_RECEIVING_WITNESS)
-        : await runReceivingDifferential(Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 8))))
+        : await runReceivingDifferential(readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 8, 8))))

@@ -20,7 +20,6 @@ import {
     Execution,
 } from "../src/index.js"
 import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
-import { failExecution as submitFatal } from "../src/error.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 import * as runtime from "../src/index.js"
@@ -42,6 +41,13 @@ import {
     readPath,
     thrownBy,
 } from "./support.js"
+
+function fatalFromOtherExecution(cause) {
+    return thrownBy(() => internalSteps.runInternalStep(
+        { execution: new Execution(), errorContext: "fatal fixture" },
+        () => { throw cause },
+    ))
+}
 
 describe("run", () => {
     it("rejects unsupported calls without waiting for provisionally prepared mutation arguments", () => {
@@ -233,11 +239,12 @@ describe("run", () => {
             { repair: false },
         )
 
+        const pushedHolder = new Chain(pushed, testContext)
         expect(pushed instanceof Promise).to.be(false)
         expect([...logicalArrayValues(pushed, testContext)]).to.eql([item])
         expect([...logicalArrayValues(pushed, testContext)][0]).to.be(item)
         assignPath(payloadSource, ["item", "answer"], 4, testContext)
-        expect([...logicalArrayValues(pushed, testContext)][0].answer).to.be(3)
+        expect(exportValue(pushedHolder, [], testContext)[0].answer).to.be(3)
         expect(exportValue(payloadSource, [], testContext)).to.eql({
             item: { answer: 4 },
         })
@@ -804,11 +811,12 @@ describe("run", () => {
         const pending = deferred()
         const chain = new Chain({ values: [pending.promise, "b"] }, testContext)
 
-        lookupPath(chain, ["values"], testContext)
+        const retained = new Chain(lookupPath(chain, ["values"], testContext), testContext)
         assignPath(chain, ["values", "1"], "B", testContext)
         pending.resolve(imported)
         await flushMicrotasks()
 
+        expect(await exportValue(retained, [], testContext)).to.eql([{ value: 1 }, "b"])
         const values = chain._state.value.values
         const sliced = run(new Chain(values, testContext), [], "slice", [0, 2], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(values[0]).to.be(imported)
@@ -916,6 +924,7 @@ describe("run", () => {
             { ...testContext, errorContext: "test run" },
             { repair: false },
         )
+        const retained = new Chain(concatenated, testContext)
         const versions = [
             getPromiseVersion(leftChain._state.value, "0", testContext),
             getPromiseVersion(right, "0", testContext),
@@ -927,7 +936,7 @@ describe("run", () => {
         assignPath(leftChain, ["0"], 9, testContext)
         pending.resolve(1)
 
-        expect(await exportValue(new Chain(concatenated, testContext), [], testContext)).to.eql([1, 1])
+        expect(await exportValue(retained, [], testContext)).to.eql([1, 1])
         expect(exportValue(leftChain, [], testContext)).to.eql([9])
         expect(exportValue(new Chain(right, testContext), [], testContext)).to.eql([1])
         verifyRefCounts(testContext, concatenated, leftChain._state.value, right)
@@ -1001,10 +1010,11 @@ describe("run", () => {
         const chain = new Chain([pending.promise], testContext)
         const copy = run(chain, [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
+        const retained = new Chain(copy, testContext)
         assignPath(chain, ["0"], 9, testContext)
         pending.resolve(1)
 
-        expect(await exportValue(new Chain(copy, testContext), [], testContext)).to.eql([1])
+        expect(await exportValue(retained, [], testContext)).to.eql([1])
         expect(exportValue(chain, [], testContext)).to.eql([9])
         verifyRefCounts(testContext, copy)
         verifyRefCounts(testContext, chain._state.value)
@@ -1044,7 +1054,7 @@ describe("run", () => {
         verifyRefCounts(testContext, copied._state.value)
     })
 
-    it("does not export Error values nested in host inputs", async () => {
+    it("blocks rejected argument data while preserving healthy native Errors", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const direct = new Error("direct")
         const nested = deferred()
@@ -1052,7 +1062,7 @@ describe("run", () => {
         let received
         const target = {}
         Object.defineProperty(target, "inspect", {
-            enumerable: false,
+            enumerable: true,
             value(value) {
                 received = value
                 return value.error === direct
@@ -1073,6 +1083,8 @@ describe("run", () => {
         nested.reject(direct)
         expect(errorCause(await inspected)).to.be(direct)
         expect(received).to.be(undefined)
+        expect(run(new Chain(target, testContext), [], "inspect", [{ error: direct }], testContext, {})).to.be(true)
+        expect(received.error).to.be(direct)
     })
 
     it("combines every Error within each failed host argument", () => {
@@ -1083,7 +1095,7 @@ describe("run", () => {
         let invoked = false
         const target = {}
         Object.defineProperty(target, "inspect", {
-            enumerable: false,
+            enumerable: true,
             value() {
                 invoked = true
             },
@@ -1115,7 +1127,7 @@ describe("run", () => {
         let invoked = false
         const target = {}
         Object.defineProperty(target, "inspect", {
-            enumerable: false,
+            enumerable: true,
             value() {
                 invoked = true
             },
@@ -1576,7 +1588,7 @@ describe("run", () => {
             const source = [{ value: 1 }, { value: 2 }]
             const view = run(new Chain(source, testContext), [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
             const chain = new Chain(view, testContext)
-            lookupPath(chain, [], testContext)
+            const retained = new Chain(lookupPath(chain, [], testContext), testContext)
 
             const removed = run(chain, [], method, [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
             const removedChain = new Chain(removed, testContext)
@@ -1590,6 +1602,7 @@ describe("run", () => {
             verifyRefCounts(
                 testContext,
                 source,
+                retained._state.value,
                 view,
                 chain._state.value,
                 removedChain._state.value,
@@ -2189,6 +2202,7 @@ describe("run", () => {
         const source = [1]
         const chain = new Chain(receiver.promise, testContext)
         const escaped = lookupPath(chain, [], testContext)
+        const retained = new Chain(escaped, testContext)
 
         assignPath(chain, ["0"], 9, testContext)
         const result = run(chain, [], "push", [2], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
@@ -2197,6 +2211,7 @@ describe("run", () => {
         expect(await escaped).to.be(source)
         expect(await result).to.be(2)
         expect(source).to.eql([1])
+        expect(await exportValue(retained, [], testContext)).to.eql([1])
         expect(await exportValue(chain, [], testContext)).to.eql([9, 2])
     })
 
@@ -2873,7 +2888,7 @@ describe("run", () => {
         expect(invoked).to.be(true)
     })
 
-    it("leases a method receiver while exported arguments resolve", async () => {
+    it("captures a method receiver before exported arguments resolve", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const argument = deferred()
         const record = { value: 1 }
@@ -3133,7 +3148,7 @@ describe("run", () => {
             },
         })
         const receiver = {}
-        Object.defineProperty(receiver, "read", { value() {} })
+        Object.defineProperty(receiver, "read", { enumerable: true, value() {} })
 
         const argument = { pending: pending.promise, broken }
         new Chain(argument, testContext)
@@ -3165,9 +3180,10 @@ describe("run", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("fatal argument preparation")
+        const fatal = fatalFromOtherExecution(failure)
         const broken = {
             then() {
-                submitFatal(testContext, failure)
+                throw fatal
             },
         }
         const receiver = {}
@@ -3203,9 +3219,10 @@ describe("run", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("concat preparation failed")
+        const fatal = fatalFromOtherExecution(failure)
         const broken = {
             then() {
-                submitFatal(testContext, failure)
+                throw fatal
             },
         }
 
@@ -3240,6 +3257,7 @@ describe("run", () => {
         const late = deferred()
         const failing = deferred()
         const failure = new Error("recursive flat preparation failed")
+        const fatal = fatalFromOtherExecution(failure)
         const result = run(
             new Chain([late.promise, failing.promise], testContext),
             [],
@@ -3251,7 +3269,7 @@ describe("run", () => {
 
         failing.resolve(new Proxy([1], {
             ownKeys() {
-                submitFatal(testContext, failure)
+                throw fatal
             },
         }))
         expect(errorCause(await result.catch(error => error))).to.be(failure)
@@ -3517,7 +3535,7 @@ describe("run", () => {
             const failure = new Error(`${method} replay failed`)
             const removed = source.at(-1)
             const receiver = new Proxy(source, handler(failure))
-            const chain = new Chain(receiver, testContext)
+            const chain = new Chain(importValue(receiver, testContext), testContext)
             buildRefIndex(receiver, testContext)
 
             const result = run(chain, [], method, [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })

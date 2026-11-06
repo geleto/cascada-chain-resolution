@@ -2,6 +2,7 @@ import { fork } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { inspect } from "node:util"
 import * as trace from "./trace-state.js"
+import { readIntegerSetting } from "./generated-settings.js"
 
 function verifyInstrumentation() {
     if (process.env.CASCADA_SEQUENCE_EXPECT_TRACE === "1" &&
@@ -36,9 +37,7 @@ export async function runGeneratedCases({ moduleURL, cases, runCase, onPass = ()
     }
 
     const totals = { attempted: 0, passed: 0, failed: 0, skipped: 0 }
-    const failureLimit = Number(process.env.CASCADA_SEQUENCE_CONTINUE ?? 0)
-    if (!Number.isSafeInteger(failureLimit) || failureLimit < 0)
-        throw new Error("CASCADA_SEQUENCE_CONTINUE must be a nonnegative failure limit")
+    const failureLimit = readIntegerSetting("CASCADA_SEQUENCE_CONTINUE", 0)
     if (failureLimit === 0) {
         for (const [index, spec] of cases.entries()) {
             totals.attempted++
@@ -50,9 +49,7 @@ export async function runGeneratedCases({ moduleURL, cases, runCase, onPass = ()
         return totals
     }
 
-    const timeout = Number(process.env.CASCADA_SEQUENCE_TIMEOUT_MS ?? 30000)
-    if (!Number.isSafeInteger(timeout) || timeout <= 0)
-        throw new Error("CASCADA_SEQUENCE_TIMEOUT_MS must be a positive deadline")
+    const timeout = readIntegerSetting("CASCADA_SEQUENCE_TIMEOUT_MS", 30000, 1, 2147483647)
     let worker
     async function discardWorker() {
         if (!worker) return

@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
@@ -65,7 +66,6 @@ function contextState() {
         stored: { db: 0, config: 0 },
         own: { api: null, db: null, config: null },
         guard: null, // Local managed poison on the canonical api placement.
- // Poison of the context's root placement.
         data: {},
     }
 }
@@ -227,11 +227,9 @@ class Model {
         return `v:${state.items.db.join(",")}|${state.items.config.join(",")}` // snapshot
     }
 
-    // A read through an unselected alias reaches the registered identity itself and fails
-    // locally, reporting the identity's rejected import Error when competing registrations
-    // invalidated it: an existing Error comes before a new one. A mutation fails earlier, when
-    // it selects the managed alias placement as the scope of a native effect, and poisons that
-    // placement, which then blocks every alias access.
+    // A read through an unselected alias fails locally; rejected competing registrations
+    // leave the canonical binding unchanged. A mutation poisons the managed alias placement,
+    // which then blocks every alias access until that placement is repaired.
     applyAlias(command, state) {
         const { kind, seq } = command
         const result = id => kind === "alias-assign" ? [this.errors([id]), "u"] : this.errors([id])
@@ -640,8 +638,8 @@ async function runProgram({ variant, delivery, steps }, seed, mode, coverage) {
     return { errors, final }
 }
 
-const programs = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6
-const start = Number(process.env.CASCADA_SEQUENCE_START ?? 0)
+const programs = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 16, 1, Math.floor(Number.MAX_SAFE_INTEGER / 6)) * 6
+const start = readIntegerSetting("CASCADA_SEQUENCE_START", 0, 0, programs - 1)
 const coverage = new Set()
 let runs = 0
 const totals = await runGeneratedCases({

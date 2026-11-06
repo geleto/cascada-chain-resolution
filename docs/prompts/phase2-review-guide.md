@@ -76,7 +76,7 @@ Do not report these as defects without new evidence. Each is a deliberate plan d
 - Host retention of an unexported runtime-owned value is unsupported. Do not add protection-transfer walks or host-lifetime tracking for it.
 - The most recently exposed ready result may stay held until the next receiving transition or the fallback.
 - Cached reactivation is eager, so an ignored cached result pays for restoration and retirement. Lazy reactivation is a separate optional experiment.
-- Validation copies of imported nodes keep imported protection and accept the extra copying that causes.
+- Cached imported nodes keep imported protection across retirement and re-entry. Preparation preserves admitted references; it does not make validation copies.
 - Root clearing still happens at the final live scope exit.
 - Reverse liveness proofs pay for relevant ancestry across separate commands; constant-time release is not promised.
 - Deleting an absent property below the first path level can advance ancestor generations, and copy shared ancestors, before the absence is known. Phases 3 and 4 own protection-copy identity inheritance. The selected write-based contract keeps every semantic publication effective, including an equal-value write; only nonpublishing commands preserve identity.
@@ -98,7 +98,7 @@ The rows below preserve the audit's failure families as implementation regressio
 | Runtime lifetime | Disconnected cycles retire; a root or independent retained use preserves the reachable region; internal backing cycles do not prove liveness. | Independent retirement model and randomized production reachability checks. |
 | Runtime work | Early-exit reverse proof bounds one batch; ignored output does not accumulate owners or queued fallbacks inside direct or entered bodies. | Ownership work fixture; independent ownership model. Long live ancestry across separate commands remains an accepted cost. |
 | Producer classification | Fresh ready slices and external snapshots remain alive until direct reception; source-held ready lookup needs no extra hold. | Ownership and external-context tests; complete-constructor work counts. |
-| Imported re-entry | Validation copies retain imported protection, inactive versions still settle, and restoration repeats neither host inspection nor subscription. | Ownership destinations, input-preparation tests, and work counters. |
+| Imported re-entry | Admitted references retain imported protection, inactive versions still settle, and restoration repeats neither host inspection nor subscription. | Ownership destinations, input-preparation tests, and work counters. |
 | Metadata separation | Retirement removes counter projections and reverse links while preserving forward logical values and version authority. | Ownership destinations and the independent parent/refcount verifiers. |
 | Commit visibility | Nested bodies commit independently while unfinished input/copy work remains held; receiver publication and result delivery have distinct lifetimes. | Ownership interactions, mutation/entry tests, and the generated sequences. |
 | Enforced handoff | Raw results retained across commands use explicit holders; clearing roots permits collection of abandoned ancestors. | Updated sequence fixtures and import-retention GC fixture. |
@@ -149,7 +149,9 @@ The runner first checks that the unmodified suite is clean. By default it then r
 | `lost` | No test fails and the entry is not marked open. Coverage regressed; restore a witness. |
 | `witnessed-but-open` | The entry is marked open but a listed witness now fails. Remove `open`. |
 | `stale` | The fault text no longer matches source. Update the fault, not the status. |
-| `crashed` | The suite died before any test failed. The fault is detected but has no named witness; read the crash before relying on it. Other statuses marked "suite crashed" still name the tests that failed first. |
+| `uninstrumented` | The required fault-loader receipt is absent. The run provides no safeguard evidence. |
+| `inconclusive` | A timeout or startup failure prevents accepting the assertion result. Repair the harness or rerun with adequate limits before claiming detection. |
+| `crashed` | The suite died before any accepted witness failed. A crash alone does not establish semantic detection; inspect the failure and runtime execution receipts. Other statuses marked "suite crashed" retain only the accepted assertions reached before the crash. |
 
 ## Stages and audits
 

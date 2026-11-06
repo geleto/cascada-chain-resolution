@@ -13,7 +13,9 @@ import { classifySafeguard as classify, faultReceipts, witnessFaultReceipts } fr
 const root = fileURLToPath(new URL("../../", import.meta.url))
 const hook = pathToFileURL(fileURLToPath(new URL("./fault-hook.mjs", import.meta.url))).href
 const args = process.argv.slice(2)
-const parallel = Number(args.find(arg => arg.startsWith("--parallel="))?.split("=")[1] ?? 3)
+const parallel = Number(args.find(arg => arg.startsWith("--parallel="))?.slice("--parallel=".length) ?? 3)
+if (!Number.isSafeInteger(parallel) || parallel <= 0)
+    throw new Error("--parallel must be a positive safe integer")
 const full = args.includes("--full")
 const reportPath = args.find(arg => arg.startsWith("--report="))?.slice("--report=".length)
 const selected = args.filter(arg => !arg.startsWith("--"))
@@ -72,8 +74,8 @@ function runSuite(faults, witnesses) {
 
 if (!args.includes("--skip-baseline")) {
     const baseline = await runSuite()
-    if (!baseline.completed || baseline.failures.length) {
-        console.error(`Baseline suite is not clean (${baseline.completed ? baseline.failures.length + " failures" : "crashed"}); results would be meaningless.`)
+    if (!baseline.completed || baseline.failures.length || baseline.exitCode !== 0 || baseline.signal !== null) {
+        console.error(`Baseline suite is not clean (exit=${baseline.exitCode}, signal=${baseline.signal}, ${baseline.completed ? baseline.failures.length + " failures" : "crashed"}); results would be meaningless.`)
         process.exit(2)
     }
 }
@@ -112,6 +114,6 @@ async function worker() {
         if (result.status === "stale") console.log(`${"".padEnd(19)}fault text no longer matches ${result.detail}`)
     }
 }
-await Promise.all(Array.from({ length: parallel }, worker))
+await Promise.all(Array.from({ length: Math.min(parallel, queue.length) }, worker))
 const blocking = results.filter(result => ["lost", "stale", "unlisted", "crashed", "uninstrumented", "inconclusive", "witnessed-but-open"].includes(result.status))
 process.exitCode = blocking.length ? 1 : 0

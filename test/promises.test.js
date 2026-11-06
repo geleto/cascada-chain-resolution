@@ -1,6 +1,5 @@
 import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
-import { publishPromiseVersion } from "../src/property-versions.js"
 import {
     Chain,
     assignPath,
@@ -18,6 +17,8 @@ import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
 import { hasCycleCut } from "./support.js"
 import { metaOf } from "../src/meta.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
+import { OrderedThenable } from "./ordered-thenable.js"
+import assert from "node:assert/strict"
 import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
@@ -39,7 +40,6 @@ import {
     flushMicrotasks,
     expectCounts,
     errorCause,
-    thrownBy,
 } from "./support.js"
 
 describe("promise helpers", () => {
@@ -208,10 +208,12 @@ describe("promise helpers", () => {
         expect(errorCause(reported)).to.be(fatal)
     })
 
-    it("materializes suspended descriptor-restricted mutations", () => {
+    it("materializes suspended descriptor-restricted mutations", function () {
+        this.timeout(15000)
         const fixture = path.join(__dirname, "fixtures", "suspended-mutator-fatal.js")
-        const child = spawnSync(process.execPath, [fixture], { encoding: "utf8" })
+        const child = spawnSync(process.execPath, ["--unhandled-rejections=strict", fixture], { encoding: "utf8", timeout: 10000, windowsHide: true })
 
+        expect(child.error).to.be(undefined)
         expect(child.status).to.be(0)
         expect(JSON.parse(child.stdout)).to.eql({
             returnsUndefined: true,
@@ -225,34 +227,6 @@ describe("promise helpers", () => {
 })
 
 describe("Promise versions and lookupPath", () => {
-    it("rejects a Promise before advancing a property version", async () => {
-        const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const pending = deferred()
-        const root = {}
-        assignPath(new Chain(root, testContext), ["value"], pending.promise, testContext)
-        const promiseVersion = getPromiseVersion(root, "value", testContext)
-
-        const error = thrownBy(() => {
-            publishPromiseVersion(
-                root,
-                "value",
-                promiseVersion,
-                { value: Promise.resolve("replacement"), present: true },
-                testContext,
-            )
-        })
-
-        expect(error.message).to.be(
-            "A Promise requires a fresh property version",
-        )
-        expect(root.value).to.be(pending.promise)
-        expect(promiseVersion.value).to.be(pending.promise)
-
-        pending.resolve("settled")
-        await flushMicrotasks()
-        expect(root.value).to.be("settled")
-    })
-
     it("keeps one authoritative value before and after detachment", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const livePending = deferred()
@@ -395,14 +369,12 @@ describe("Promise versions and lookupPath", () => {
         const pending = deferred()
         const error = poison("settled")
         const value = { error }
-        const root = {}
+        const root = Object.seal({ value: pending.promise })
 
         const rootChain = new Chain(root, testContext)
-        assignPath(rootChain, ["value"], pending.promise, testContext)
         buildRefIndex(root, testContext)
         const observed = lookupPath(rootChain, ["value"], testContext)
 
-        Object.seal(root)
         expectCounts(testContext, root, 1, 0)
 
         pending.resolve(value)
@@ -635,11 +607,13 @@ describe("Promise versions and lookupPath", () => {
 
         deferredBranch.resolve({})
         const readValue = await read
+        const retained = new Chain(readValue, testContext)
         await flushMicrotasks()
 
         expect(readValue).to.eql({})
         expect(root.branch).to.eql({ x: 1 })
         expect(root.branch).not.to.be(readValue)
+        expect(await exportValue(retained, [], testContext)).to.eql(readValue)
     })
 
     it("continues lookupPath through a pending intermediate promise", async () => {
@@ -691,11 +665,13 @@ describe("Promise versions and lookupPath", () => {
 
         deferredBranch.resolve({ value: { x: 1 } })
         const value = await read
+        const retained = new Chain(value, testContext)
         await flushMicrotasks()
 
         expect(value).to.eql({ x: 1 })
         expect(root.branch.value).to.eql({ x: 2 })
         expect(root.branch.value).not.to.be(value)
+        expect(await exportValue(retained, [], testContext)).to.eql(value)
     })
 
     it("marks shared nested promise lookups before later nested writes resume", async () => {
@@ -712,11 +688,13 @@ describe("Promise versions and lookupPath", () => {
         await flushMicrotasks()
         deferredValue.resolve({ x: 1 })
         const value = await read
+        const retained = new Chain(value, testContext)
         await flushMicrotasks()
 
         expect(value).to.eql({ x: 1 })
         expect(root.branch.value).to.eql({ x: 2 })
         expect(root.branch.value).not.to.be(value)
+        expect(await exportValue(retained, [], testContext)).to.eql(value)
     })
 
     it("continues a nested lookup after a later ancestor replacement", async () => {
@@ -877,7 +855,7 @@ describe("Promise versions and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        lookupPath(new Chain(root, testContext), [], testContext)
+        const retained = new Chain(lookupPath(new Chain(root, testContext), [], testContext), testContext)
         const chain = new Chain(root, testContext)
         assignPath(chain, ["branch"], { replacement: true }, testContext)
         const next = chain._state.value
@@ -885,7 +863,7 @@ describe("Promise versions and lookupPath", () => {
         deferredBranch.resolve({ x: 1 })
         await flushMicrotasks()
 
-        const oldBranch = await lookupPath(new Chain(root, testContext), ["branch"], testContext)
+        const oldBranch = await lookupPath(retained, ["branch"], testContext)
         const oldBranchChain = new Chain(oldBranch, testContext)
         assignPath(oldBranchChain, ["x"], 2, testContext)
 
@@ -899,7 +877,7 @@ describe("Promise versions and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        lookupPath(new Chain(root, testContext), [], testContext)
+        const retained = new Chain(lookupPath(new Chain(root, testContext), [], testContext), testContext)
         const chain = new Chain(root, testContext)
         assignPath(chain, ["branch", "x"], 1, testContext)
         const next = chain._state.value
@@ -907,7 +885,7 @@ describe("Promise versions and lookupPath", () => {
         deferredBranch.resolve({ y: 2 })
         await flushMicrotasks()
 
-        const oldBranch = await readPath(new Chain(root, testContext), ["branch"], testContext)
+        const oldBranch = await readPath(retained, ["branch"], testContext)
 
         expect(oldBranch).to.eql({ y: 2 })
         expect(next.branch).to.eql({ y: 2, x: 1 })
@@ -1031,11 +1009,13 @@ describe("Promise versions and lookupPath", () => {
 
         deferredBranch.resolve({})
         const firstValue = await firstRead
+        const retained = new Chain(firstValue, testContext)
         await flushMicrotasks()
 
         expect(firstValue).to.eql({})
         expect(root.branch).to.eql({ x: 1 })
         expect(root.branch).not.to.be(firstValue)
+        expect(await exportValue(retained, [], testContext)).to.eql(firstValue)
     })
 
     it("treats replacing one pending promise with another as a fresh Promise version", async () => {
@@ -1220,11 +1200,13 @@ describe("Promise versions and lookupPath", () => {
 
             pending.resolve({})
             const value = await observed
+            const retained = new Chain(value, testContext)
             await flushMicrotasks()
 
             expect(value).to.eql({ x: 1 })
             expect(chain._state.value.branch).to.eql({ x: 2 })
             expect(chain._state.value.branch).not.to.be(value)
+            expect(await exportValue(retained, [], testContext)).to.eql(value)
         })
 
         it("orders delete, read, and write through one pending branch", async () => {
@@ -1258,10 +1240,12 @@ describe("Promise versions and lookupPath", () => {
             inner.resolve({})
 
             const value = await observed
+            const retained = new Chain(value, testContext)
             await flushMicrotasks()
             expect(value).to.eql({ x: 1 })
             expect(chain._state.value.branch.inner).to.eql({ x: 2 })
             expect(chain._state.value.branch.inner).not.to.be(value)
+            expect(await exportValue(retained, [], testContext)).to.eql(value)
         })
 
         it("preserves a root read position between root writes", async () => {
@@ -1276,10 +1260,12 @@ describe("Promise versions and lookupPath", () => {
             pending.resolve({})
 
             const value = await observed
+            const retained = new Chain(value, testContext)
             await flushMicrotasks()
             expect(value).to.eql({ x: 1 })
             expect(chain._state.value).to.eql({ x: 2 })
             expect(chain._state.value).not.to.be(value)
+            expect(await exportValue(retained, [], testContext)).to.eql(value)
         })
     })
 
@@ -1371,6 +1357,36 @@ describe("Promise versions and lookupPath", () => {
 })
 
 describe("root promises", () => {
+    for (const mode of ["native", "ordered"]) for (const shape of ["record", "array"]) {
+        it(`preserves pending handoff through direct reactions: ${mode}, ${shape}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "direct reaction handoff" }
+            const pending = mode === "native" ? Promise.withResolvers() : new OrderedThenable()
+            const source = new Chain(pending.promise ?? pending, ctx)
+            const output = lookupPath(source, [], ctx)
+            assert(output instanceof Promise)
+            const array = shape === "array", order = []
+            let retained
+            // Both direct consumers subscribe at issuance. The second receives
+            // immediately in its callback, after the first has changed source.
+            const writer = output.then(() => {
+                order.push("write")
+                assignPath(source, [array ? 0 : "value"], 2, ctx)
+            })
+            const receiver = output.then(value => {
+                order.push("receive")
+                retained = new Chain(value, ctx)
+            })
+            pending.resolve(array ? [1] : { value: 1 })
+            await Promise.all([writer, receiver])
+            assert.deepEqual(order, ["write", "receive"])
+            assert.deepEqual(exportValue(source, [], ctx), array ? [2] : { value: 2 })
+            assert.deepEqual(exportValue(retained, [], ctx), array ? [1] : { value: 1 },
+                "Direct receiving reaction preserves the delivered logical value")
+            assert.equal(ctx.execution.fatalError, null)
+            verifyRefCounts(ctx, source._state, retained._state)
+        })
+    }
+
     it("chains root-level assignments through the Chain state slot", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const deferredRoot = deferred()
@@ -1397,12 +1413,14 @@ describe("root promises", () => {
         const read = lookupPath(chain, ["branch"], testContext)
         deferredRoot.resolve(root)
         const value = await read
+        const retained = new Chain(value, testContext)
         assignPath(chain, ["branch", "x"], 2, testContext)
 
         expect(value).to.be(oldBranch)
         expect(root.branch).not.to.be(oldBranch)
         expect(oldBranch.x).to.be(1)
         expect(root.branch.x).to.be(2)
+        expect(await exportValue(retained, [], testContext)).to.eql(value)
     })
 
     it("looks up through a root promise without sharing ownership", async () => {

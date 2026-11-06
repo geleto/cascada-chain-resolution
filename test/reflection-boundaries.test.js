@@ -186,7 +186,12 @@ describe("supported reflection boundary sweeps", () => {
                     return test
                 }
                 const baseline = await run(Infinity)
-                for (let failAt = 1; failAt <= baseline.calls.length; failAt++) {
+                // Deletion first selects target presence before the imported
+                // parent is copied. That selection must remain readable; the
+                // subsequent copy inspections retain supported failure handling.
+                const firstFault = name === "delete" ? 2 : 1
+                if (name === "delete") assert.equal(baseline.calls[0], "getOwnPropertyDescriptor:x")
+                for (let failAt = firstFault; failAt <= baseline.calls.length; failAt++) {
                     const { ctx, chain, source, calls } = await run(failAt)
                     assert(calls.length >= failAt, `${name}: fault site was not reached`)
                     assert.equal(ctx.execution.fatalError, null, `${name}: ${baseline.calls[failAt - 1]}`)

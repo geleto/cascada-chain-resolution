@@ -598,11 +598,12 @@ describe("structural Array command sequences", function () {
                 hold.promise.then(() => r.assignPath(inside, [], 7, ctx)))
             const earlier = captures ? r.export(chain, [], ctx) : undefined
             const result = r.run(chain, [], method, args, ctx, mutable ? { mutationScopeDepth: 0 } : {})
+            const retainedResult = new r.Chain(result, ctx)
             const later = mutable ? r.assignPath(chain, [0], 9, ctx) : undefined
             verifyRefCounts(ctx, chain._state)
             hold.resolve()
             await Promise.all([entry, later])
-            const actual = await r.export(new r.Chain(await result, ctx), [], ctx)
+            const actual = await r.export(retainedResult, [], ctx)
             const label = `${method}, captures=${captures}`
             assert.deepStrictEqual(actual, snapshot, label)
             assert.deepStrictEqual(await r.export(chain, [], ctx), mutable ? expected : [2, , 1, , 7], label)
@@ -644,8 +645,9 @@ describe("structural Array command sequences", function () {
                     const capture = () => {
                         if (!captures) return
                         const value = r.lookupPath(chain, ["list"], ctx)
+                        const holder = new r.Chain(value, ctx)
                         track(value)
-                        snapshots.push({ value, expected: expected.slice(), poison, deleted })
+                        snapshots.push({ holder, expected: expected.slice(), poison, deleted })
                     }
                     if (start === "length") r.assignPath(chain, ["list", "length"], hold.promise, ctx)
                     if (start === "replacement") r.assignPath(chain, ["list"], hold.promise, ctx)
@@ -681,7 +683,7 @@ describe("structural Array command sequences", function () {
                     try {
                         await Promise.all(waits)
                         for (const snapshot of snapshots) {
-                            const value = await r.export(new r.Chain(await snapshot.value, ctx), [], ctx)
+                            const value = await r.export(snapshot.holder, [], ctx)
                             if (snapshot.poison) assert.equal(value.kind, r.ERROR_KIND.NullLookup)
                             else assert.deepStrictEqual(value, snapshot.deleted ? undefined : snapshot.expected)
                         }

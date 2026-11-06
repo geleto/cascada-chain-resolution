@@ -52,7 +52,7 @@ describe("ArrayView", () => {
                 const hold = deferred()
                 const reader = protection === "leased"
                     ? enter(chain, [], testContext, false, () => hold.promise)
-                    : lookupPath(chain, [], testContext)
+                    : new Chain(lookupPath(chain, [], testContext), testContext)
                 counts.keys = counts.descriptors = 0
                 for (let i = 0; i < 3; i++) {
                     const result = run(chain, [], method, method === "push" ? [i] : [], testContext, { repair: false, mutationScopeDepth: 0 })
@@ -62,7 +62,7 @@ describe("ArrayView", () => {
                 measurements.push({ ...counts })
                 hold.resolve()
                 await reader
-                expect(exportValue(new Chain(before, testContext), [], testContext)).to.eql(Array.from({ length: size }, (_, i) => i))
+                expect(exportValue(protection === "shared" ? reader : new Chain(before, testContext), [], testContext)).to.eql(Array.from({ length: size }, (_, i) => i))
                 expect(exportValue(chain, [], testContext)).to.eql(method === "push"
                     ? [...Array.from({ length: size }, (_, i) => i), 0, 1, 2]
                     : Array.from({ length: size - 3 }, (_, i) => i))
@@ -328,6 +328,7 @@ describe("ArrayView", () => {
         const pending = deferred()
         const chain = new Chain([pending.promise], testContext)
         const derived = run(chain, [], "push", [], testContext, { repair: false })
+        const retained = new Chain(derived, testContext)
 
         expect(
             getPromiseVersion(chain._state.value, "0", testContext) ===
@@ -336,7 +337,7 @@ describe("ArrayView", () => {
         assignPath(chain, ["0"], 9, testContext)
         pending.resolve(1)
 
-        expect(await exportValue(new Chain(derived, testContext), [], testContext)).to.eql([1])
+        expect(await exportValue(retained, [], testContext)).to.eql([1])
         expect(exportValue(chain, [], testContext)).to.eql([9])
     })
 
@@ -387,6 +388,7 @@ describe("ArrayView", () => {
 
         assignPath(sourceChain, ["0", "before"], 1, testContext)
         const view = run(sourceChain, [], "push", [2], testContext, { repair: false })
+        const retained = new Chain(view, testContext)
         const changed = new Chain(view, testContext)
         assignPath(changed, ["0", "after"], 2, testContext)
 
@@ -394,7 +396,7 @@ describe("ArrayView", () => {
         expect(await exportValue(sourceChain, [], testContext)).to.eql([
             { before: 1 },
         ])
-        expect(await exportValue(new Chain(view, testContext), [], testContext)).to.eql([
+        expect(await exportValue(retained, [], testContext)).to.eql([
             { before: 1 },
             2,
         ])
@@ -540,31 +542,14 @@ describe("ArrayView", () => {
 
     it("derives an empty extension without writing the backing length", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const source = [1]
-        const view = run(new Chain(source, testContext), [], "push", [2], testContext, { repair: false })
+        const source = [1, 2]
         Object.defineProperty(source, "length", { writable: false })
+        const view = run(new Chain(source, testContext), [], "slice", [], testContext, { repair: false })
 
         const result = run(new Chain(view, testContext), [], "push", [], testContext, { repair: false })
 
         expect(arrayViews.isArrayView(result, testContext)).to.be(true)
         expect([...logicalArrayValues(result, testContext)]).to.eql([1, 2])
-    })
-
-    it("returns an Error when observational endpoint growth fails", () => {
-        const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const failure = new Error("view length write failed")
-        const backing = new Proxy([1], {
-            set(target, key, value, receiver) {
-                if (key === "length") throw failure
-                return Reflect.set(target, key, value, receiver)
-            },
-        })
-        const source = new Chain(backing, testContext)
-
-        const result = run(source, [], "push", [2], testContext, { repair: false })
-
-        expect(errorCause(result)).to.be(failure)
-        expect(exportValue(source, [], testContext)).to.eql([1])
     })
 
     it("poisons mutation when an endpoint placement fails", () => {

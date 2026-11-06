@@ -44,7 +44,7 @@ async function failedSibling(mode, methodResult, failing) {
     assert.equal(await r.lookupPath(other, ["ok"], later), 1)
     assert.equal(first.execution.fatalError, null)
     const members = earlierErrors?.errors ?? [earlierErrors]
-    assert(members.some(error => error === leaf) || (!methodResult && failing))
+    assert(members.some(error => error === leaf), "A failed sibling cannot discard the earlier prepared poison")
     return { source: error.errorContext, kind: error.kind }
 }
 

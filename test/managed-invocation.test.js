@@ -141,8 +141,8 @@ describe("managed invocation", () => {
         assert.equal(first.kind, runtime.ERROR_KIND.InvalidManagedReceiver)
         assert.equal(first.errorContext, ctx.errorContext)
 
-        // Failed validation admitted cached's category, but established no
-        // preparation or producer for its raw pending property.
+        // Failed validation committed no admission, preparation or producer
+        // for cached or its raw pending property.
         const returned = new Chain(runtime.importMethodResult(cached, resultCtx), resultCtx)
         const cause = new Error("new producer")
         pending.reject(cause)
@@ -834,7 +834,7 @@ describe("managed invocation", () => {
             }
         }
         managedStateClass(Vec)
-        const source = importValue(new Vec(), { ...testContext, errorContext: "shared managed-class receiver" })
+        const source = new Vec()
         source.x = 1
         importValue(source, { ...testContext, errorContext: "shared managed-class receiver" })
         const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })

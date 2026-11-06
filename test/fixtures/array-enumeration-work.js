@@ -37,6 +37,8 @@ for (const width of [4, size - offset]) for (const pending of [false, true]) {
         candidates++
     }
     const rangeKeys = produced
+    assert.equal(rangeKeys, offset === 0 && width === size ? 0 : width,
+        "Range-key instrumentation must count each streamed candidate")
     const expected = new Array(width)
     expected[0] = { k: 1 }
     expected[width - 1] = 2

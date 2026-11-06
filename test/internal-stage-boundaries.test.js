@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-describe("internal semantic-stage failure boundaries", () => {
+describe("internal semantic-stage failure boundaries", function () {
+    this.timeout(15000)
     it("keeps defects fatal from the first instruction of every public command", () => {
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/entry-failure.js", import.meta.url))],

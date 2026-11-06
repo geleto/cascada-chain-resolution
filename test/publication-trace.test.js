@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 const tracer = new URL("./trace-runtime.js", import.meta.url).href
-describe("publication route instrumentation", () => {
+describe("publication route instrumentation", function () {
+    this.timeout(15000)
     it("detects host activity during preparation commit", () => {
         const result = spawnSync(process.execPath, ["--import", tracer, "--input-type=module", "-e",
             'import {Execution} from "./src/index.js"; import {runExternalAction} from "./src/error.js"; import * as trace from "./test/trace-state.js"; trace.enter("commitPreparedInput",[]); runExternalAction({execution:new Execution(),errorContext:{}},()=>{});'],

@@ -984,29 +984,64 @@ export const SAFEGUARDS = [
     {
         id: "flat-releases-array",
         guards: "Flat releases the Array after cycle determination and capture.",
-        faults: [edit("src/array-methods.js", "finally { array = undefined }",
+        faults: [edit("src/array-flat-capture.js", "finally { array = undefined }",
             "finally {}")],
-        witnesses: ["checks array-failure-release at stack limit 1000"],
-    },
-    {
-        id: "flat-releases-placement",
-        guards: "Flat releases a consumed placement at actual delivery.",
-        faults: [edit("src/array-methods.js", "finally { placement = undefined }\n            }, undefined, invocationWork)",
-            "finally {}\n            }, undefined, invocationWork)")],
-        witnesses: ["checks array-failure-release at stack limit 1000"],
-    },
-    {
-        id: "flat-avoids-native-map-receiver",
-        guards: "Flat does not retain a source map in a native mapping frame.",
-        faults: [edit("src/array-methods.js", "const parts = []\n            for (const key of Object.keys(source))\n                parts.push(prepareFlatProperty(source[key], depth, nestedAncestry, invocationWork))",
-            "const parts = Object.keys(source).map(key => prepareFlatProperty(source[key], depth, nestedAncestry, invocationWork))")],
-        witnesses: ["checks array-failure-release at stack limit 1000"],
+        witnesses: ["checks array-reflection-release at stack limit 1000"],
     },
     {
         id: "flat-filters-final-presence",
         guards: "Flattening respects the final consumed placement presence.",
-        faults: [edit("src/array-methods.js", "values.filter(value => !propertyVersions.isPropertyPlacement(value) || value.present !== false)",
-            "values")],
+        faults: [edit("src/array-flat-capture.js", "node.parts.filter(record => record.present)", "node.parts")],
+        witnesses: ["checks flat-completion at stack limit 1000"],
+    },
+    {
+        id: "flat-discards-nested-output",
+        guards: "Failed flat preparation releases nested output while required sibling discovery remains pending.",
+        faults: [edit("src/array-flat-capture.js", "record.placement = undefined", "void record")],
+        witnesses: ["checks flat-completion at stack limit 1000"],
+    },
+    {
+        id: "flat-preserves-large-depth-residue",
+        guards: "Finite depths beyond exact subtraction preserve cycle residue after preceding edges.",
+        faults: [edit("src/array-flat.js", "depth > Number.MAX_SAFE_INTEGER && depth !== Infinity", "false")],
+        witnesses: ["preserves sparse cycle depth and source identity"],
+    },
+    {
+        id: "flat-shares-finite-dag-capture",
+        guards: "Array aliases share physical capture across finite and unlimited depth requests.",
+        faults: [edit("src/array-flat-capture.js", "let node = this.sources.get(array)", "let node = undefined")],
+        witnesses: ["bounds capture and expansion with normal control"],
+    },
+    {
+        id: "flat-skips-silent-cycle-laps",
+        guards: "Finite silent cycle skipping depends on its own empty exits, not unrelated graph size.",
+        faults: [edit("src/array-flat.js", "component.transient = 0", "component.transient = facts.size")],
+        witnesses: ["bounds capture and expansion with normal control"],
+    },
+    {
+        id: "flat-counts-expansion-capacity",
+        guards: "Exact capped recurrence counts reject overflowing cycles without depth-sized expansion.",
+        faults: [edit("src/array-flat.js", "? cyclicCount(depth) : acyclicCount(root, depth)",
+            "? cyclicCount(Math.min(depth, 1024)) : acyclicCount(root, depth)")],
+        witnesses: ["bounds finite expansion by captured structure and output"],
+    },
+    {
+        id: "flat-discards-cross-branch-cycles",
+        guards: "A cycle closed across pending capture branches releases success output before unrelated delivery.",
+        faults: [edit("src/array-flat-capture.js", "node.depth === Infinity && !this.failed && reaches(record.child, node)", "false")],
+        witnesses: ["checks flat-completion at stack limit 1000"],
+    },
+    {
+        id: "flat-releases-presence-only-input",
+        guards: "A presence-only node with no possible deeper request releases its consumed input.",
+        faults: [edit("src/array-flat-capture.js", "if (this.root.depth <= 1) record.input = undefined"),
+            edit("src/array-flat-capture.js", "if (this.root.depth <= 1 && record.state === PRESENCE_READY) record.input = undefined")],
+        witnesses: ["checks flat-completion at stack limit 1000"],
+    },
+    {
+        id: "flat-discards-capacity-poison",
+        guards: "A retained capacity Error cannot retain the completed successful placement capture.",
+        faults: [edit("src/array-methods.js", "if (errorUtils.isPoisonError(result)) capture.discard()")],
         witnesses: ["checks flat-completion at stack limit 1000"],
     },
     {
@@ -1101,8 +1136,12 @@ export const SAFEGUARDS = [
     {
         id: "entry-structure-shares-preparation",
         guards: "Nested holders reuse structural preparation without a recursive history walk at each completion.",
-        faults: [edit("src/placement-structure.js", "if (enclosing) return { prepare: enclosing.prepare }",
-            "if (enclosing) return { prepare(placement) { return enclosing.prepare(placement) } }")],
+        // Keep the fixture's single preparation counter on the restored history
+        // wrappers; the original root signature change is semantically inert.
+        faults: [edit("src/placement-structure.js", "        prepare(placement) {",
+            "        prepare(placement /* root reservation */) {"),
+            edit("src/placement-structure.js", "if (enclosing) return { prepare: enclosing.prepare }",
+                "if (enclosing) return { prepare(placement) { return enclosing.prepare(placement) } }")],
         witnesses: ["bounded graph ownership verifies entry-history-work"],
     },
     {
@@ -1170,7 +1209,7 @@ export const SAFEGUARDS = [
         id: "bounded-array-candidates-stream",
         guards: "Capturing a bounded sparse range allocates no candidate key per hole.",
         faults: [edit("src/array-view.js", "return indexKeys(start - offset, end - offset)",
-            "const keys = []; for (let index = start; index < end; index++) keys.push(String(index - offset)); return keys")],
+            "return [...indexKeys(start - offset, end - offset)]")],
         witnesses: ["bounded graph ownership verifies array-enumeration-work"],
     },
     {
@@ -1563,7 +1602,7 @@ export const SAFEGUARDS = [
         guards: "Sharing storage fixes the source's logical length so later physical growth is not exposed to it.",
         faults: [edit("src/array-view.js", "        if (!range) ArrayView.#setState(source, length, operationContext)\n")],
         witnesses: [
-            "captured Array length knowledge copies before entering storage shared with another view",
+            "preserves source length when a shared slice is extended",
         ],
     },
     {
@@ -1611,8 +1650,7 @@ export const SAFEGUARDS = [
             "const release = () => queueMicrotask(() => releaseDetached(operationContext, delivery.release))",
             "const release = () => releaseDetached(operationContext, delivery.release)")],
         witnesses: [
-            "root promises looks up through a root promise with shared ownership",
-            "run imports a record method result that aliases its receiver",
+            "root promises preserves pending handoff through direct reactions:",
         ],
     },
     {

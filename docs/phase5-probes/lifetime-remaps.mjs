@@ -59,6 +59,7 @@ for (const method of Object.keys(specs)) {
         issue(method, false, undefined, true, 'argument')
     }
 }
+assert(rows.length > 0, `No lifetime cases match METHOD: ${process.env.METHOD}`)
 if (process.env.FORMAT_STACKS) for (const row of rows) if (row.poison) { void row.poison.stack; void row.poison.cause?.stack }
 if (process.env.DROP_POISONS) for (const row of rows) row.poison = undefined
 for (let turn = 0; turn < 30; turn++) { await new Promise(setImmediate); globalThis.gc() }

@@ -1,3 +1,4 @@
+import { readIntegerSetting } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
@@ -88,7 +89,7 @@ function input(shared, nested, before, after, drain) {
     return value
 }
 
-const seeds = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16)
+const seeds = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 16, 1)
 const coverage = new Set()
 const jointCoverage = new Set()
 const boundaries = ["import", "chain", "assignment", "method-result"]

@@ -255,14 +255,14 @@ describe("graph presence summaries", () => {
     it("materializes indexed state before a restricted assignment", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const root = { value: "original" }
-        new Chain(root, testContext)
-        buildRefIndex(root, testContext)
         Object.defineProperty(root, "value", {
             value: "original",
             enumerable: true,
             writable: false,
             configurable: true,
         })
+        new Chain(root, testContext)
+        buildRefIndex(root, testContext)
         const replacement = importValue({ clean: true }, { ...testContext, errorContext: "blocked assignment" })
 
         const chain = new Chain(root, testContext)

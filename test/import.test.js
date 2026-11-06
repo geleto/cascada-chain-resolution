@@ -31,7 +31,8 @@ import {
 } from "./support.js"
 
 describe("import", () => {
-    it("releases an imported ancestor while preserving its retained child and pending publication", () => {
+    it("releases an imported ancestor while preserving its retained child and pending publication", function () {
+        this.timeout(15000)
         const child = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/import-retention.js", import.meta.url))], {
             encoding: "utf8", timeout: 10000,

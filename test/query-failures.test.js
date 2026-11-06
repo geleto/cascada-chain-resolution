@@ -193,8 +193,7 @@ describe("query and export failure boundaries", () => {
         refcounts.buildRefIndex(root, ctx)
         fail = true
         let done = false
-        // Phase 9D-A transport: export fulfills with non-thenable poison.
-        // Phase 9D-B changes this outcome to rejection; collection stays complete.
+        // Graph export fulfills with non-thenable poison after complete collection.
         const exported = runtime.export(chain, [], ctx).then(value => {
             done = true
             return value

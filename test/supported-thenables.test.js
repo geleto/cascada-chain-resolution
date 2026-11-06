@@ -22,9 +22,8 @@ function existingFatal() {
     assert.fail("Expected a fatal failure")
 }
 
-// ResolvedValue-style direct return and the conforming rejecting protocol.
-// Cascada's legacy PoisonedValue catches callback throws; it is intentionally
-// not used as a fixture for the replacement contract.
+// Direct-return fulfillment and conforming rejection preserve sync-first
+// transitions. Expression PoisonedValue behavior has its own boundary tests.
 describe("supported thenables", () => {
     it("uses direct transitions for ready inputs and nested continuation work", () => {
         const ctx = context()

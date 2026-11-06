@@ -223,7 +223,7 @@ Use the shared [waiting-shape-query protocol](../array-layout-approaches.md#63-w
 
 ## Failure
 
-Apply the common [mode and fallback contract](../poison-policy-plan.md). Complete mode waits for the required structural outcome and produces whole-Array Error on failure. Streaming modes retain independent facts and use the specified fallback layout; the representation cannot choose extra poison or an empty extent merely to simplify storage.
+Apply the common [mode and fallback contract](../poison-policy-plan.md), including its [sort exception](../poison-policy-plan.md#sorting-requires-order). Complete mode waits for the required structural outcome and normally produces whole-Array Error on failure; mutating-sort preparation/comparison failure retains repairable own status in every mode. Streaming modes retain independent facts and use the specified fallback layout; the representation cannot choose extra poison or an empty extent merely to simplify storage.
 
 Sequential mode flags surviving occurrences whose intended positions are lost. Unordered mode keeps those occurrences usable without positional flags or an extra marker. Potentially deleted or overwritten occurrences become permanent structural poison; possibly missing output gets one real Error marker per failed contribution. Ordinary payload rejection remains value poison only.
 

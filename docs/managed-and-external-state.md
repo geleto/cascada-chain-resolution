@@ -29,7 +29,7 @@ A class instance added later follows its own identity declaration or exact class
 
 ## Classification
 
-The approved [receiving-category correction](runtime-evolution-plan.md#approved-receiving-rule-stable-categories) is not yet implemented across all paths. It removes the current property's ability to select an external category merely by receiving a value beneath an external parent.
+The implemented [receiving-category correction](runtime-evolution-plan.md#approved-receiving-rule-stable-categories) keeps categories stable across receiving routes. Receiving a value beneath an external parent does not select an external category.
 
 Keep identity declarations outside application objects and managed class prototypes in one registry. Resolve callable thenables before admission. Preserve Error and Function semantics first. Ordinary import, method results and observation-only external property reception use the same declarations/defaults and preserve existing admission; a detached copy read from mutable external state is new managed data. An explicit external declaration makes a record, Array, or class instance external. Otherwise Arrays retain intrinsic semantics, records default to managed, and a class instance follows its explicit managed declaration, the exact managed-class registry, or the external default. Records and Arrays passed to `managedState` are traversal roots and receive no redundant declaration.
 
@@ -81,7 +81,7 @@ Records and classes use the single boundary defined in [`managed-invocation.md`]
 
 The caller's mode is trusted: observations do not mutate their receiver, and mutations change only their isolated receiver. Exported managed arguments are independent; exact Functions and external identities remain read-only. External identities nested in a managed receiver are opaque leaves and require a separate external Cascada operation for host access.
 
-Receiver and argument work share one operation lifetime. One direct Promise extends it; a nested result Promise does not. Observations retain receiver leases through direct completion, mutations keep private state behind the ordinary transition gate, and common method-result import gives exact receiver/result aliases shared ownership.
+Receiver and argument work share one operation lifetime. One direct Promise extends it; a nested result Promise does not. Both modes capture source-free receiver data and assemble a detached native graph, ending source leases at capture. Observations preserve captured logical identities on their private receiver, mutations keep new private state behind the ordinary transition gate, and common method-result import gives exact receiver/result aliases shared ownership.
 
 ## External ordering
 
@@ -97,4 +97,4 @@ Method-result import remains nonblocking for nested Promises, including already-
 
 ## Scope
 
-Managed records and classes share one invocation instead of using a record-specific path. The architecture reuses one import boundary, one export boundary, and ordinary managed COW, leases, gates, versions, and publication. External ordering adds a fixed runtime tree when filtering the compiler mutation access tree finds external boundaries, one execution identity map, and the common readers-writer phase mechanism; it adds no hidden Chain, live external graph, special importer, or second invocation coordinator.
+Managed records and classes share one invocation instead of using a record-specific path. The architecture reuses one import boundary, one export boundary, and ordinary managed COW, leases, gates, versions, and publication. External ordering adds a fixed runtime tree when filtering the compiler mutation access tree finds external boundaries, execution-local WeakSet registration membership, versioned poison metadata, and common hierarchical reservations; it adds no hidden Chain, live external graph, special importer, or second invocation coordinator.

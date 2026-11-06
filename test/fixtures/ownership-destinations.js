@@ -63,9 +63,8 @@ for (const operation of ["export", "hasError", "getErrors", "lookupPath"]) {
         return { result, source: new WeakRef(source) }
     }
     const { result, source } = issue()
-    // Export has not reached the sibling after `waiting`; the other consumers
-    // have already captured every source placement they will use.
-    if (operation !== "export") await collected(source)
+    // Every consumer captures available siblings before waiting for descendants.
+    await collected(source)
     descendant.resolve(8)
     const child = shape === "record" ? { waiting: 8, other: { k: 1 } } : [8, { k: 1 }]
     assert.deepEqual(await result, operation === "export" ? { branch: child } :
@@ -182,7 +181,7 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
         return { source: new WeakRef(source), result }
     }
     const pendingResult = issue()
-    if (operation !== "export") await collected(pendingResult.source)
+    await collected(pendingResult.source)
     if (operation === "export" && poison) {
         assert.equal(shells.length, 0, "Export allocates no output shells before successful capture")
     }

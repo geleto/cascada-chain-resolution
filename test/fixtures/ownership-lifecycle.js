@@ -22,6 +22,7 @@ const { verifyRefCounts } = await import("../verify-refcounts.js")
 const { OrderedThenable } = await import("../ordered-thenable.js")
 
 async function releaseAndVerify(context, holders) {
+    assert(admitted.length > 0, "Admission observation must execute before liveness verification")
     for (const holder of holders) r.assignPath(holder, [], null, context)
     await new Promise(setImmediate)
     // Empty public holders remain live; no graph value or private holder does.

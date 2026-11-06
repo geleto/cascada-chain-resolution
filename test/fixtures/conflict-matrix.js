@@ -1,3 +1,4 @@
+import { readShard } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
@@ -9,7 +10,7 @@ import { verifyRefCounts } from "../verify-refcounts.js"
 // settle, and after each microtask turn in stepwise runs.
 // The default run covers every predecessor/queued/queued triple once against an
 // absent target and samples present targets; CASCADA_CONFLICT_MATRIX=full runs
-// the complete product in both harness modes, optionally split for parallel
+// the complete product in all three harness modes, optionally split for parallel
 // processes with CASCADA_CONFLICT_PART=index/count.
 
 const ABSENT = Symbol("absent")
@@ -287,8 +288,10 @@ function* sampledCases() {
     }
 }
 
+if (process.env.CASCADA_CONFLICT_MATRIX !== undefined && process.env.CASCADA_CONFLICT_MATRIX !== "full")
+    throw new Error("CASCADA_CONFLICT_MATRIX must be full when set")
 const full = process.env.CASCADA_CONFLICT_MATRIX === "full"
-const [partIndex, partCount] = (process.env.CASCADA_CONFLICT_PART ?? "0/1").split("/").map(Number)
+const [partIndex, partCount] = readShard(process.env.CASCADA_CONFLICT_PART ?? "0/1", "CASCADA_CONFLICT_PART")
 const coverage = { mode: full ? "full" : "sampled", cases: 0, runs: 0, paired: 0, triples: new Set(), absentTriples: new Set(), dimensions: new Set() }
 const failures = []
 let position = 0
@@ -320,6 +323,7 @@ for (const testCase of full ? completeCases() : sampledCases()) {
     coverage.dimensions.add(`sibling:${testCase.sibling}`)
     coverage.dimensions.add(`release:${testCase.release}`)
 }
+if (coverage.cases === 0) throw new Error("CASCADA_CONFLICT_PART must select at least one case")
 if (failures.length) {
     console.error(`${failures.length} failing runs; first ${Math.min(12, failures.length)}:\n${failures.slice(0, 12).join("\n")}`)
     process.exit(1)
