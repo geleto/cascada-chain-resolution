@@ -41,6 +41,7 @@ class ExternalEffect {
     constructor(node, mutation, view, operationContext) {
         this.operationContext = operationContext
         this.node = node
+        this.view = view
         this.mutation = mutation
         const predecessors = new Set()
         const selected = frontier(node, view)
@@ -56,14 +57,12 @@ class ExternalEffect {
         // Removing frontier membership does not finish that work's lifetime.
         if (mutation) for (const work of predecessors)
             if (work.node[TREE_NODE].depth >= node[TREE_NODE].depth) work.removeMemberships()
-        const memberships = this.memberships = []
-        memberships.push(mutation ? selected.writes : selected.reads)
+        ;(mutation ? selected.writes : selected.reads).add(this)
         for (let ancestor = node; ancestor; ancestor = ancestor[TREE_NODE].parent) {
             const state = frontier(ancestor, view)
-            memberships.push(mutation ? state.subtreeWrites : state.subtreeReads)
+            ;(mutation ? state.subtreeWrites : state.subtreeReads).add(this)
             if (ancestor === view?.root) break
         }
-        for (const membership of memberships) membership.add(this)
         const wait = predecessors.size === 1 ? predecessors.values().next().value.promise :
             predecessors.size ? Promise.all([...predecessors].map(work => work.promise)) : undefined
         this.readiness = continueGraphTransition(wait, operationContext, () => { this.readiness = undefined })
@@ -74,19 +73,27 @@ class ExternalEffect {
     }
 
     removeMemberships() {
-        for (const membership of this.memberships ?? []) membership.delete(this)
-        this.memberships = undefined
+        if (!this.node) return
+        const { node, view, mutation } = this
+        const selected = frontier(node, view)
+        ;(mutation ? selected.writes : selected.reads).delete(this)
+        for (let ancestor = node; ancestor; ancestor = ancestor[TREE_NODE].parent) {
+            const state = frontier(ancestor, view)
+            ;(mutation ? state.subtreeWrites : state.subtreeReads).delete(this)
+            if (ancestor === view?.root) break
+        }
+        this.node = this.view = undefined
     }
 
     complete() {
-        if (!this.node) return
+        if (!this.operationContext) return
         // Reads leave predecessors in the frontier and can finish immediately.
         // A mutation must preserve predecessors for work that captured it.
         const operationContext = this.operationContext
         markPromiseHandled(continueGraphTransition(this.mutation ? this.readiness : undefined, operationContext, () => {
             this.removeMemberships()
             this.completion?.resolve()
-            this.completion = this.node = this.operationContext = undefined
+            this.completion = this.operationContext = undefined
         }), operationContext)
     }
 }

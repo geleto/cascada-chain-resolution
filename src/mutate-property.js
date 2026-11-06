@@ -9,7 +9,7 @@ import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
-import { captureMutationResult, walkMutationPath } from "./mutations.js"
+import { walkMutationPath } from "./mutations.js"
 import { exportValue } from "./export.js"
 import { receiveValue } from "./input-preparations.js"
 import { ArrayView } from "./array-view.js"
@@ -122,9 +122,8 @@ function assignManagedPath(
 // never for ordinary data they publish. Retained-prefix transitions transfer
 // to the new Array without delaying its publication.
 function resolveTruncatedArrayTransitions(array, start, operationContext) {
-    const versions = metadata.metaOf(array, operationContext)?.placementVersions
     const waits = []
-    for (const key of Object.keys(versions ?? {})) collect(key, versions[key])
+    for (const [key, version] of propertyVersions.ownPlacementVersionEntries(array, operationContext)) collect(key, version)
     for (const [key, version] of ArrayView.backingVersions(array, start, operationContext)) collect(key, version)
     return waits.length > 1 ? Promise.all(waits) : waits[0]
 
@@ -217,19 +216,15 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
                     "A mutable external namespace cannot be replaced or deleted", operationContext)
                 if (start === end) {
                     if (deleting) return state.key !== undefined
-                        ? { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false }, published: state.present }
-                        : { mutatedValue: null, result: undefined, published: true }
+                        ? { placement: { value: undefined, present: false }, result: undefined, published: state.present }
+                        : { placement: { value: null, present: true }, result: undefined, published: true }
                     return internalSteps.continueGraphTransition(prepareAssignment(placement, state.key, operationContext),
                         operationContext, assigned => errorUtils.isPoisonError(assigned) ? assigned :
-                            { mutatedValue: assigned.value, placement: assigned, result: undefined, published: true })
+                            { placement: assigned, result: undefined, published: true })
                 }
-                const action = deleting
+                return deleting
                     ? deleteManagedPath(working, start, operation)
                     : assignManagedPath(working, start, placement, operation)
-                return internalSteps.continueGraphTransition(action, operationContext, result => {
-                    if (errorUtils.isPoisonError(result)) return result
-                    return captureMutationResult(working, result, operationContext)
-                })
             } finally { placement = undefined }
         }, replaceScope, deleting))
     if (!languageValues.isPending(result, operationContext)) return result

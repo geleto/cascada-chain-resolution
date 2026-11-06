@@ -2062,7 +2062,7 @@ describe("managed invocation", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(receiver, testContext).placementVersions.child.value)
+        expect(metaOf(receiver, testContext).outgoingPlacements.get("child").value)
             .to.be(receiverValue.promise)
         expect(metaOf(late, testContext)).to.be(undefined)
     })

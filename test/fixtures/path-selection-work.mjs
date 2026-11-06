@@ -1,39 +1,22 @@
 import assert from "node:assert/strict"
-import { registerHooks } from "node:module"
-import { normalizeModuleURL } from "../module-url.js"
+import { instrumentRuntime } from "../runtime-transform.js"
 
-const target = normalizeModuleURL(new URL("../../src/external-metadata.js", import.meta.url))
 const counts = globalThis.pathSelectionCounts = { visits: 0, allocations: 0, forwards: 0, consumers: 0, collections: 0, ancestry: 0 }
-let hooked = false
-registerHooks({ load(url, context, next) {
-    const result = next(url, context)
-    if (normalizeModuleURL(url) !== target) return result
-    let source = String(result.source)
-    for (const marker of ["const [heldFrom, heldTo] = merges.pop()"] ) {
-        assert(source.includes(marker))
-        source = source.replaceAll(marker, marker + "; globalThis.pathSelectionCounts.visits++")
-    }
-    const marker = "this.kind = kind"
-    assert(source.includes(marker))
-    source = source.replace(marker, marker + "; globalThis.pathSelectionCounts.allocations++")
-    for (const [marker, metric] of [
+const changes = [
+    ["const [heldFrom, heldTo] = merges.pop()", "$&; globalThis.pathSelectionCounts.visits++"],
+    ["this.kind = kind", "$&; globalThis.pathSelectionCounts.allocations++"],
+    ...[
         ["while (state.kind === FORWARD) {", "forwards"],
         ["function consume(state, owner, onReady) {", "consumers"],
         ["function collect(state, owner, found) {", "collections"],
-    ]) {
-        assert(source.includes(marker))
-        source = source.replaceAll(marker, marker + ` globalThis.pathSelectionCounts.${metric}++;`)
-    }
-    const roots = "while (root.kind === FORWARD) root = root.into"
-    assert(source.includes(roots))
-    source = source.replace(roots, "while (root.kind === FORWARD) { globalThis.pathSelectionCounts.forwards++; root = root.into }")
-    const ascent = "path.push(node); node = node[TREE_NODE].parent"
-    assert(source.includes(ascent))
-    source = source.replaceAll(ascent, "globalThis.pathSelectionCounts.ancestry++; " + ascent)
-    hooked = true
-    return { ...result, source }
-} })
+    ].map(([marker, metric]) => [marker, `$& globalThis.pathSelectionCounts.${metric}++;`]),
+    ["while (root.kind === FORWARD) root = root.into",
+        "while (root.kind === FORWARD) { globalThis.pathSelectionCounts.forwards++; root = root.into }"],
+    ["path.push(node); node = node[TREE_NODE].parent", "globalThis.pathSelectionCounts.ancestry++; $&"],
+]
+const verifyInstrumentation = instrumentRuntime(new Map([["external-metadata.js", changes]]))
 const r = await import("../../src/index.js")
+verifyInstrumentation("Path selection work instrumentation must execute")
 const { TREE_NODE } = await import("../../src/external-mutation-tree.js")
 
 function checkHistory(source) {
@@ -221,5 +204,4 @@ for (const width of [16, 64, 256]) {
     assert(counts.collections <= width * 6,
         `Repeated healthy subtree scans: width=${width}, visits=${counts.collections}`)
 }
-assert(hooked)
 console.log("Linear metadata path/query work and released selection history across 216 schedules")

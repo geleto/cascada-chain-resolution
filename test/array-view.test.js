@@ -1,3 +1,4 @@
+import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
 import * as arrayViews from "../src/array-view.js"
 import * as propertyVersions from "../src/property-versions.js"
@@ -227,7 +228,7 @@ describe("ArrayView", () => {
         const source = [pending.promise, 2]
         new Chain(source, testContext)
         propertyVersions.getPropertyPlacement(source, "0", testContext).ensureCaptured()
-        const sourceVersion = propertyVersions.getPromiseVersion(source, "0", testContext)
+        const sourceVersion = getPromiseVersion(source, "0", testContext)
         const pushed = run(new Chain(source, testContext), [], "push", [3], testContext, { repair: false })
         const grownChain = new Chain(pushed, testContext)
         assignPath(grownChain, ["4"], 5, testContext)
@@ -239,11 +240,11 @@ describe("ArrayView", () => {
         expect(arrayViews.isArrayView(pushed, testContext)).to.be(true)
         const versions = [
             sourceVersion,
-            propertyVersions.getPromiseVersion(pushed, "0", testContext),
-            propertyVersions.getPromiseVersion(grown, "0", testContext),
-            propertyVersions.getPromiseVersion(prepended, "1", testContext),
-            propertyVersions.getPromiseVersion(shifted, "0", testContext),
-            propertyVersions.getPromiseVersion(popped, "0", testContext),
+            getPromiseVersion(pushed, "0", testContext),
+            getPromiseVersion(grown, "0", testContext),
+            getPromiseVersion(prepended, "1", testContext),
+            getPromiseVersion(shifted, "0", testContext),
+            getPromiseVersion(popped, "0", testContext),
         ]
         expect(versions.every(Boolean)).to.be(true)
         expect(new Set(versions).size).to.be(versions.length)
@@ -329,8 +330,8 @@ describe("ArrayView", () => {
         const derived = run(chain, [], "push", [], testContext, { repair: false })
 
         expect(
-            propertyVersions.getPromiseVersion(chain._state.value, "0", testContext) ===
-                propertyVersions.getPromiseVersion(derived, "0", testContext),
+            getPromiseVersion(chain._state.value, "0", testContext) ===
+                getPromiseVersion(derived, "0", testContext),
         ).to.be(false)
         assignPath(chain, ["0"], 9, testContext)
         pending.resolve(1)
@@ -411,8 +412,8 @@ describe("ArrayView", () => {
 
         run(new Chain(source, testContext), [], "shift", [], testContext, { repair: false })
         const retained = run(new Chain(source, testContext), [], "push", [2], testContext, { repair: false })
-        const sourceVersion = propertyVersions.getPromiseVersion(source, "0", testContext)
-        const retainedVersion = propertyVersions.getPromiseVersion(retained, "0", testContext)
+        const sourceVersion = getPromiseVersion(source, "0", testContext)
+        const retainedVersion = getPromiseVersion(retained, "0", testContext)
 
         expect(sourceVersion).to.be.ok()
         expect(retainedVersion).to.be.ok()

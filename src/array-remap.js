@@ -3,7 +3,7 @@
 // Remaps store PropertyPlacement references, not source indexes; new values are
 // stored directly and missing entries are holes. Concat can combine sources.
 // Publication captures and copies/transfers source versions to the destination;
-// ArrayRangeRemap offsets its entries by the destination start index.
+// Range writes offset their entries by the destination start index.
 
 import { ArrayView } from "./array-view.js"
 import { defineCopyProperty } from "./placement-structure.js"
@@ -19,59 +19,47 @@ import { PlacementConstruction } from "./parent-placements.js"
 // A controlled range write carries only the selected replacement placements.
 // Exclusive storage preserves its old range in a view before writing; shared
 // or constrained representations use ordinary private materialization.
-class ArrayRangeRemap {
-    constructor(start, entries, length) {
-        this.start = start
-        this.entries = entries
-        this.length = length
-    }
-
-    createOutput(work) {
-        const { receiver, operationContext } = work
-        const { start, entries, length } = this
-        // Consume the carrier before fallible construction. Saved Error frames
-        // may retain this remap, but must not keep its selected values alive.
-        this.entries = undefined
-        // Overlapping copies select every source version before the first write.
-        for (const key of Object.keys(entries))
-            if (propertyVersions.isPropertyPlacement(entries[key])) entries[key].ensureCaptured()
-        const end = start + entries.length
-        const meta = metadata.requireMeta(receiver, operationContext)
-        const canShare = work.mutation && work.preserveReceiverBaseline &&
-            !Object.keys(meta.placementVersions ?? {}).length &&
-            (!meta.backingRecord || meta.backingRecord.owners.size === 1)
-        if (canShare && work.preserveReceiverBaseline(source => {
-            if (metadata.requiresCopyOnWrite(source, operationContext)) return
-            for (let index = start; index < end; index++)
-                if (languageProperties.requiresRepresentationCopyForPropertyMutation(source, String(index),
-                    operationContext, languageProperties.PROPERTY_MUTATION_MODE.AssignOrDelete)) return
-            if (!ArrayView.tryShareStorage(source, operationContext)) return
-            return () => {
-                const snapshot = new ArrayView(source, operationContext, 0, length)
-                inheritIdentity(source, snapshot, operationContext)
-                return PlacementConstruction.initializeAndPublish(snapshot, operationContext, snapshot => {
-                    for (let index = start; index < end; index++) {
-                        const key = String(index)
-                        propertyVersions.copyPlacement(languageProperties.readLanguagePlacement(source, key, operationContext),
-                            snapshot, key, operationContext, false)
-                    }
-                })
-            }
-        })) {
-            for (let index = 0; index < entries.length; index++) {
-                const key = String(start + index)
-                if (Object.hasOwn(entries, index)) placeEntry(receiver, key, entries[index], operationContext)
-                else propertyVersions.deleteProperty(receiver, key, operationContext)
-            }
-            return receiver
+function createRangeOutput(start, entries, work) {
+    const { receiver, operationContext, arrayLength: length } = work
+    // Overlapping copies select every source version before the first write.
+    for (const key of Object.keys(entries))
+        if (propertyVersions.isPropertyPlacement(entries[key])) entries[key].ensureCaptured()
+    const end = start + entries.length
+    const meta = metadata.requireMeta(receiver, operationContext)
+    const canShare = work.mutation && work.preserveReceiverBaseline &&
+        !meta.outgoingPlacements?.size &&
+        (!meta.backingRecord || meta.backingRecord.owners.size === 1)
+    if (canShare && work.preserveReceiverBaseline(source => {
+        if (metadata.requiresCopyOnWrite(source, operationContext)) return
+        for (let index = start; index < end; index++)
+            if (languageProperties.requiresRepresentationCopyForPropertyMutation(source, String(index),
+                operationContext, languageProperties.PROPERTY_MUTATION_MODE.AssignOrDelete)) return
+        if (!ArrayView.tryShareStorage(source, operationContext)) return
+        return () => {
+            const snapshot = new ArrayView(source, operationContext, 0, length)
+            inheritIdentity(source, snapshot, operationContext)
+            return PlacementConstruction.initializeAndPublish(snapshot, operationContext, snapshot => {
+                for (let index = start; index < end; index++) {
+                    const key = String(index)
+                    propertyVersions.copyPlacement(languageProperties.readLanguagePlacement(source, key, operationContext),
+                        snapshot, key, operationContext, false)
+                }
+            })
         }
-        const remap = createRemap(receiver, operationContext, 0, length)
+    })) {
         for (let index = 0; index < entries.length; index++) {
-            if (Object.hasOwn(entries, index)) remap[start + index] = entries[index]
-            else delete remap[start + index]
+            const key = String(start + index)
+            if (Object.hasOwn(entries, index)) placeEntry(receiver, key, entries[index], operationContext)
+            else propertyVersions.deleteProperty(receiver, key, operationContext)
         }
-        return createArrayFromRemap(remap, operationContext)
+        return receiver
     }
+    const remap = createRemap(receiver, operationContext, 0, length)
+    for (let index = 0; index < entries.length; index++) {
+        if (Object.hasOwn(entries, index)) remap[start + index] = entries[index]
+        else delete remap[start + index]
+    }
+    return createArrayFromRemap(remap, operationContext)
 }
 
 // Fix presence without consuming values. Complete preparation supplies a guard
@@ -169,7 +157,7 @@ function resolveDenseRemapPresence(remap, operation) {
 }
 
 export {
-    ArrayRangeRemap,
+    createRangeOutput,
     createArrayFromRemap,
     createRemap,
     placeRemap,

@@ -1,3 +1,4 @@
+import { logicalVersionEntries } from "./verify-parents.js"
 import assert from 'node:assert/strict'
 import * as r from '../src/index.js'
 import { metaOf } from '../src/meta.js'
@@ -60,7 +61,7 @@ describe('shared Array backing producers', () => {
         }))
         const receiver = new r.Chain([], ctx)
         const output = new r.Chain(r.run(receiver, [], 'concat', [r.lookupPath(source, [], ctx)], ctx, {}), ctx)
-        assert(metaOf(producer(output, ctx), ctx).placementVersions['0'].transition)
+        assert(metaOf(producer(output, ctx), ctx).outgoingPlacements.get(String('0')).transition)
         const tail = new r.Chain(r.run(output, [], 'slice', [1, 2], ctx, {}), ctx)
         const prefix = new r.Chain(r.run(output, [], 'slice', [], ctx, {}), ctx)
         r.assignPath(receiver, ['length'], 0, ctx)
@@ -118,12 +119,12 @@ describe('shared Array backing producers', () => {
         const receiver = new r.Chain([], ctx)
         const output = new r.Chain(r.run(receiver, [], 'concat', [r.lookupPath(source, [], ctx)], ctx, {}), ctx)
         const record = producer(output, ctx)
-        const canonical = metaOf(record, ctx).placementVersions['0']
+        const canonical = metaOf(record, ctx).outgoingPlacements.get(String('0'))
         assert(canonical.transition)
         r.assignPath(receiver, [], null, ctx)
         const deletion = r.deletePath(output, ['0'], ctx)
         assert.equal(producer(output, ctx), record)
-        assert.equal(metaOf(record, ctx).placementVersions['0'], canonical)
+        assert.equal(metaOf(record, ctx).outgoingPlacements.get(String('0')), canonical)
         assert.equal([...ArrayView.backingVersions(output._state.value, 0, ctx)].some(([key]) => key === '0'), false)
         gate.resolve()
         await Promise.all([entry, deletion])
@@ -146,7 +147,7 @@ describe('shared Array backing producers', () => {
             assert.equal(r.lookupPath(chain, ['1'], ctx), undefined)
             assert.equal(r.lookupPath(chain, ['length'], ctx), 2)
             assert.deepEqual(r.export(chain, [], ctx), expected)
-            assert.equal(metaOf(chain._state.value, ctx).placementVersions['1'].present, false)
+            assert.equal(metaOf(chain._state.value, ctx).outgoingPlacements.get(String('1')).present, false)
             const received = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
             const copied = new r.Chain(r.run(received, [], 'slice', [], ctx, {}), ctx)
             assert.deepEqual(r.export(copied, [], ctx), expected)
@@ -162,7 +163,7 @@ describe('shared Array backing producers', () => {
         const chain = new r.Chain([0], ctx)
         r.run(chain, [], 'push', [input.promise], ctx, { mutationScopeDepth: 0 })
         const query = r.getErrors(chain, [], ctx)
-        const shared = metaOf(producer(chain, ctx), ctx).placementVersions['1']
+        const shared = metaOf(producer(chain, ctx), ctx).outgoingPlacements.get(String('1'))
         assert.equal(shared.counterProjections.size, 1)
         const mutation = r.assignPath(chain, ['1', 'n'], 2, ctx)
         assert.equal(shared.counterProjections, undefined)
@@ -190,7 +191,7 @@ describe('shared Array backing producers', () => {
         const earlier = new r.Chain(r.run(chain, [], 'slice', [], ctx, {}), ctx)
         buildRefIndex(chain._state.value, ctx)
         buildRefIndex(earlier._state.value, ctx)
-        const shared = metaOf(producer(chain, ctx), ctx).placementVersions['1']
+        const shared = metaOf(producer(chain, ctx), ctx).outgoingPlacements.get(String('1'))
         assert.equal(shared.counterProjections.size, 2)
         input.resolve({ n: 1 })
         await turn()
@@ -213,7 +214,7 @@ describe('shared Array backing producers', () => {
         assert.equal(r.hasError(chain, [], ctx), true)
         assert.equal(r.hasError(survivor, [], ctx), true)
         const departed = chain._state.value, live = survivor._state.value
-        const shared = metaOf(producer(chain, ctx), ctx).placementVersions['1']
+        const shared = metaOf(producer(chain, ctx), ctx).outgoingPlacements.get(String('1'))
         assert.equal(shared.counterProjections.size, 2)
         r.assignPath(chain, [], null, ctx)
         assert.equal(metaOf(departed, ctx).backingCounterVersions, undefined)
@@ -242,10 +243,10 @@ describe('shared Array backing producers', () => {
         if (pending) earlier = r.export(chain, [], ctx)
         else { input.resolve(value); await turn() }
         buildRefIndex(chain._state.value, ctx)
-        const shared = metaOf(record, ctx).placementVersions['1']
+        const shared = metaOf(record, ctx).outgoingPlacements.get(String('1'))
         assert(shared)
         r.assignPath(chain, ['1'], 7, ctx)
-        assert.equal(metaOf(record, ctx).placementVersions['1'], shared)
+        assert.equal(metaOf(record, ctx).outgoingPlacements.get(String('1')), shared)
         assert.equal(shared.counterProjections, undefined)
         assert.equal(metaOf(chain._state.value, ctx).backingCounterVersions, undefined)
         if (pending) {
@@ -259,7 +260,7 @@ describe('shared Array backing producers', () => {
         assert.equal(metaOf(record, ctx).relationshipsActive, false)
         assert.equal(metaOf(record, ctx).destination.owner, undefined)
         assert.equal(metaOf(value, ctx).relationshipsActive, false)
-        assert.equal(metaOf(record, ctx).placementVersions['1'], shared)
+        assert.equal(metaOf(record, ctx).outgoingPlacements.get(String('1')), shared)
     })
 
     it('retains one forward producer per backing slot through out-of-range owners and repeated overrides', async () => {
@@ -268,14 +269,14 @@ describe('shared Array backing producers', () => {
         const prefixes = Array.from({ length: 32 }, () => new r.Chain(r.run(chain, [], 'slice', [], ctx, {}), ctx))
         r.run(chain, [], 'push', [input.promise], ctx, { mutationScopeDepth: 0 })
         const record = producer(chain, ctx)
-        const shared = metaOf(record, ctx).placementVersions['1']
+        const shared = metaOf(record, ctx).outgoingPlacements.get(String('1'))
         buildRefIndex(chain._state.value, ctx)
         for (let index = 0; index < 32; index++) {
             r.assignPath(chain, ['1'], index, ctx)
             r.deletePath(chain, ['1'], ctx)
         }
-        assert.equal(metaOf(record, ctx).placementVersions['1'], shared)
-        assert.equal(Object.keys(metaOf(record, ctx).placementVersions).length, 1)
+        assert.equal(metaOf(record, ctx).outgoingPlacements.get(String('1')), shared)
+        assert.equal(logicalVersionEntries(metaOf(record, ctx)).length, 1)
         assert.equal(shared.counterProjections, undefined)
         r.assignPath(chain, [], null, ctx)
         input.resolve(value)
@@ -288,7 +289,7 @@ describe('shared Array backing producers', () => {
         assert.equal(metaOf(record, ctx).destination.owner, undefined)
         assert.equal(metaOf(value, ctx).relationshipsActive, false)
         assert.equal(metaOf(value, ctx).incomingParents, undefined)
-        assert.equal(metaOf(record, ctx).placementVersions['1'], shared)
+        assert.equal(metaOf(record, ctx).outgoingPlacements.get(String('1')), shared)
     })
 
     it('keeps producer presence through sparse concat without physical placeholder data', async () => {
@@ -299,7 +300,7 @@ describe('shared Array backing producers', () => {
         const receiver = new r.Chain([], ctx)
         const output = new r.Chain(r.run(receiver, [], 'concat', [r.lookupPath(input, [], ctx)], ctx, {}), ctx)
         const record = producer(output, ctx)
-        assert(metaOf(record, ctx).placementVersions['0'].pendingPresence)
+        assert(metaOf(record, ctx).outgoingPlacements.get(String('0')).pendingPresence)
         buildRefIndex(output._state.value, ctx)
         const exported = r.export(output, [], ctx)
         release.resolve()

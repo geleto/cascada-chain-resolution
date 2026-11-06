@@ -49,7 +49,7 @@ class LengthState {
     }
 
     append(node) {
-        if (node.question) this.retain()
+        if (node.deliver) this.retain()
         node.state = this
         node.previous = this.tail
         if (this.tail) this.tail.next = node
@@ -85,7 +85,7 @@ class LengthState {
         else this.tail = node.previous
         node.source?.consumers.delete(this.outcomes)
         node.state = node.previous = node.next = undefined
-        if (node.question) this.release()
+        if (node.deliver) this.release()
     }
 
     releaseQuestion(node) {
@@ -146,11 +146,11 @@ class LengthState {
             maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
             node.minimum = minimum
             node.maximum = maximum
-            if (node.question) {
+            if (node.deliver) {
                 const answer = LengthState.lengthAnswer(minimum, maximum, node.index)
                 if (answer !== undefined) {
                     const deliver = node.deliver
-                    if (deliver) ready.push(() => deliver(answer))
+                    ready.push(() => deliver(answer))
                     this.remove(node)
                 }
             } else this.compact(node)
@@ -161,10 +161,10 @@ class LengthState {
     }
 
     compact(node) {
-        if (!node || node.source || node.question) return
+        if (!node || node.source || node.deliver) return
         // Later growth can subsume earlier contributions, but an intervening
         // question still observes its own prefix without that growth.
-        while (node.previous && !node.previous.question &&
+        while (node.previous && !node.previous.deliver &&
             (node.previous.source?.bound ?? node.previous.value) <= node.value)
             this.remove(node.previous)
         if (node.value <= (node.previous?.minimum ?? this.baseline)) {
@@ -189,7 +189,7 @@ class LengthState {
         if (answer !== undefined) return answer
         const { promise, resolve } = Promise.withResolvers()
         let unregister
-        const node = this.append({ question: true, index, deliver(value) {
+        const node = this.append({ index, deliver(value) {
             answer = value
             release()
             resolve(value)
@@ -208,7 +208,7 @@ class LengthState {
         const copy = new LengthState(this.baseline)
         for (let node = this.head; node; node = node.next) {
             if (node.source) copy.append({ source: node.source })
-            else if (!node.question) copy.compact(copy.append({ value: node.value }))
+            else if (!node.deliver) copy.compact(copy.append({ value: node.value }))
         }
         return copy
     }

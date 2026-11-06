@@ -3,6 +3,7 @@ import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import { ArrayView } from "./array-view.js"
+import { getOwnPlacementVersion } from "./property-versions.js"
 
 const COUNT_FIELDS = ["frontierCount", "errorCount"]
 
@@ -74,7 +75,7 @@ function buildRefIndex(value, operationContext) {
         active.add(node)
         for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
             const child = languageProperties.readLanguageProperty(node, key, operationContext)
-            const backingVersion = !metadata.requireMeta(node, operationContext).placementVersions?.[key] &&
+            const backingVersion = !getOwnPlacementVersion(node, key, operationContext) &&
                 ArrayView.backingVersion(node, key, operationContext)
             if (backingVersion) backingUses.push([key, backingVersion])
             if (languageValues.isPending(child, operationContext))
@@ -149,7 +150,7 @@ function prepareCounterUpdate(
     const ownerMeta = metadata.metaOf(owner, operationContext)
     if (ownerMeta?.backingOwners) {
         const updates = []
-        const version = ownerMeta.placementVersions?.[key]
+        const version = getOwnPlacementVersion(owner, key, operationContext)
         for (const [parent, logicalKey] of version?.counterProjections ?? []) {
             const update = prepareCounterUpdate(parent, logicalKey, before, value, operationContext)
             if (update) updates.push(update)
@@ -158,7 +159,7 @@ function prepareCounterUpdate(
     }
     const counter = getRefCounter(owner, operationContext)
     if (!counter) return
-    const backingVersion = !metadata.requireMeta(owner, operationContext).placementVersions?.[key] &&
+    const backingVersion = !getOwnPlacementVersion(owner, key, operationContext) &&
         ArrayView.backingVersion(owner, key, operationContext)
     const cycleCut = prepareRefEdge(
         owner,
@@ -173,7 +174,7 @@ function prepareCounterUpdate(
     )
     const nextState = getValueRefState(value, operationContext, cycleCut)
     return () => {
-        if (backingVersion && (metadata.requireMeta(owner, operationContext).placementVersions?.[key] ||
+        if (backingVersion && (getOwnPlacementVersion(owner, key, operationContext) ||
             ArrayView.backingVersion(owner, key, operationContext) !== backingVersion))
             releaseBackingCounter(backingVersion, owner, operationContext)
         updateCycleCut(counter, key, cycleCut)
@@ -198,6 +199,15 @@ function releaseBackingCounter(version, owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
     meta.backingCounterVersions?.delete(version)
     if (!meta.backingCounterVersions?.size) delete meta.backingCounterVersions
+}
+
+function retireRefIndex(owner, operationContext) {
+    const meta = metadata.requireMeta(owner, operationContext)
+    for (const parents of meta.counterChildren ?? []) parents.delete(owner)
+    for (const version of meta.backingCounterVersions ?? [])
+        releaseBackingCounter(version, owner, operationContext)
+    for (const field of ["parents", "frontierCount", "errorCount", "cycleCuts", "counterChildren"])
+        delete meta[field]
 }
 
 function addParentCounterEdge(counter, parent, operationContext) {
@@ -258,4 +268,5 @@ export {
     getRequiredRefCounter,
     indexValueIfSourceIndexed,
     prepareCounterUpdate,
+    retireRefIndex,
 }

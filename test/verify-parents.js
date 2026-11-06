@@ -4,6 +4,10 @@ import * as errors from "../src/error.js"
 
 // Read forward storage independently, without normalizing values, subscribing,
 // or borrowing the preparer's key filter. Versions override projected storage.
+function logicalVersionEntries(meta) {
+    return [...(meta?.outgoingPlacements ?? [])].filter(([, placement]) => placement.present !== undefined)
+}
+
 function logicalPlacements(owner, context) {
     const meta = metadata.metaOf(owner, context)
     const array = meta.type === metadata.TYPE.Array
@@ -26,14 +30,14 @@ function logicalPlacements(owner, context) {
     }
     if (array) {
         const record = metadata.metaOf(view?.backing ?? owner, context)?.arrayBacking?.producers
-        for (const [physical, version] of Object.entries(metadata.metaOf(record, context)?.placementVersions ?? {})) {
+        for (const [physical, version] of logicalVersionEntries(metadata.metaOf(record, context))) {
             const index = Number(physical) - offset
             if (index < 0 || length !== undefined && index >= length) continue
             if (version.present === false) placements.delete(String(index))
             else placements.set(String(index), version.value)
         }
     }
-    for (const [key, version] of Object.entries(meta.placementVersions ?? {})) {
+    for (const [key, version] of logicalVersionEntries(meta)) {
         if (version.present === false) placements.delete(key)
         else placements.set(key, version.value)
     }
@@ -42,13 +46,14 @@ function logicalPlacements(owner, context) {
 
 function logicalVersion(owner, key, context) {
     const meta = metadata.metaOf(owner, context)
-    if (meta.placementVersions?.[key]) return meta.placementVersions[key]
+    const own = meta.outgoingPlacements?.get(String(key))
+    if (own?.present !== undefined) return own
     if (meta.type !== metadata.TYPE.Array) return
     const range = meta.arrayRange
     const index = Number(key)
     if (range && index >= (range.lengthState.minimum ?? range.lengthState)) return
     const record = metadata.metaOf(range?.backing ?? owner, context)?.arrayBacking?.producers
-    return metadata.metaOf(record, context)?.placementVersions?.[index + (range?.start ?? 0)]
+    return metadata.metaOf(record, context)?.outgoingPlacements?.get(String(index + (range?.start ?? 0)))
 }
 
 function verifyParents(context, ...roots) {
@@ -88,7 +93,7 @@ function verifyParents(context, ...roots) {
                 (registeredMeta.arrayRange?.backing ?? registered) !== array)
                 fail("Invalid Array backing owner")
         }
-        for (const version of Object.values(metadata.metaOf(record?.producers, context)?.placementVersions ?? {})) {
+        for (const version of logicalVersionEntries(metadata.metaOf(record?.producers, context)).map(([, version]) => version)) {
             for (const [owner, key] of version.counterProjections ?? []) {
                 const state = metadata.metaOf(owner, context)
                 if (!state?.relationshipsActive || !state.parents ||
@@ -151,7 +156,7 @@ function verifyParents(context, ...roots) {
                     source.backing.producers !== source)
                     fail("Incoming backing producer has no active owner")
                 for (const index of indexes) {
-                    const version = sourceMeta.placementVersions?.[index]
+                    const version = sourceMeta.outgoingPlacements?.get(String(index))
                     if (!version || version.present === false || version.value !== node)
                         fail("Backing producer does not hold its child")
                 }
@@ -210,4 +215,4 @@ function verifyLiveness(context, nodes, expectedLive) {
     verifyParents(context, ...nodes)
 }
 
-export { verifyParents, verifyLiveness, logicalPlacements }
+export { verifyParents, verifyLiveness, logicalPlacements, logicalVersionEntries }

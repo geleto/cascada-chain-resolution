@@ -2,7 +2,6 @@ import * as errors from "./error.js"
 import * as steps from "./internal-step.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { TREE_NODE } from "./external-mutation-tree.js"
-import { isPending } from "./language-values.js"
 
 const EMPTY = 0, ERROR = 1, PAIR = 2, PENDING = 3, FORWARD = 4
 const LEFT = 0, RIGHT = 1
@@ -112,14 +111,15 @@ function publish(future, value) {
 function consume(state, owner, onReady) {
     state = resolved(state)
     if (state.kind !== PENDING) return onReady(state)
-    let captured = state
     const signal = state.signal ??= pendingSignal()
-    const unregister = releaseOnClose(owner, () => { captured = undefined })
+    const unregister = releaseOnClose(owner, () => { state = onReady = undefined })
     return steps.continueGraphTransition(signal.promise, owner.operationContext, () => {
-        const value = captured
-        captured = undefined
+        const value = resolved(state)
+        const receive = onReady
+        state = onReady = undefined
         unregister?.()
-        return consume(value, owner, onReady)
+        // Signals move with pending aliases and wake only at final publication.
+        return receive(value)
     }, undefined, owner)
 }
 
@@ -290,23 +290,17 @@ class MetadataCapture {
     collect(node, found, includeSelected = true, subtree = true) {
         if (!node) return
         this.advance(node)
+        const { owner } = this
         let state = !includeSelected ? empty : subtree ? this.state : field(this.state, LEFT)
-        let ancestors = [...this.ancestors], unregister
-        const complete = () => {
-            state = ancestors = found = undefined
-            unregister?.()
-            unregister = undefined
+        let ancestors = [...this.ancestors]
+        const scan = (index, own = empty) => {
+            if (own.kind !== ERROR && index < ancestors.length)
+                return consume(ancestors[index], owner, own => scan(index + 1, own))
+            try {
+                return own.kind === ERROR ? found(own.error) : collect(state, owner, found)
+            } finally { state = ancestors = found = undefined }
         }
-        const scan = index => {
-            if (index === ancestors.length) return collect(state, this.owner, found)
-            return consume(ancestors[index], this.owner, own => own.kind === ERROR ? found(own.error) : scan(index + 1))
-        }
-        const result = scan(0)
-        if (isPending(result, this.owner.operationContext)) unregister = releaseOnClose(this.owner, complete)
-        return steps.continueGraphTransition(result, this.owner.operationContext, value => {
-            complete()
-            return value
-        })
+        return scan(0)
     }
     mutation(node) {
         const mutation = nativeMutation(select(this.state, route(node, this.store.root)))

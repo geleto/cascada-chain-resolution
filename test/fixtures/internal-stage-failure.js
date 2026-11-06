@@ -9,7 +9,7 @@ const sites = {
     indexing: ["refcounts.js", "function buildRefIndex(value, operationContext) {"],
     publication: ["parent-placements.js", "function recordLogicalPlacement(owner, key, before, after, operationContext, wasOverlay) {"],
     copying: ["placement-structure.js", "function createEmptyContainer(source, operationContext) {"],
-    assembly: ["captured-graph.js", "function assembleCapturedGraph(capture, initializeCopy) {"],
+    assembly: ["managed-capture.js", "function assembleCapturedGraph(capture, initializeCopy) {"],
     length: ["array-view.js", "static captureLength(array, operationContext, owner) {"],
     remap: ["array-remap.js", "function createArrayFromRemap(\n    remap,\n    operationContext,\n    refIndexSource = undefined,\n) {"],
     isolation: ["mutations.js", "function shallowCopyPathContainer(source, operationContext) {"],

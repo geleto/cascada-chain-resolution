@@ -7,7 +7,7 @@ const shells = []
 let definitions = 0
 globalThis.captureExportShell = value => { shells.push(new WeakRef(value)); return value }
 globalThis.countExportDefinition = () => { definitions++ }
-const exportURL = new URL("../../src/captured-graph.js", import.meta.url).href
+const exportURL = new URL("../../src/managed-capture.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     if (normalizeModuleURL(url) !== normalizeModuleURL(exportURL)) return result
@@ -80,7 +80,7 @@ for (const before of [false, true]) for (const reject of [false, true]) {
         ownKeys(value) { inspections++; return Reflect.ownKeys(value) },
         getOwnPropertyDescriptor(value, key) { inspections++; return Reflect.getOwnPropertyDescriptor(value, key) },
     })
-    const holder = new r.ContextChain(source, ctx), version = metaOf(source, ctx).placementVersions.waiting
+    const holder = new r.ContextChain(source, ctx), version = metaOf(source, ctx).outgoingPlacements.get("waiting")
     const outcome = reject ? new Error("expected") : { k: 7 }
     if (before) { pending[reject ? "reject" : "resolve"](outcome); await version.publication }
     r.assignPath(holder, [], null, ctx)
@@ -248,7 +248,7 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
         assert.equal(metaOf(prefix._state.value, ctx).arrayRange.backing, backing)
         assert.equal(r.hasError(chain, [], ctx), true)
         const producer = metaOf(backing, ctx).arrayBacking.producers
-        assert(metaOf(producer, ctx).placementVersions["1"].counterProjections.has(view))
+        assert(metaOf(producer, ctx).outgoingPlacements.get(String("1")).counterProjections.has(view))
         return { ctx, input, chain, prefix, view: new WeakRef(view), backing: new WeakRef(backing) }
     }
     const state = issueIndexedOwner()

@@ -42,10 +42,11 @@ function shallowCopyPathContainer(source, operationContext) {
     return destination
 }
 
-function createMutationOutcome(mutatedValue, result, operationContext, published = true) {
+function createMutationOutcome(value, result, operationContext, published = true) {
     const publication = createLeaseLedger(operationContext)
-    publication.acquire(mutatedValue)
-    return { mutatedValue, result, published, releasePublication: publication.release }
+    publication.acquire(value)
+    return { placement: { value, present: true }, result, published,
+        failed: errorUtils.isPoisonError(value), releasePublication: publication.release }
 }
 
 function transformProperty(target, operationContext, transform, { replace = false, repair = false, consumeRestored = false, beforeWait } = {}) {
@@ -67,7 +68,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
         placement = undefined
         if (!replace && errorUtils.isPoisonError(baseline.value)) {
             if (!repair || !baseline.recovery)
-                return { mutatedValue: baseline.value, result: baseline.value, placement: baseline, published: false }
+                return { placement: baseline, result: baseline.value, published: false }
             baseline = baseline.recovery
             // Repair alone republishes the captured baseline without consuming
             // it. A consuming mutation needs its ready value and baseline lease
@@ -76,7 +77,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
                 baseline = restored
                 restored = undefined
                 if (errorUtils.isPoisonError(baseline.value))
-                    return { mutatedValue: baseline.value, result: baseline.value, placement: baseline, published: true }
+                    return { placement: baseline, result: baseline.value, published: true }
                 return applyCurrent()
             })
         }
@@ -102,7 +103,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
     if (errorUtils.isPoisonError(failure)) {
         if (!repair) target.replaceReceiver(failure)
         return internalSteps.continueGraphTransition(readiness, operationContext, outcome => finish({
-            mutatedValue: failure, result: includePublicationFailure(outcome.result, failure, operationContext),
+            placement: { value: failure, present: true }, result: includePublicationFailure(outcome.result, failure, operationContext),
         }))
     }
     // Publication finishes this transition. A restored or assigned Promise is
@@ -132,11 +133,16 @@ function transformProperty(target, operationContext, transform, { replace = fals
 
     function normalize(outcome) {
         releasePublication = outcome.releasePublication
-        if (errorUtils.isPoisonError(outcome)) outcome = { mutatedValue: outcome, result: outcome }
-        if (!outcome.placement && errorUtils.isPoisonError(outcome.mutatedValue)) {
-            outcome.placement = { value: outcome.mutatedValue, present: true, recovery: baseline }
+        if (errorUtils.isPoisonError(outcome))
+            outcome = { placement: { value: outcome, present: true }, result: outcome, failed: true }
+        // Stored poison is valid assignment data. Only this operation's own
+        // failure replaces the selected scope and creates a recovery baseline.
+        if (outcome.failed) {
+            outcome.placement = { value: outcome.placement.value, present: true, recovery: baseline }
             outcome.published = true
         }
+        delete outcome.failed
+        if (outcome.published === false) outcome.placement = baseline
         return outcome
     }
     function publish(outcome) {
@@ -144,8 +150,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
         try {
             // A blocked repair can select the original poison and recovery intact;
             // a successful repair selects the unwrapped baseline instead.
-            placement = outcome.published === false ? baseline :
-                outcome.placement ?? { value: outcome.mutatedValue, present: true }
+            placement = outcome.placement
             let published = baseline !== originalPlacement && placement !== originalPlacement
                 ? true : outcome.published ?? placement !== originalPlacement
             // Result holders and assigned inputs are different placements. Only
@@ -163,7 +168,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
             if (errorUtils.isPoisonError(failure)) {
                 const poison = propertyVersions.combinePublicationErrors(placement.value, failure)
                 const restoring = repair && (placement === baseline || placement === originalPlacement)
-                outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
+                outcome = { placement: { value: poison, present: true }, result: includePublicationFailure(outcome.result, poison, operationContext) }
                 if (restoring) {
                     published = false
                     // A failed repair leaves the original poison and recovery intact.
@@ -187,7 +192,9 @@ function transformProperty(target, operationContext, transform, { replace = fals
         releasePublication?.()
         if (leased) metadata.decrementReadLease(baseline.value, operationContext)
         target = parent = transform = baseline = originalPlacement = gate = releasePublication = beforeWait = undefined
-        return { mutatedValue: outcome.mutatedValue, result: outcome.result }
+        delete outcome.releasePublication
+        delete outcome.published
+        return outcome
     }
 }
 
@@ -200,12 +207,6 @@ function includePublicationFailure(result, publishedValue, operationContext) {
         operationContext,
         value => propertyVersions.combinePublicationErrors(value, publishedValue),
     )
-}
-
-function captureMutationResult(scope, result, operationContext) {
-    const placement = propertyVersions.capturePlacement(scope.holder, "value", operationContext)
-    scope.publication.finish()
-    return { mutatedValue: placement.value, placement, result, published: scope.publication.outcome() }
 }
 
 // Path failure replaces a placement with new poison, preserving the same
@@ -265,12 +266,12 @@ function walkMutationPath(
     function includePathFailure(failure) {
         return internalSteps.continueGraphTransition(operationResult, operationContext, outcome =>
             outcome && !errorUtils.isPoisonError(outcome)
-                ? { mutatedValue: failure, result: includePublicationFailure(outcome.result, failure, operationContext) }
+                ? { placement: { value: failure, present: true }, result: includePublicationFailure(outcome.result, failure, operationContext) }
                 : includePublicationFailure(outcome, failure, operationContext))
     }
 
     function combinePathFailure(failure) {
-        return propertyVersions.combinePublicationErrors(publicationValue, operationResult?.mutatedValue, failure)
+        return propertyVersions.combinePublicationErrors(publicationValue, operationResult?.placement?.value, failure)
     }
 
     function fail(writeBack, failure) {
@@ -398,7 +399,7 @@ function walkMutationPath(
         if (atTarget && deletesTarget && languageValues.isTraversable(value, operationContext) &&
             languageProperties.classifyLanguageProperty(value, key, operationContext) === languageProperties.ORDINARY_PROPERTY &&
             !languageProperties.hasLanguageProperty(value, key, operationContext))
-            return complete(writeBack, value, { mutatedValue: undefined, result: undefined })
+            return complete(writeBack, value, { result: undefined })
         if (atTarget) pathSelectionComplete = true
         const propertyKind = languageProperties.classifyLanguageProperty(
             value,
@@ -459,13 +460,12 @@ function walkMutationPath(
             }, writeBack)
         }
 
-        const { value: capturedValue, present } = languageProperties.readLanguagePlacement(parent, key, operationContext)
+        const { value: capturedValue, present, sourceVersion: source } = languageProperties.readLanguagePlacement(parent, key, operationContext)
         const child = present ? capturedValue : undefined
         if (languageValues.isPending(child, operationContext)) {
             beforeWait?.()
             // Native selection captures managed state; its external reservation
             // owns ordering. Only managed mutation installs a publication version.
-            const source = propertyVersions.requirePromiseVersion(parent, key, operationContext)
             const onValue = (propertyValue, promiseVersion, structure) => {
                 const result = walk(
                     propertyValue,
@@ -565,7 +565,6 @@ function walkMutationPath(
 
 export {
     createMutationOutcome,
-    captureMutationResult,
     transformProperty,
     walkMutationPath,
     shallowCopyPathContainer,

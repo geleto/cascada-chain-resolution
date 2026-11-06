@@ -1,20 +1,17 @@
 // Count range-key production, independently of time or garbage collection.
 import assert from "node:assert/strict"
-import { registerHooks } from "node:module"
+import { instrumentRuntime } from "../runtime-transform.js"
 
 let produced = 0
 globalThis.countRangeKey = () => produced++
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context)
-    if (!url.endsWith("/src/array-view.js")) return loaded
-    const source = String(loaded.source)
-    // Match both streamed and formerly eager bounded-range enumeration.
-    const marker = /(yield |keys\.push\()String\(index(?: - offset)?\)/g
-    assert(marker.test(source), "Range-key counter needs updating")
-    return { ...loaded, source: source.replace(marker, (match, prefix) =>
-        `${prefix}(globalThis.countRangeKey(), ${match.slice(prefix.length)})`) }
-} })
+// Match both streamed and formerly eager bounded-range enumeration so the
+// existing safeguard fault still measures the work it restores.
+const verifyInstrumentation = instrumentRuntime(new Map([["array-view.js", [[
+    /(yield |keys\.push\()String\(index(?: - offset)?\)/g,
+    (match, prefix) => `${prefix}(globalThis.countRangeKey(), ${match.slice(prefix.length)})`,
+]]]]))
 const r = await import("../../src/index.js")
+verifyInstrumentation("Range-key instrumentation must execute")
 const { enumerableLanguageKeyCandidates } = await import("../../src/language-properties.js")
 const { verifyRefCounts } = await import("../verify-refcounts.js")
 const samples = []

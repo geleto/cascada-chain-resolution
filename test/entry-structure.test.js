@@ -1,3 +1,4 @@
+import { logicalVersionEntries } from "./verify-parents.js"
 import { lengthNotificationCount } from "./support.js"
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
@@ -300,11 +301,11 @@ describe("entry structural publication", () => {
         for (let round = 0; round < 4; round++) {
             for (let index = 0; index < 64; index++) r.enter(chain, [index], ctx, true,
                 inside => r.assignPath(inside, [], index, ctx))
-            const versions = Object.values(metaOf(chain._state.value, ctx).placementVersions ?? {})
+            const versions = logicalVersionEntries(metaOf(chain._state.value, ctx)).map(([, version]) => version)
             assert(versions.length <= 64)
             assert(versions.every(version => !version.publication && !version.transition))
             for (let index = 0; index < 64; index++) r.deletePath(chain, [index], ctx)
-            assert.equal(Object.keys(metaOf(chain._state.value, ctx).placementVersions ?? {}).length, 0)
+            assert.equal(logicalVersionEntries(metaOf(chain._state.value, ctx)).length, 0)
             assert.deepEqual(r.export(chain, [], ctx), new Array(64))
             verifyRefCounts(ctx, chain._state)
         }

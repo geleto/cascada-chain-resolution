@@ -148,7 +148,7 @@ describe("getErrors", () => {
             await flushMicrotasks()
 
             expect(scans).to.be(3)
-            expect(metaOf(value, testContext).placementVersions.inner.value)
+            expect(metaOf(value, testContext).outgoingPlacements.get("inner").value)
                 .to.eql({
                 ready: true,
             })
@@ -978,7 +978,7 @@ describe("getErrors", () => {
         expect(readPath(new Chain(sealed, testContext), ["pending"], testContext)).to.be(
             errors,
         )
-        expect(metaOf(sealed, testContext).placementVersions.pending).not.to.be(undefined)
+        expect(metaOf(sealed, testContext).outgoingPlacements.get("pending")).not.to.be(undefined)
         expect(getRefCounter(sealed, testContext)).to.be(undefined)
     })
 

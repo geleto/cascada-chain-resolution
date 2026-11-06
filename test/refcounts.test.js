@@ -1,3 +1,4 @@
+import { logicalVersionEntries } from "./verify-parents.js"
 import { poison } from "./support.js"
 import {
     Chain,
@@ -272,7 +273,7 @@ describe("graph presence summaries", () => {
         expect(next).not.to.be(root)
         expect(next.value).to.be(replacement)
         expect(root.value).to.be("original")
-        expect(metaOf(root, testContext).placementVersions).to.be(undefined)
+        expect(logicalVersionEntries(metaOf(root, testContext))).to.eql([])
         expectCounts(testContext, root, 0, 0)
         expectCounts(testContext, next, 0, 0)
         verifyRefCounts(testContext, root, next)
@@ -708,7 +709,7 @@ describe("graph presence summaries", () => {
         new Chain(overlaid, testContext)
         buildRefIndex(overlaid, testContext)
         const unindexed = new Chain({}, testContext)._state.value
-        metaOf(overlaid, testContext).placementVersions.pending.value = unindexed
+        metaOf(overlaid, testContext).outgoingPlacements.get("pending").value = unindexed
         expect(thrownBy(() => verifyRefCounts(testContext, overlaid)).message).to.be(
             "Missing incoming parent placement",
         )
@@ -927,7 +928,7 @@ describe("graph presence summaries", () => {
         const chain = new Chain(root, testContext)
 
         buildRefIndex(root, testContext)
-        const promiseVersion = metaOf(root, testContext).placementVersions.value
+        const promiseVersion = metaOf(root, testContext).outgoingPlacements.get("value")
         assignPath(chain, ["value"], "fixed", testContext)
 
         outer.resolve(resolved)

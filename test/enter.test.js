@@ -1095,7 +1095,7 @@ describe("enter", () => {
             true,
             privateChain => {
                 entered = privateChain
-                gate = metaOf(root, testContext).placementVersions.ancestor.value
+                gate = metaOf(root, testContext).outgoingPlacements.get("ancestor").value
                 return ancestor.promise.then(() => { throw failure })
             },
         )
@@ -1119,7 +1119,7 @@ describe("enter", () => {
         })
         await flushMicrotasks()
         expect(gateSettled).to.be(false)
-        expect(metaOf(root, testContext).placementVersions.ancestor.value).to.be(gate)
+        expect(metaOf(root, testContext).outgoingPlacements.get("ancestor").value).to.be(gate)
     })
 
     it("does not clean up a read entry after fatal callback rejection", async () => {
@@ -1309,11 +1309,11 @@ describe("enter", () => {
         ))
         expect(errorCause(failureResult)).to.be(failure)
 
-        const gate = metaOf(root, testContext).placementVersions.target.value
+        const gate = metaOf(root, testContext).outgoingPlacements.get("target").value
         expect(gate instanceof Promise).to.be(true)
         expect(entered._closed).not.to.be(true)
         await flushMicrotasks()
-        expect(metaOf(root, testContext).placementVersions.target.value).to.be(gate)
+        expect(metaOf(root, testContext).outgoingPlacements.get("target").value).to.be(gate)
     })
 
     it("abandons a rejected asynchronous mutation without publication", async () => {

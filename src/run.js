@@ -1,12 +1,10 @@
 import * as arrayInvocation from "./array-invocation.js"
 import * as errorUtils from "./error.js"
-import * as internalSteps from "./internal-step.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as managedInvocation from "./managed-invocation.js"
 import {
-    captureMutationResult,
     transformProperty,
     walkMutationPath,
 } from "./mutations.js"
@@ -29,10 +27,7 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
             if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
             return operation.mutate((scope, state, working, start) => {
                 if (start === operation.route.path.length) return invokeMutation(scope, state)
-                const outcome = runMutation(working, start, operation, invokeMutation)
-                return internalSteps.continueGraphTransition(outcome, operationContext, outcome =>
-                    errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
-                        ? outcome : captureMutationResult(working, outcome.result, operationContext))
+                return runMutation(working, start, operation, invokeMutation)
             })
         },
         delivery,

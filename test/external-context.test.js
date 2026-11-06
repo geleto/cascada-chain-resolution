@@ -587,7 +587,7 @@ describe("direct context authority discovery", () => {
                         runtime.import(root, ctx)
                         source.resolve()
                         await flushMicrotasks()
-                        assert.equal(ctx.execution._metadata.get(root).placementVersions.indirect.value, delivered)
+                        assert.equal(ctx.execution._metadata.get(root).outgoingPlacements.get("indirect").value, delivered)
                     }
                     const subscriptions = source.value.subscriptions
                     const request = Object.fromEntries(entries.map(([key]) => [key, { resource: {} }]))

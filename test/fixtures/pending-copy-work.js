@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
-import { normalizeModuleURL } from '../module-url.js'
+import { instrumentRuntime } from '../runtime-transform.js'
 
 const reportOnly = process.argv.includes('--report-only')
 const disabled = process.argv.includes('--no-op-loader')
-let counts, substitutions = 0
+let counts
 globalThis.pendingCopyWorkCounts = () => counts
 globalThis.CountedCopyUses = class extends Set {
     add(use) {
@@ -34,22 +33,9 @@ const changes = new Map([
             'globalThis.pendingCopyWorkCounts().subscriptions++; $&'],
     ]],
 ])
-const root = normalizeModuleURL(new URL('../../src/', import.meta.url).href)
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context), normalized = normalizeModuleURL(url)
-    if (disabled || !normalized.startsWith(root)) return loaded
-    const replacements = changes.get(normalized.slice(root.length))
-    if (!replacements) return loaded
-    let source = String(loaded.source).replaceAll('\r\n', '\n')
-    for (const [anchor, replacement] of replacements) {
-        assert.equal(source.split(anchor).length - 1, 1, `Pending-copy counter anchor: ${anchor}`)
-        source = source.replace(anchor, replacement)
-        substitutions++
-    }
-    return { ...loaded, source }
-} })
+const verifyInstrumentation = instrumentRuntime(changes, !disabled)
 const r = await import('../../src/index.js')
-assert.equal(substitutions, 4, 'Pending-copy counter loader must execute every substitution')
+verifyInstrumentation('Pending-copy counter loader must execute every substitution')
 const { OrderedThenable } = await import('../ordered-thenable.js')
 const { verifyRefCounts } = await import('../verify-refcounts.js')
 const samples = []

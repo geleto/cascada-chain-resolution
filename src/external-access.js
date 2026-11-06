@@ -7,7 +7,7 @@ import * as metadata from "./meta.js"
 import { exportValue } from "./export.js"
 import { externalCapabilityEscapeError, validateExternalAccess } from "./external-operation.js"
 import { captureExternalValue, snapshotExternalValue } from "./external-snapshot.js"
-import { readCallableThen } from "./thenable-subscription.js"
+import { mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 import { walkObservationValue } from "./path-operation.js"
 import { consumeSegment } from "./path-context.js"
 
@@ -69,7 +69,7 @@ class ExternalAccess {
                     undefined, this.boundary ? receiver : undefined)
                 capture(imported)
                 return this.operation.mutation ? {
-                    mutatedValue: receiver,
+                    placement: { value: receiver, present: true },
                     result: imported,
                 } : imported
             } finally { receiver = undefined }
@@ -116,7 +116,7 @@ class ExternalAccess {
             const changed = this.native(kind, () => deleting
                 ? Reflect.deleteProperty(receiver, key) : Reflect.set(receiver, key, value))
             if (errors.isPoisonError(changed)) return changed
-            return changed ? { mutatedValue: this.identity, result: undefined } : errors.validationError(
+            return changed ? { placement: { value: this.identity, present: true }, result: undefined } : errors.validationError(
                 deleting ? "External property deletion was refused" : "External property assignment was refused",
                 this.operationContext, kind)
         }
@@ -252,7 +252,7 @@ class ExternalAccess {
     }
     requireReady(value) {
         try {
-            if (value === null || typeof value !== "object" || Error.isError(value) || metadata.metaOf(value, this.operationContext)) return undefined
+            if (!mayBeThenable(value, this.operationContext)) return undefined
             const thenable = errors.catchExternalThrow(
                 () => readCallableThen(value, this.operationContext),
                 this.operationContext,

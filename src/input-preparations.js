@@ -55,9 +55,11 @@ function prepareInput(
     // Pending segments share failed inspections without retaining their sources.
     inspectionFailures ??= new WeakMap()
     let failure
-    let resultErrors = policy.methodResult ? failures?.errors ?? new Set() : undefined
-    const admissions = new Map()
-    const containers = new Map()
+    let resultErrors = failures ?? (policy.receiverIdentity ? new Set() : undefined)
+    // Category facts and unfinished topology belong to the same transactional
+    // identity. A failed container keeps its facts for authority discovery but
+    // contributes neither admission nor topology at commit.
+    const staged = new Map()
     const registrations = externalMutationTreeSetup ? new Set() : undefined
     let value
     try {
@@ -74,11 +76,11 @@ function prepareInput(
                     // classification, including failure, at its existing turn.
                     const facts = inspectionFailures.get(identity) ??
                         metadata.inspectAdmissionMetaFacts(identity, operationContext)
-                    if (facts.type === metadata.TYPE.External) admissions.set(identity, facts)
+                    if (facts.type === metadata.TYPE.External) staged.set(identity, { facts })
                     return facts
                 },
                 (owner, key) => {
-                    const container = containers.get(owner)
+                    const container = staged.get(owner)?.container
                     if (container?.poison) return undefined
                     if (container) {
                         const placement = container.placements.get(key)?.placement
@@ -99,15 +101,14 @@ function prepareInput(
         if (failure) return resultErrors
             ? errorUtils.combineErrors(resultErrors) : failure
 
-        commitPreparedInput(admissions, containers, policy, operationContext)
+        commitPreparedInput(staged, policy, operationContext)
         if (externalMutationTreeSetup) {
             commitExternalLocations(registrations, operationContext)
             externalMutationTreeSetup.tree = tree
         }
         return value
     } finally {
-        admissions.clear()
-        for (const container of containers.values()) {
+        for (const { container } of staged.values()) if (container) {
             container.discard()
             if (container.state === CONSTRUCTION_STATE.Discarded) for (const staged of container.placements.values()) {
                 if (staged.version) staged.version.value = staged.version.recovery = undefined
@@ -116,7 +117,7 @@ function prepareInput(
             container.placements = undefined
             container.initialEntries = undefined
         }
-        containers.clear()
+        staged.clear()
         registrations?.clear()
         // Pending callbacks need their destination, not the staging root or failure.
         value = root = failure = resultErrors = externalMutationTreeSetup = failures = inspectionFailures = undefined
@@ -135,14 +136,14 @@ function prepareInput(
     }
 
     function factsOf(value) {
-        return metadata.metaOf(value, operationContext) ?? admissions.get(value)
+        return metadata.metaOf(value, operationContext) ?? staged.get(value)?.facts
     }
 
     function failedInspection(value, error) {
         inspectionFailures.set(value, error)
         // Keep successful category facts for discovery, but never admit a
         // container whose structural preparation failed.
-        const container = containers.get(value)
+        const container = staged.get(value)?.container
         if (container) container.poison = error
         return error
     }
@@ -166,27 +167,24 @@ function prepareInput(
                 resultErrors?.add(failed)
                 return failed
             }
-            if (containers.has(value)) return containers.get(value).poison ?? value
-            if (admissions.has(value)) return value
+            if (staged.has(value)) return staged.get(value).container?.poison ?? value
             const existing = metadata.metaOf(value, operationContext)
             if (existing) {
                 // A prepared reference keeps its existing producers and policy.
                 if (existing.placementsInitialized || !languageValues.isTraversableType(existing.type)) return value
-            } else {
-                const facts = inspect(() => metadata.inspectAdmissionMetaFacts(value, operationContext))
-                if (errorUtils.isPoisonError(facts)) return failedInspection(value, facts)
-                admissions.set(value, facts)
-                if (!languageValues.isTraversableType(facts.type)) return value
             }
-
-            return prepareManagedContainer(value)
+            const facts = existing ?? inspect(() => metadata.inspectAdmissionMetaFacts(value, operationContext))
+            if (errorUtils.isPoisonError(facts)) return failedInspection(value, facts)
+            const entry = { facts }
+            staged.set(value, entry)
+            return languageValues.isTraversableType(facts.type)
+                ? prepareManagedContainer(value, entry) : value
         } finally { value = undefined }
     }
 
-    function prepareManagedContainer(value) {
-        const container = new PlacementConstruction(value, operationContext)
+    function prepareManagedContainer(value, entry) {
+        const container = entry.container = new PlacementConstruction(value, operationContext)
         container.placements = new Map()
-        containers.set(value, container)
         try {
             const keys = inspect(() => [...languageProperties.enumerableLanguageKeyCandidates(
                 value, operationContext, 0, undefined, factsOf(value).type)])
@@ -204,7 +202,7 @@ function prepareInput(
             }
             // Capture the source's own facts before descending into cycles.
             if (factsOf(value).type === metadata.TYPE.Array)
-            for (const key of Object.keys(metadata.metaOf(value, operationContext)?.placementVersions ?? {})) {
+            for (const [key] of propertyVersions.ownPlacementVersionEntries(value, operationContext)) {
                 const descriptor = inspect(() => languageProperties.getLanguagePlacementDescriptor(value, key, operationContext))
                 if (errorUtils.isPoisonError(descriptor)) return failedInspection(value, descriptor)
                 if (descriptor) container.initialEntries.push([key, descriptor.value])
@@ -248,14 +246,14 @@ function prepareInput(
 }
 
 // Every fallible source read and subscription is complete before this boundary.
-function commitPreparedInput(admissions, containers, policy, operationContext) {
-    for (const [identity, facts] of admissions) {
-        if (containers.get(identity)?.poison) continue
+function commitPreparedInput(staged, policy, operationContext) {
+    for (const [identity, { facts, container }] of staged) {
+        if (container?.poison || metadata.metaOf(identity, operationContext)) continue
         metadata.getOrCreateMeta(identity, operationContext, facts.type, facts.admittedPrototype)
         if (policy.imported) metadata.markImported(identity, operationContext)
     }
-    for (const [source, container] of containers) {
-        if (container.poison) continue
+    for (const [source, { container }] of staged) {
+        if (!container || container.poison) continue
         for (const [key, { version, placement }] of container.placements)
             if (version && (!placement || version.promiseBacked || version.value !== placement.value)) {
                 // All available identities were admitted above. A consumed input

@@ -1,5 +1,4 @@
 import { createMutationOutcome } from "./mutations.js"
-import { ArrayView } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as errorUtils from "./error.js"
@@ -145,34 +144,22 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     )
 }
 
-// Views and direct observations avoid remap materialization. All remaining
-// methods produce one remap; mutation additionally captures the native result
-// before publishing the new receiver.
+// Views and range writes build their output directly. Other structural methods
+// materialize one remap. Both routes share result retention and publication.
 function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) {
     const { mutation, operationContext } = invocationWork
-    if (methodDefinition.view) {
-        const view = methodDefinition.view(preparedArguments, invocationWork)
-        if (view !== undefined) {
-            if (!mutation) return invocationWork.retainOutput(view)
-            // Publication already owns the view when consuming the independent
-            // removed element may remain pending or fail during capture.
-            const outcome = createMutationOutcome(view, undefined, operationContext)
-            try {
-                outcome.result = methodDefinition.methodResult(
-                    methodDefinition.viewNativeResult(view, invocationWork), invocationWork)
-                return outcome
-            } catch (failure) {
-                outcome.releasePublication()
-                throw failure
-            }
-        }
+    let published = true
+    const reportWrites = writes => { published = writes }
+    if (methodDefinition.output) {
+        const output = methodDefinition.output(preparedArguments, invocationWork, reportWrites)
+        if (output !== undefined || published === false) return finish(output, () => methodDefinition.methodResult(
+            methodDefinition.outputResult(output, invocationWork), invocationWork))
     }
     if (methodDefinition.observe) return methodDefinition.observe(preparedArguments, invocationWork)
 
     let remap, nativeResult
-    let published = true
     if (methodDefinition.remap) {
-        remap = methodDefinition.remap(preparedArguments, invocationWork, writes => { published = writes })
+        remap = methodDefinition.remap(preparedArguments, invocationWork, reportWrites)
     } else {
         remap = arrayRemaps.createRemap(invocationWork.receiver, operationContext, 0, invocationWork.arrayLength)
         nativeResult = Reflect.apply(methodDefinition.intrinsic, remap, preparedArguments)
@@ -185,45 +172,55 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
         remap => {
             try { return runArrayStep(invocationWork, () => {
                 if (errorUtils.isPoisonError(remap)) return remap
-                if (mutation && !published) return unchanged()
+                if (mutation && !published) return finish()
                 // Only intrinsic mutators have a separate native result. Capture
                 // removed placements before materializing the new receiver.
-                let result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
+                const result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
                     ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
                 const output = runArrayStep(invocationWork, () =>
-                    remap instanceof arrayRemaps.ArrayRangeRemap ? remap.createOutput(invocationWork) :
-                        arrayRemaps.createArrayFromRemap(remap, operationContext))
-                if (!mutation) return invocationWork.retainOutput(output)
-                // A range write may reuse its receiver. Its captured old identity
-                // still belongs to earlier searches and the recovery snapshot.
-                if (output === invocationWork.receiver && published === true) {
-                    published = new IdentityPublication(operationContext)
-                    published.record(true)
-                }
-                if (published instanceof IdentityPublication) {
-                    if (errorUtils.isPoisonError(output)) published.finish(true)
-                    else {
-                        inheritIdentity(invocationWork.receiver, output, operationContext)
-                        published.capture(output)
-                        published.finish()
-                    }
-                    published = published.outcome()
-                }
-                if (methodDefinition.methodResult === RETURN_RECEIVER) result = invocationWork.retainOutput(output)
-                else if (errorUtils.isPoisonError(output)) {
-                    // Publish receiver failure now; only the independent result waits.
-                    result = internalSteps.continueGraphTransition(result, operationContext,
-                        value => errorUtils.isPoisonError(value)
-                            ? errorUtils.combineErrors([output, value]) : output,
-                        undefined, invocationWork)
-                }
-                return createMutationOutcome(output, result, operationContext, published)
+                    arrayRemaps.createArrayFromRemap(remap, operationContext))
+                return finish(output, () => result)
             }) } finally { remap = nativeResult = undefined }
         }, undefined, invocationWork)
 
-    function unchanged() {
-        return createMutationOutcome(invocationWork.receiver,
+    function finish(output, readResult) {
+        if (!mutation) return invocationWork.retainOutput(output)
+        if (!published) return createMutationOutcome(invocationWork.receiver,
             invocationWork.retainOutput(invocationWork.receiver), operationContext, false)
+        // A range write may reuse its receiver. Its captured old identity
+        // still belongs to earlier searches and the recovery snapshot.
+        if (output === invocationWork.receiver && published === true) {
+            published = new IdentityPublication(operationContext)
+            published.record(true)
+        }
+        if (published instanceof IdentityPublication) {
+            if (errorUtils.isPoisonError(output)) published.finish(true)
+            else {
+                inheritIdentity(invocationWork.receiver, output, operationContext)
+                published.capture(output)
+                published.finish()
+            }
+            published = published.outcome()
+        }
+        // Publication owns the output before consuming an independent removed
+        // element; that consumption can remain pending or fail during capture.
+        const outcome = createMutationOutcome(output, undefined, operationContext, published)
+        try {
+            let result = methodDefinition.methodResult === RETURN_RECEIVER
+                ? invocationWork.retainOutput(output) : readResult()
+            if (methodDefinition.methodResult !== RETURN_RECEIVER && errorUtils.isPoisonError(output)) {
+                // Publish receiver failure now; only the independent result waits.
+                result = internalSteps.continueGraphTransition(result, operationContext,
+                    value => errorUtils.isPoisonError(value)
+                        ? errorUtils.combineErrors([output, value]) : output,
+                    undefined, invocationWork)
+            }
+            outcome.result = result
+            return outcome
+        } catch (failure) {
+            outcome.releasePublication()
+            throw failure
+        }
     }
 }
 

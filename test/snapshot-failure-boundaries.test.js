@@ -4,6 +4,41 @@ import { fileURLToPath } from "node:url"
 import * as r from "../src/index.js"
 
 describe("external snapshot failure boundaries", () => {
+    for (const route of ["lookup", "export"]) {
+        it(`collects later prototype inspection failure after an unsafe then: ${route}`, () => {
+            const ctx = { execution: new r.Execution(), errorContext: route }
+            const cause = new Error("later prototype descriptor")
+            const ancestor = new Proxy({}, {
+                getOwnPropertyDescriptor(target, key) {
+                    if (key === "then") throw cause
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            })
+            const prototype = Object.create(ancestor, {
+                then: { get() { assert.fail("Prototype accessors must not run") } },
+            })
+            // Instance declarations do not bind a prototype before admission.
+            // An own data property masks native thenability, leaving the retained
+            // prototype check responsible for rejecting the unsafe accessor.
+            const source = Object.assign(Object.create({}), { then: undefined, value: 1 })
+            assert.equal(r.managedState(source), source)
+            Object.setPrototypeOf(source, prototype)
+            const api = r.externalState({ source })
+            const chain = new r.ContextChain({ api }, ctx, { api: {} })
+            const failure = (route === "lookup" ? r.lookupPath : r.export)(chain, ["api", "source"], ctx)
+            assert(r.isPoisonError(failure))
+            assert.equal(failure.errors.length, 2)
+            assert(failure.errors.some(error => error.kind === r.ERROR_KIND.InvalidExternalSnapshot))
+            assert(failure.errors.some(error => error.kind === r.ERROR_KIND.ExternalPropertyReadFailed && error.cause === cause))
+            assert.equal(ctx.execution.fatalError, null)
+
+            function Candidate() {}
+            Candidate.prototype = prototype
+            const declaration = r.managedStateClass(Candidate)
+            assert.equal(declaration.kind, r.ERROR_KIND.DeclarationValidation)
+        })
+    }
+
     it("keeps internal snapshot and managed-selection classification defects on the fatal path", () => {
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/snapshot-internal-failure.js", import.meta.url))],

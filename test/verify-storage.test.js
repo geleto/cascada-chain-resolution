@@ -46,7 +46,7 @@ describe("graph consistency verifiers", () => {
         // The deletion published only its captured version, and the no-op entry
         // wrote nothing, so an absent overlay now masks the stale slot.
         const array = await r.lookupPath(chain, ["data"], ctx)
-        const version = metaOf(array, ctx).placementVersions["0"]
+        const version = metaOf(array, ctx).outgoingPlacements.get(String("0"))
         assert.equal(version.present, false)
         assert(Object.hasOwn(array, "0"))
         verifyRefCounts(ctx, chain._state)

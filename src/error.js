@@ -141,23 +141,19 @@ function runWithFatalGuard(operationContext, work, value) {
 function runExternalAction(operationContext, action) {
     const execution = operationContext.execution
     const previousExternalActionActive = execution._externalActionActive
-    let result
-    let failure
-    let failed = false
     execution._externalActionActive = true
     try {
-        result = action()
+        try {
+            return action()
+        } finally {
+            execution._externalActionActive = previousExternalActionActive
+            const fatal = execution.fatalError
+            if (fatal !== null) throw fatal
+        }
     } catch (reason) {
-        failed = true
-        failure = reason
-    } finally {
-        execution._externalActionActive = previousExternalActionActive
+        if (isFatalError(reason)) failExecution(operationContext, reason)
+        throw new ActionThrowError(reason)
     }
-    const fatal = execution.fatalError
-    if (fatal !== null) throw fatal
-    if (!failed) return result
-    if (isFatalError(failure)) failExecution(operationContext, failure)
-    throw new ActionThrowError(failure)
 }
 
 // Configuration uses the same host-action escape, without an execution.

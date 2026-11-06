@@ -586,7 +586,7 @@ Keep suspension at the explicit trusted-body invocation site; supported subscrip
 
 Common construction, operation, and trusted-body boundaries own these rules; commands add no local cleanup policy. Verify unpublished working roots, incomplete staging, ready delivery, nested helpers, and loops inside guarded continuations and entered callbacks. Atomic publication invokes no user callback, temporary nesting never spans a Promise wait, and ready output protection precedes producer retirement.
 
-**Every prepared mutation outcome has two independent uses: receiver publication and result delivery.** Establish the required holds before the producer's transition drains, not in a later normalization or outward-result reaction. This applies both to an isolated native receiver adopted by `managed-invocation.js` and to replacement Arrays and removed-element results produced by `array-invocation.js`. The common trusted outcome boundary protects its known `mutatedValue` and `result` fields; do not admit or traverse the control record itself or add an Array-only lifetime protocol. An existing hold may transfer instead of being duplicated.
+**Every prepared mutation outcome has two independent uses: receiver publication and result delivery.** Establish the required holds before the producer's transition drains, not in a later normalization or outward-result reaction. This applies both to an isolated native receiver adopted by `managed-invocation.js` and to replacement Arrays and removed-element results produced by `array-invocation.js`. The common trusted outcome boundary protects its known `placement.value` and `result` fields; do not admit or traverse the control record itself or add an Array-only lifetime protocol. An existing hold may transfer instead of being duplicated.
 
 Keep the receiver publication hold through normalization and destination commit or failed-publication cleanup. Its borrowed children must remain protected after argument leases end. The result retains its own delivery obligation, including when it aliases the receiver or is independently pending; an unrelated pending result must not extend completed receiver publication. If the result is not yet available, preserve its capture/delivery obligation and acquire the managed-value hold at its producer. Release only the use that has ended on success, failure, superseded publication, or ignored output. Neither graph may retire and reactivate merely because these internal stages run in different reactions.
 
@@ -1377,7 +1377,7 @@ The production design has one preparation boundary and one publication identity 
 | Established logical placement and later settlement | [property-versions.js](../src/property-versions.js) |
 | Prepared topology and publication destinations | [parent-placements.js](../src/parent-placements.js) |
 | Mutation identity and equality completion | [captured-identity.js](../src/captured-identity.js) |
-| Source-free shape/edges, canonical assembly and disposal | [captured-graph.js](../src/captured-graph.js) |
+| Graph capture, source-free shape/edges, canonical assembly and disposal | [managed-capture.js](../src/managed-capture.js) |
 
 Prepared returns add no validation identity, ancestor propagation, SCC completion graph or coverage history. A finite back-reference stops at established preparation; raw pending placements retain one owning delivery. Existing overlays retain their producer, presence, recovery and order. Retired relationships restore from authoritative forward facts rather than reinspection.
 
@@ -1650,7 +1650,7 @@ The comparison baseline is `21ea2e311962d8c6b61f9b40b701012c1f1563ac`, the uncha
 
 | Changed source | Starting trace |
 | --- | --- |
-| [captured-graph.js](../src/captured-graph.js) | `CapturedGraph.discard` releases staged identity as well as output state |
+| [managed-capture.js](../src/managed-capture.js) (formerly `captured-graph.js`) | `ManagedCapture.discard` releases staged identity as well as output state |
 | [enter.js](../src/enter.js) | Pending anchors, relative dynamic provenance, private views and contained publication |
 | [execution.js](../src/execution.js) | Execution-local registration membership and revision |
 | [external-access.js](../src/external-access.js) | Snapshot reception, retained native identities and checks after waits |

@@ -13,7 +13,7 @@ const functions = {
     "array-remap.js": ["createArrayFromRemap", "createRemap"],
     "placement-structure.js": ["defineCopyProperty", "createEmptyContainer"],
     "export.js": ["exportValues"],
-    "captured-graph.js": ["assembleCapturedGraph"],
+    "managed-capture.js": ["assembleCapturedGraph"],
     "managed-invocation.js": ["validateReceiver"],
     "external-snapshot.js": ["snapshotExternalValue"],
     "language-values.js": ["isPending", "thenValue"],

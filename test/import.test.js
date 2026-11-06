@@ -1,3 +1,4 @@
+import { logicalVersionEntries } from "./verify-parents.js"
 import { poison } from "./support.js"
 import * as runtime from "../src/index.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
@@ -174,7 +175,7 @@ describe("import", () => {
         expect(external.pending).to.be(externalPending.promise)
         expect(runtimeOwned.pending).to.be("runtime")
         expect(readPath(new Chain(external, testContext), ["pending"], testContext)).to.be("external")
-        const promiseVersion = metaOf(external, testContext).placementVersions.pending
+        const promiseVersion = metaOf(external, testContext).outgoingPlacements.get("pending")
         expect(metaOf(external, testContext).imported).to.be(true)
         expect(Object.hasOwn(promiseVersion, "importPolicy")).to.be(false)
     })
@@ -244,7 +245,7 @@ describe("import", () => {
         importValue({ outer, nested }, { ...testContext, errorContext: "later frontier" })
 
         expect(scans).to.be(0)
-        expect(metaOf(nested, testContext).placementVersions).to.be(undefined)
+        expect(logicalVersionEntries(metaOf(nested, testContext))).to.eql([])
     })
 
     it("preserves prepared runtime ownership through a new imported alias in either property order", async () => {
@@ -390,7 +391,7 @@ describe("import", () => {
         expect(Object.hasOwn(metaOf(root, testContext), "importPolicy")).to.be(false)
         expect(requiresCopyOnWrite(child, testContext)).to.be(true)
         expect(metaOf(child, testContext).imported).to.be(true)
-        expect(metaOf(child, testContext).placementVersions.value).not.to.be(undefined)
+        expect(metaOf(child, testContext).outgoingPlacements.get("value")).not.to.be(undefined)
         expect(child.value).to.be(outer.promise)
 
         buildRefIndex(root, testContext)
@@ -1681,7 +1682,7 @@ describe("import", () => {
         assignPath(chain, ["pending", "value"], 1, testContext)
         const owned = readPath(chain, ["pending"], testContext)
 
-        expect(metaOf(parentCopy, testContext).placementVersions?.pending).to.be(undefined)
+        expect(metaOf(parentCopy, testContext).outgoingPlacements?.get("pending")?.present).to.be(undefined)
         expect(metaOf(owned, testContext)?.imported).to.be(undefined)
         expect(metaOf(retained, testContext).imported).to.be(true)
         expect(owned.value).to.be(1)
@@ -1715,7 +1716,7 @@ describe("import", () => {
         const root = { value: deferredValue.promise }
 
         importValue(root, { ...testContext, errorContext: "promise key import" })
-        expect(metaOf(root, testContext).placementVersions.value).not.to.be(undefined)
+        expect(metaOf(root, testContext).outgoingPlacements.get("value")).not.to.be(undefined)
         expect(root.value).to.be(deferredValue.promise)
         expect(getRefCounter(root, testContext)).to.be(undefined)
         buildRefIndex(root, testContext)

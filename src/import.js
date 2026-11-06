@@ -3,7 +3,7 @@ import { prepareInput, receiveValue } from "./input-preparations.js"
 
 const IMPORT_POLICY = {
     Context: { kind: errorUtils.ERROR_KIND.ContextValueFailed, imported: true },
-    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed, methodResult: true, imported: true },
+    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed, imported: true },
     ExternalProperty: { kind: errorUtils.ERROR_KIND.ExternalPropertyReadFailed, imported: true },
 }
 

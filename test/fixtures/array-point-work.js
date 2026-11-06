@@ -1,20 +1,15 @@
 // Read-only copy-loop counter for exclusive Array point writes.
 import assert from 'node:assert/strict'
-import { normalizeModuleURL } from "../module-url.js"
-import { registerHooks } from 'node:module'
+import { instrumentRuntime } from '../runtime-transform.js'
 
 let copied = 0
 globalThis.__phase2CountCopy = () => copied++
-const moduleURL = new URL('../../src/mutations.js', import.meta.url).href
-registerHooks({load(url, context, next) {
-    const loaded = next(url, context)
-    if (normalizeModuleURL(url) !== normalizeModuleURL(moduleURL)) return loaded
-    const marker = 'const placement = languageProperties.readLanguagePlacement(source, key, operationContext)'
-    const source = String(loaded.source)
-    assert(source.includes(marker), 'Copy-loop hook changed')
-    return {...loaded, source:source.replace(marker, 'globalThis.__phase2CountCopy(); ' + marker)}
-}})
+const verifyInstrumentation = instrumentRuntime(new Map([['mutations.js', [[
+    'const placement = languageProperties.readLanguagePlacement(source, key, operationContext)',
+    'globalThis.__phase2CountCopy(); $&',
+]]]]))
 const r = await import('../../src/index.js')
+verifyInstrumentation('Point work instrumentation must execute')
 const samples = []
 for (const size of [50, 100, 200]) for (const mode of ['assign', 'enter']) {
     for (const alternating of [false, true]) {

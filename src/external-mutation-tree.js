@@ -49,7 +49,7 @@ function prepareExternalMutationTree(root, requests, operationContext, factsOf, 
             }
             record.span = 1
             while (record.span < childCount) record.span *= 2
-            return external || Object.keys(node).length ? node : undefined
+            return external || childCount ? node : undefined
         } finally { value = undefined }
     }
 }

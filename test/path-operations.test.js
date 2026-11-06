@@ -1,3 +1,4 @@
+import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
 import * as arrayViews from "../src/array-view.js"
 import {
@@ -13,7 +14,6 @@ import {
     Execution,
 } from "../src/index.js"
 import { failExecution as submitFatal } from "../src/error.js"
-import { getPromiseVersion } from "../src/property-versions.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { logicalArrayValues, expect, errorCause, readPath, deferred, flushMicrotasks, thrownBy } from "./support.js"
 

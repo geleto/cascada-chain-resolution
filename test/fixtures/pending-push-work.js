@@ -1,22 +1,19 @@
 // B22: count the complete unresolved append history, not just its latest Array.
 // Hooks observe production work. They neither retain graph objects nor index data.
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { instrumentRuntime } from '../runtime-transform.js'
 
 const reportOnly = process.argv.includes('--report-only')
 const noOpLoader = process.argv.includes('--no-op-loader')
 const legacyCopies = process.argv.includes('--legacy-copies')
 const sizes = [16, 32, 64]
-const normalized = url => fileURLToPath(url).replaceAll('\\', '/').replace(/^([A-Z]):/, (_, drive) => drive.toLowerCase() + ':')
-const root = normalized(new URL('../../src/', import.meta.url))
 let counts
 globalThis.__pendingPushCounts = () => counts
-const hits = new Map()
 const substitutions = new Map([
     ['property-versions.js', [
+        ['placements.set(key, version)', 'globalThis.__pendingPushCounts().parentRecords++; $&'],
         ['function createVersionFromPlacement(placement) {', '$&\n    globalThis.__pendingPushCounts().versions++;'],
-        ['const captured = capturePlacementFromVersion(versions[sourceKey])', 'globalThis.__pendingPushCounts().copiedEntries++; $&'],
+        ['const captured = capturePlacementFromVersion(version)', 'globalThis.__pendingPushCounts().copiedEntries++; $&'],
         ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation) {', '$&\n    const measured = globalThis.__pendingPushCounts(); measured.captures++; measured.liveCaptures++; let measuredClosed = false;'],
         ['const complete = () => {\n        unregister?.()', 'const complete = () => {\n        if (!measuredClosed) { measuredClosed = true; measured.liveCaptures-- }\n        unregister?.()'],
         ['subscribed.add(version)', '$&; globalThis.__pendingPushCounts().captureMemberships++'],
@@ -31,7 +28,6 @@ const substitutions = new Map([
     ['parent-placements.js', [
         ['meta.relationshipsActive = true', '$&; globalThis.__pendingPushCounts().activations++'],
         ['function retireRelationships(owner, operationContext) {', '$&\n    globalThis.__pendingPushCounts().retirements++;'],
-        ['(meta.outgoingPlacements ??= new Map()).set(key, version)', 'globalThis.__pendingPushCounts().parentRecords++; $&'],
         ['function linkParent(value, source, key, operationContext) {', '$&\n    globalThis.__pendingPushCounts().parentLinks++;'],
     ]],
     ['refcounts.js', [
@@ -51,33 +47,16 @@ const substitutions = new Map([
         ['Promise.all(waits)', 'Promise.all((globalThis.__pendingPushCounts().aggregateMembers += waits.length, waits))'],
     ]],
 ])
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context)
-    if (!url.startsWith('file:')) return loaded
-    const file = normalized(url)
-    if (!file.startsWith(root)) return loaded
-    const replacements = substitutions.get(file.slice(root.length))
-    if (!replacements || noOpLoader) return loaded
-    let source = String(loaded.source).replaceAll('\r\n', '\n')
-    for (const [anchor, replacement] of replacements) {
-        assert.equal(source.split(anchor).length - 1, 1, `B22 counter anchor: ${file}: ${anchor}`)
-        source = source.replace(anchor, replacement)
-        hits.set(anchor, (hits.get(anchor) ?? 0) + 1)
-    }
-    if (legacyCopies && file === root + 'array-view.js') {
-        const anchor = 'static placementDestination(owner, key, operationContext) {'
-        assert.equal(source.split(anchor).length - 1, 1, 'B22 legacy-copy fault anchor')
-        source = source.replace(anchor, anchor + '\n        return undefined')
-        hits.set('legacy-copy fault', 1)
-    }
-    return { ...loaded, source }
-} })
+if (legacyCopies) substitutions.get('array-view.js').push([
+    'static placementDestination(owner, key, operationContext) {', '$&\n        return undefined',
+])
+const verifyInstrumentation = instrumentRuntime(substitutions, !noOpLoader)
 
 const r = await import('../../src/index.js')
+const { logicalVersionEntries } = await import("../verify-parents.js")
 const { metaOf } = await import('../../src/meta.js')
 const { ArrayView } = await import('../../src/array-view.js')
-const expectedAnchors = [...substitutions.values()].reduce((sum, rows) => sum + rows.length, 0) + Number(legacyCopies)
-assert.equal(hits.size, expectedAnchors, 'B22 counter loader must execute every substitution')
+verifyInstrumentation('B22 counter loader must execute every substitution')
 const turn = () => new Promise(resolve => setImmediate(resolve))
 function freshCounts() {
     return { copiedEntries: 0, versions: 0, captures: 0, liveCaptures: 0,
@@ -92,7 +71,7 @@ function snapshot(chain, ctx) {
     const backing = meta.arrayRange?.backing ?? value
     const backingRecord = metaOf(backing, ctx).arrayBacking
     const producerMeta = metaOf(backingRecord?.producers, ctx)
-    const producerVersions = Object.values(producerMeta?.placementVersions ?? {})
+    const producerVersions = logicalVersionEntries(producerMeta).map(([, version]) => version)
     // Count every maintained store on this scalar history's live container set,
     // including reciprocal counter memberships and the root holder. Raw slots
     // are explicit produced data and are reported separately below.
@@ -100,8 +79,8 @@ function snapshot(chain, ctx) {
     for (const owner of new Set([chain._state, value, backing, backingRecord, backingRecord?.producers])) {
         const state = metaOf(owner, ctx)
         if (!state) continue
-        const versions = Object.values(state.placementVersions ?? {})
-        maintainedEntries += versions.length + (state.outgoingPlacements?.size ?? 0) +
+        const versions = logicalVersionEntries(state).map(([, version]) => version)
+        maintainedEntries += (state.outgoingPlacements?.size ?? 0) +
             (state.parents?.size ?? 0) + (state.counterChildren?.size ?? 0) +
             (state.cycleCuts?.size ?? 0) + (state.backingCounterVersions?.size ?? 0)
         for (const version of versions) maintainedEntries += version.counterProjections?.size ?? 0
@@ -118,7 +97,7 @@ function snapshot(chain, ctx) {
         pendingProducerVersions: producerVersions.filter(version => version.value instanceof Promise).length,
         producerParentRecords: producerMeta?.outgoingPlacements?.size ?? 0,
         producerCounterMemberships: producerVersions.reduce((sum, version) => sum + (version.counterProjections?.size ?? 0), 0),
-        currentVersions: Object.keys(meta.placementVersions ?? {}).length,
+        currentVersions: logicalVersionEntries(meta).length,
         currentParentRecords: meta.outgoingPlacements?.size ?? 0,
         logicalLength: ArrayView.readyLength(value, ctx) }
 }
@@ -227,7 +206,8 @@ assert(samples.some(sample => sample.issued.liveCaptures > 0), 'B22 must witness
 assert(samples.some(sample => sample.issued.currentVersions > 0), 'B22 must witness actual pending placements')
 if (!legacyCopies) assert(samples.filter(sample => sample.route === 'push').every(sample =>
     sample.issued.pendingProducerVersions === sample.size), 'B22 must witness shared pending backing producers')
-console.log(JSON.stringify({ samples, controls, anchors: hits.size, contract: 'B22 unresolved append histories require linear additional storage and aggregate copied placement/frontier entries' }))
+console.log(JSON.stringify({ samples, controls, anchors: [...substitutions.values()].flat().length,
+    contract: 'B22 unresolved append histories require linear additional storage and aggregate copied placement/frontier entries' }))
 
 if (!reportOnly) {
     for (const sample of samples.filter(sample => sample.route === 'push')) {

@@ -1,23 +1,17 @@
 import assert from "node:assert/strict"
-import { registerHooks } from "node:module"
+import { instrumentRuntime } from "../runtime-transform.js"
 
 globalThis.captureAllocations = 0
 globalThis.containerCopies = 0
-const sites = new Map([
-    [new URL("../../src/managed-capture.js", import.meta.url).href,
-        ["entries: new Map(), identity", "entries: (globalThis.captureAllocations++, new Map()), identity"]],
-    [new URL("../../src/captured-graph.js", import.meta.url).href,
-        ["node.copy = node.shape.length === undefined", "globalThis.containerCopies++; node.copy = node.shape.length === undefined"]],
-])
-registerHooks({ load(url, context, next) {
-    const result = next(url, context)
-    if (!sites.has(url)) return result
-    const [marker, replacement] = sites.get(url)
-    const source = String(result.source)
-    assert(source.includes(marker), "Capture work counters need updating")
-    return { ...result, source: source.replace(marker, replacement) }
-} })
+const verifyInstrumentation = instrumentRuntime(new Map([
+    ["managed-capture.js", [[
+        "entries: new Map(), identity", "entries: (globalThis.captureAllocations++, new Map()), identity",
+    ], [
+        "node.copy = node.shape.length === undefined", "globalThis.containerCopies++; $&",
+    ]]],
+]))
 const r = await import("../../src/index.js")
+verifyInstrumentation("Capture work instrumentation must execute")
 const { OrderedThenable } = await import("../ordered-thenable.js")
 
 for (const size of [16, 64, 128]) for (const reversed of [false, true]) {

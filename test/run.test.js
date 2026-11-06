@@ -1,3 +1,4 @@
+import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
 import { rejected as rejectedInput } from "./ordered-thenable.js"
 import * as arrayViews from "../src/array-view.js"
@@ -916,10 +917,10 @@ describe("run", () => {
             { repair: false },
         )
         const versions = [
-            propertyVersions.getPromiseVersion(leftChain._state.value, "0", testContext),
-            propertyVersions.getPromiseVersion(right, "0", testContext),
-            propertyVersions.getPromiseVersion(concatenated, "0", testContext),
-            propertyVersions.getPromiseVersion(concatenated, "1", testContext),
+            getPromiseVersion(leftChain._state.value, "0", testContext),
+            getPromiseVersion(right, "0", testContext),
+            getPromiseVersion(concatenated, "0", testContext),
+            getPromiseVersion(concatenated, "1", testContext),
         ]
 
         expect(new Set(versions).size).to.be(4)
@@ -1015,16 +1016,16 @@ describe("run", () => {
         const chain = new Chain([pending.promise, pending.promise], testContext)
         const source = chain._state.value
         propertyVersions.getPropertyPlacement(source, "0", testContext).ensureCaptured()
-        const source0 = propertyVersions.getPromiseVersion(source, "0", testContext)
+        const source0 = getPromiseVersion(source, "0", testContext)
         propertyVersions.getPropertyPlacement(source, "1", testContext).ensureCaptured()
-        const source1 = propertyVersions.getPromiseVersion(source, "1", testContext)
+        const source1 = getPromiseVersion(source, "1", testContext)
 
         expect(source0 === source1).to.be(false)
         run(chain, [], "reverse", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         const reversed = chain._state.value
-        const reversed0 = propertyVersions.getPromiseVersion(reversed, "0", testContext)
-        const reversed1 = propertyVersions.getPromiseVersion(reversed, "1", testContext)
+        const reversed0 = getPromiseVersion(reversed, "0", testContext)
+        const reversed1 = getPromiseVersion(reversed, "1", testContext)
         expect(reversed0 === reversed1).to.be(false)
         expect(reversed0 === source1).to.be(false)
         expect(reversed1 === source0).to.be(false)
@@ -1032,8 +1033,8 @@ describe("run", () => {
         const copied = new Chain([pending.promise, 0], testContext)
         run(copied, [], "copyWithin", [1, 0, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(
-            propertyVersions.getPromiseVersion(copied._state.value, "0", testContext) ===
-                propertyVersions.getPromiseVersion(copied._state.value, "1", testContext),
+            getPromiseVersion(copied._state.value, "0", testContext) ===
+                getPromiseVersion(copied._state.value, "1", testContext),
         ).to.be(false)
 
         pending.resolve(1)

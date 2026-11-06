@@ -26,7 +26,7 @@ const edits = new Map([
         ["function createPoisonError(reason, operationContext, kind) {", "poison contextualization"],
     ]],
     [new URL("../../src/external-snapshot.js", import.meta.url).href, [
-        ["function collect(failure) {", "snapshot failure effect"],
+        ["    failed(failure) {", "snapshot failure effect"],
     ]],
 ])
 registerHooks({ load(url, context, next) {

@@ -25,6 +25,20 @@ export const SAFEGUARDS = [
         witnesses: ["bounds pending selection work and releases completed history"],
     },
     {
+        id: "metadata-consumer-releases-continuation",
+        guards: "Closed metadata work drops its pending collector closure while shared native publication remains unfinished.",
+        faults: [edit("src/external-metadata.js",
+            "const unregister = releaseOnClose(owner, () => { state = onReady = undefined })",
+            "const unregister = releaseOnClose(owner, () => { state = undefined })")],
+        witnesses: ["external-owner-release"],
+    },
+    {
+        id: "metadata-capture-releases-historical-state",
+        guards: "Metadata source access ends before independent result waits and retained unformatted compound preflight Errors.",
+        faults: [edit("src/external-metadata.js", "this.ancestors = this.state = this.store = this.node = undefined", "")],
+        witnesses: ["external-owner-release"],
+    },
+    {
         id: "native-binding-repair-releases-preflight-state",
         guards: "A completed failed preflight releases its restored value and recovery state while its Error stack stays unformatted.",
         faults: [edit("src/path-operation.js", "            value = undefined\n            return steps.continueGraphTransition(this.metadata?", "            return steps.continueGraphTransition(this.metadata?"),
@@ -77,7 +91,7 @@ export const SAFEGUARDS = [
     {
         id: "discarded-capture-releases-identities",
         guards: "Discarded output releases identity keys and domains while required Error collection continues.",
-        faults: [edit("src/captured-graph.js", "node.identity = node.shape = node.prototype = node.copy = undefined", "node.shape = node.prototype = node.copy = undefined")],
+        faults: [edit("src/managed-capture.js", "node.identity = node.shape = node.prototype = node.copy = undefined", "node.shape = node.prototype = node.copy = undefined")],
         witnesses: ["releases discarded capture identities before pending Error collection"],
     },
     {
@@ -203,15 +217,15 @@ export const SAFEGUARDS = [
     },
     {
         id: "array-range-releases-selected-values",
-        guards: "Saved range-construction receivers and invocation closures do not retain consumed entries through unformatted Error stacks.",
-        faults: [edit("src/array-remap.js", "        this.entries = undefined\n")],
+        guards: "Saved range-construction and invocation closures do not retain consumed entries through unformatted Error stacks.",
+        faults: [edit("src/array-methods.js", "    finally { entries = undefined }", "    finally {}")],
         witnesses: ["checks array-range-failure-retention at stack limit 1000"],
     },
     {
         id: "array-range-publishes-write-identity",
         guards: "An in-place range write advances the receiver identity already captured by pending searches, even for an equal-value write.",
         faults: [edit("src/array-invocation.js",
-            "                if (output === invocationWork.receiver && published === true) {\n                    published = new IdentityPublication(operationContext)\n                    published.record(true)\n                }\n")],
+            "        if (output === invocationWork.receiver && published === true) {\n            published = new IdentityPublication(operationContext)\n            published.record(true)\n        }\n")],
         witnesses: ["publishes fill(9,0,1) identity to a pending includes", "publishes copyWithin(0,0,1) identity to a pending includes"],
     },
     {
@@ -238,7 +252,7 @@ export const SAFEGUARDS = [
         id: "array-range-preserves-complete-baseline",
         guards: "Range writes capture changed placements before physical writes so scope recovery restores the complete old value.",
         faults: [edit("src/array-remap.js",
-            "propertyVersions.copyPlacement(languageProperties.readLanguagePlacement(source, key, operationContext),\n                            snapshot, key, operationContext, false)",
+            "propertyVersions.copyPlacement(languageProperties.readLanguagePlacement(source, key, operationContext),\n                        snapshot, key, operationContext, false)",
             "void key")],
         witnesses: ["restores the complete fill baseline after storage failure", "restores the complete copyWithin baseline after publication failure"],
     },
@@ -246,7 +260,7 @@ export const SAFEGUARDS = [
         id: "array-range-captures-overlapping-sources",
         guards: "copyWithin captures overlapping source versions before its first selected write.",
         faults: [edit("src/array-remap.js",
-            "        for (const key of Object.keys(entries))\n            if (propertyVersions.isPropertyPlacement(entries[key])) entries[key].ensureCaptured()\n")],
+            "    for (const key of Object.keys(entries))\n        if (propertyVersions.isPropertyPlacement(entries[key])) entries[key].ensureCaptured()\n")],
         witnesses: ["Array native equivalence matches owned in-place mutation"],
     },
     {
@@ -321,8 +335,9 @@ export const SAFEGUARDS = [
     {
         id: "external-blocker-is-not-a-new-mutation-failure",
         guards: "A pre-existing child blocker stays at its original scope and remains repairable there.",
-        faults: [edit("src/path-operation.js", "if (blocker) return this.mutation ? { mutatedValue: undefined, result: blocker } : blocker",
-            "if (blocker) return blocker")],
+        faults: [edit("src/path-operation.js", "return { result: blocker }", "return blocker"),
+            edit("src/path-operation.js", "if (blocker) return this.mutation ? { result: blocker } : blocker",
+                "if (blocker) return blocker")],
         witnesses: ["keeps a blocking child's poison repairable"],
     },
     {
@@ -419,7 +434,7 @@ export const SAFEGUARDS = [
     {
         id: "failed-container-does-not-commit-category",
         guards: "Successful category facts survive for discovery but failed container preparation cannot admit the source.",
-        faults: [edit("src/input-preparations.js", "        if (containers.get(identity)?.poison) continue\n")],
+        faults: [edit("src/input-preparations.js", "container?.poison || metadata.metaOf(identity, operationContext)", "metadata.metaOf(identity, operationContext)")],
         witnesses: ["reuses context discovery failures with diagnostic precedence: managed shape"],
     },
     {
@@ -438,7 +453,7 @@ export const SAFEGUARDS = [
     {
         id: "snapshot-releases-prototype-inputs",
         guards: "A failed snapshot keeps its cause without retaining the rejected source's prototype.",
-        faults: [edit("src/external-snapshot.js", "prototype = current = undefined", "undefined")],
+        faults: [edit("src/external-snapshot.js", "finally { prototype = undefined }", "finally {}")],
         witnesses: ["checks inspection-failure-retention at stack limit 1000"],
     },
     {
@@ -501,8 +516,8 @@ export const SAFEGUARDS = [
         id: "preparation-releases-classification-input",
         guards: "Unformatted classification Errors cannot retain the preparation walk's spent source capture.",
         faults: [edit("src/input-preparations.js",
-            "return prepareManagedContainer(value)\n        } finally { value = undefined }",
-            "return prepareManagedContainer(value)\n        } finally {}")],
+            "? prepareManagedContainer(value, entry) : value\n        } finally { value = undefined }",
+            "? prepareManagedContainer(value, entry) : value\n        } finally {}")],
         witnesses: ["checks completed-work-retention at stack limit 1000"],
     },
     {
@@ -516,7 +531,7 @@ export const SAFEGUARDS = [
     {
         id: "discarded-capture-releases-roots",
         guards: "Discarded output releases terminal roots while required poison collection remains pending.",
-        faults: [edit("src/captured-graph.js", "        this.roots.length = 0\n")],
+        faults: [edit("src/managed-capture.js", "        this.roots.length = 0\n")],
         witnesses: ["checks discarded-argument-leaves at stack limit 1000"],
     },
     {
@@ -712,8 +727,8 @@ export const SAFEGUARDS = [
     {
         id: "result-admission-keeps-receiver-effect",
         guards: "Independent result rejection does not poison successful native mutation.",
-        faults: [edit("src/external-access.js", "mutatedValue: receiver,",
-            "mutatedValue: errors.isPoisonError(imported) ? imported : receiver,")],
+        faults: [edit("src/external-access.js", "placement: { value: receiver, present: true },",
+            "placement: { value: errors.isPoisonError(imported) ? imported : receiver, present: true },")],
         witnesses: ["keeps completed external effects through result admission"],
     },
     {
@@ -802,8 +817,8 @@ export const SAFEGUARDS = [
     {
         id: "capture-inspects-every-representation",
         guards: "Equal identity does not skip required representation inspection.",
-        faults: [edit("src/managed-capture.js", "if (this.visited.get(value) === identity) {",
-            "if (existing || this.visited.get(value) === identity) {")],
+        faults: [edit("src/managed-capture.js", "if (this.visited.has(value) && this.visited.get(value) === identity) {",
+            "if (existing || this.visited.has(value) && this.visited.get(value) === identity) {")],
         witnesses: ["finishes Error collection after representation failure"],
     },
     {
@@ -837,7 +852,7 @@ export const SAFEGUARDS = [
         id: "rejection-uses-terminal-completion",
         guards: "Direct rejection performs the same last-use cleanup as fulfillment.",
         faults: [edit("src/managed-invocation.js", "reason => complete(errorUtils.createPoisonError(\n            reason,\n            operationContext,\n            errorUtils.ERROR_KIND.InvocationFailed,\n        )),",
-            "reason => { const failure = errorUtils.createPoisonError(reason, operationContext, errorUtils.ERROR_KIND.InvocationFailed); return { mutatedValue: failure, result: failure } },")],
+            "reason => errorUtils.createPoisonError(reason, operationContext, errorUtils.ERROR_KIND.InvocationFailed),")],
         witnesses: ["checks terminal-release at stack limit 1000"],
     },
     {
@@ -1079,7 +1094,8 @@ export const SAFEGUARDS = [
     {
         id: "existing-poison-blocks-publication",
         guards: "Consuming already-poisoned scope data publishes nothing.",
-        faults: [edit("src/mutations.js", "placement: baseline, published: false", "placement: baseline, published: true")],
+        faults: [edit("src/mutations.js", "placement: baseline, result: baseline.value, published: false",
+            "placement: baseline, result: baseline.value, published: true")],
         witnesses: ["preserves identity when existing poison blocks"],
     },
     {
@@ -1160,8 +1176,8 @@ export const SAFEGUARDS = [
     {
         id: "array-overlay-merge-streams",
         guards: "Merging captured overlays does not eagerly expand a bounded sparse range.",
-        faults: [edit("src/language-properties.js", "if (array) return mergeArrayKeys(keys, Object.keys(versions).filter(",
-            "if (array) return mergeArrayKeys([...keys], Object.keys(versions).filter(")],
+        faults: [edit("src/language-properties.js", "if (array) return mergeArrayKeys(keys, versions.filter(",
+            "if (array) return mergeArrayKeys([...keys], versions.filter(")],
         witnesses: ["bounded graph ownership verifies array-enumeration-work"],
     },
     {
@@ -1306,7 +1322,7 @@ export const SAFEGUARDS = [
     {
         id: "retirement-unlinks-counter-children",
         guards: "A retired parent leaves no optional counter link on its surviving children.",
-        faults: [edit("src/parent-placements.js", "    for (const parents of meta.counterChildren ?? []) parents.delete(owner)\n")],
+        faults: [edit("src/refcounts.js", "    for (const parents of meta.counterChildren ?? []) parents.delete(owner)\n")],
         witnesses: [
             "pop() preserves its earlier baseline when publication fails",
         ],
@@ -1314,7 +1330,7 @@ export const SAFEGUARDS = [
     {
         id: "retirement-drops-summaries",
         guards: "Retired nodes lose counter summaries and cycle cuts, which no longer receive updates.",
-        faults: [edit("src/parent-placements.js",
+        faults: [edit("src/refcounts.js",
             "    for (const field of [\"parents\", \"frontierCount\", \"errorCount\", \"cycleCuts\", \"counterChildren\"])\n        delete meta[field]\n")],
         witnesses: [
             "ArrayView forks retained Promise versions for each derived value",
@@ -1379,8 +1395,8 @@ export const SAFEGUARDS = [
     {
         id: "retirement-detaches-backing-counter-memberships",
         guards: "Retiring an indexed Array owner removes both sides of its canonical producer counter membership without retaining that owner through a live backing.",
-        faults: [edit("src/parent-placements.js",
-            "    for (const version of meta.backingCounterVersions ?? []) {\n        version.counterProjections.delete(owner)\n        if (!version.counterProjections.size) delete version.counterProjections\n    }\n    delete meta.backingCounterVersions\n")],
+        faults: [edit("src/refcounts.js",
+            "    for (const version of meta.backingCounterVersions ?? [])\n        releaseBackingCounter(version, owner, operationContext)\n")],
         witnesses: ["retires only the departed indexed projection before late shared settlement",
             "bounded graph ownership verifies ownership-destinations"],
     },
@@ -1462,7 +1478,7 @@ export const SAFEGUARDS = [
         id: "restored-blocker-preserves-recovery",
         guards: "A call blocked by the restored guard preserves that guard's recovery instead of adding another layer.",
         faults: [edit("src/mutations.js", "                if (errorUtils.isPoisonError(baseline.value))\n" +
-            "                    return { mutatedValue: baseline.value, result: baseline.value, placement: baseline, published: true }\n")],
+            "                    return { placement: baseline, result: baseline.value, published: true }\n")],
         witnesses: ["preserves a restored guard without another recovery layer: pending=false, combined=true",
             "preserves a restored guard without another recovery layer: pending=true, combined=true"],
     },
@@ -1486,8 +1502,7 @@ export const SAFEGUARDS = [
         id: "recovery-installs-dependency",
         guards: "Installed recovery becomes a preservation dependency of its owning placement.",
         faults: [
-            edit("src/parent-placements.js", "    if (meta.relationshipsActive && version.recovery) preserveRecovery(owner, key, version.recovery, operationContext)\n"),
-            edit("src/parent-placements.js", "        if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)\n"),
+            edit("src/parent-placements.js", "    if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)\n"),
         ],
         witnesses: [
             "bounded graph ownership restores recovery descendants before another owner can mutate them",
@@ -1555,8 +1570,7 @@ export const SAFEGUARDS = [
         id: "imported-storage-not-extended",
         guards: "Imported Array storage is never extended, and is rejected before host reflection.",
         faults: [edit("src/array-view.js",
-            "            if (metadata.isImported(source, operationContext) ||\n                metadata.isImported(backing, operationContext)) return\n            if (ArrayView.readyLength",
-            "            if (ArrayView.readyLength")],
+            "            if (metadata.isImported(source, operationContext) ||\n                metadata.isImported(backing, operationContext)) return\n")],
         witnesses: [
             "bounded graph ownership rejects imported Array storage reuse before probing extensibility",
         ],
@@ -1633,7 +1647,7 @@ export const SAFEGUARDS = [
     {
         id: "mutation-outcome-holds-receiver",
         guards: "A prepared mutation receiver stays active until publication across producer reactions.",
-        faults: [edit("src/mutations.js", "    publication.acquire(mutatedValue)\n")],
+        faults: [edit("src/mutations.js", "    publication.acquire(value)\n")],
         witnesses: [
             "bounded graph ownership bounds reactivation and Array extension work",
         ],
@@ -1753,8 +1767,8 @@ export const SAFEGUARDS = [
         id: "native-result-does-not-extend-managed-publication",
         guards: "Managed selection completes before a native call can hold its independent result open.",
         faults: [edit("src/path-operation.js",
-            "value => ({ mutatedValue: value, result: undefined })",
-            "value => steps.continueGraphTransition(this.reachExternal(value, this.route.path.slice(depth), onExternal), this.operationContext, () => ({ mutatedValue: value, result: undefined }))")],
+            "value => ({ placement: { value, present: true }, result: undefined })",
+            "value => steps.continueGraphTransition(this.reachExternal(value, depth, onExternal), this.operationContext, () => ({ placement: { value, present: true }, result: undefined }))")],
         witnesses: ["identity completion at managed publication separates native result delivery: mutation=true, never, write=false"],
     },
     {
@@ -1835,9 +1849,9 @@ export const SAFEGUARDS = [
     {
         id: "snapshot-canonical-managed-identities",
         guards: "Snapshot assembly preserves shared logical identities across distinct managed representations.",
-        faults: [edit("src/external-snapshot.js",
-            "identity: managed ? captureIdentity(source, operationContext) : createIdentity(),",
-            "identity: createIdentity(),")],
+        faults: [edit("src/managed-capture.js",
+            "? captureIdentity(value, operationContext) : this.visited.get(value)",
+            "? this.visited.get(value) ?? createIdentity() : this.visited.get(value)")],
         witnesses: ["snapshot canonical identity preserves original/observation-copy aliases and cycles:"],
     },
     {
@@ -1849,8 +1863,15 @@ export const SAFEGUARDS = [
     {
         id: "snapshot-clears-failed-captures",
         guards: "Unformatted snapshot diagnostics must not retain spent source captures.",
-        faults: [edit("src/external-snapshot.js",
-            "    finally { visited.clear(); leaves.clear(); failures.clear(); value = undefined }\n")],
+        faults: [edit("src/managed-capture.js",
+            "        } finally { value = meta = facts = undefined }\n", "        } finally {}\n")],
+        witnesses: ["checks completed-work-retention at stack limit 1000"],
+    },
+    {
+        id: "snapshot-keys-release-prototype-facts",
+        guards: "A failed raw snapshot key listing releases source facts, including its retained custom prototype, through an unformatted Error stack.",
+        faults: [edit("src/external-snapshot.js", "        } finally { source = facts = undefined }\n",
+            "        } finally { source = undefined }\n")],
         witnesses: ["checks inspection-failure-retention at stack limit 1000"],
     },
     {
@@ -1882,7 +1903,7 @@ export const SAFEGUARDS = [
         id: "array-growth-bounds-discarded-prefix",
         guards: "Repeated queue growth does not retain an unbounded discarded backing prefix.",
         faults: [edit("src/array-view.js",
-            "            if (count > 0 && range?.start > ArrayView.minimumLength(source, operationContext)) return\n")],
+            "            if (count > 0 && range?.start > logicalLength) return\n")],
         witnesses: ["bounds physical storage across push/shift,", "releases removed payloads while preserving retained views"],
     },
     {

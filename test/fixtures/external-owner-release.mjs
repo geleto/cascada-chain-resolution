@@ -5,6 +5,8 @@
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
 import { IdentityPublication, inheritIdentity } from "../../src/captured-identity.js"
+import { MetadataCapture } from "../../src/external-metadata.js"
+import { OperationOwner } from "../../src/operation-lifecycle.js"
 import { ready } from "../ordered-thenable.js"
 
 assert(global.gc, "Run with --expose-gc")
@@ -171,10 +173,58 @@ function metadataCapture(mutation) {
     return { ctx, holder, gate, result, weak }
 }
 const metadataCaptures = [metadataCapture(false), metadataCapture(true)]
+
+// Combining preflight failures can retain a synchronous metadata method frame
+// in the unformatted compound Error. Clear that frame's capture at last use.
+function compoundMetadataFailure(mutation) {
+    const ctx = { execution: new r.Execution(), errorContext: `metadata-compound/${mutation}` }
+    const fail = () => { throw new Error("child failure") }
+    const api = r.externalState({ a: r.externalState({ fail }), b: r.externalState({ fail }), read() { return 1 } })
+    const holder = new r.ContextChain({ api }, ctx, { api: { a: {}, b: {} } })
+    for (const child of ["a", "b"])
+        r.run(holder, ["api", child], "fail", [], ctx, { mutationScopeDepth: 2 })
+    const error = r.run(holder, ["api"], "read", [], ctx, mutation ? { mutationScopeDepth: 1 } : {})
+    assert.equal(error.errors.length, 2)
+    return { ctx, error, weak: new WeakRef(api) }
+}
+states.push(compoundMetadataFailure(false), compoundMetadataFailure(true))
+
+function collectorFor(payload) {
+    return () => { payload.called = true }
+}
+
+// A pending metadata consumer owns its continuation capture. Closing local
+// work releases that capture even while shared native publication stays live.
+function pendingMetadataConsumer(closed) {
+    const ctx = { execution: new r.Execution(), errorContext: `metadata-consumer/${closed}` }
+    const gate = Promise.withResolvers()
+    const holder = new r.ContextChain({ api: r.externalState({ wait() { return gate.promise } }) }, ctx, { api: {} })
+    const mutation = r.run(holder, ["api"], "wait", [], ctx, { mutationScopeDepth: 1 })
+    const owner = new OperationOwner(ctx)
+    const capture = new MetadataCapture(holder._externalMutationTree, undefined, owner)
+    const payload = { called: false }
+    const result = capture.collect(holder._externalMutationTree, collectorFor(payload))
+    assert(r.isPending(result, ctx))
+    capture.close()
+    if (closed) owner.close()
+    return { ctx, holder, gate, mutation, owner, result, closed, weak: new WeakRef(payload) }
+}
+const metadataConsumers = [pendingMetadataConsumer(false), pendingMetadataConsumer(true)]
 for (let index = 0; index < 30; index++) { await turn(); global.gc() }
 assert.deepEqual(states.filter(state => state.weak.deref()).map(state => state.ctx.errorContext), [],
     "Completed external work retains a resource after its authority holder is released")
 assert(metadataCaptures.every(state => !state.weak.deref()), "Native work retains obsolete sibling metadata")
+for (const state of metadataConsumers) {
+    assert.equal(Boolean(state.weak.deref()), !state.closed, "Metadata consumer capture follows its local owner")
+    const payload = state.closed ? undefined : state.weak.deref()
+    state.gate.reject(new Error("metadata publication"))
+    assert(r.isPoisonError(await state.mutation))
+    await state.result
+    if (!state.closed) {
+        assert.equal(payload.called, true)
+        state.owner.close()
+    }
+}
 for (const state of metadataCaptures) {
     state.gate.resolve(1)
     assert.equal(await state.result, 1)
@@ -194,4 +244,4 @@ for (const state of snapshots) {
 }
 for (let index = 0; index < 30; index++) { await turn(); global.gc() }
 assert(pending.every(state => !state.weak.deref()), "Completed direct calls retain their receivers")
-console.log(`${states.length + pending.length + metadataCaptures.length} external authority-release cases passed`)
+console.log(`${states.length + pending.length + metadataCaptures.length + metadataConsumers.length} external authority-release cases passed`)

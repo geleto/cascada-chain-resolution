@@ -1,23 +1,14 @@
 // Count only the original Array's refresh work, excluding necessary copy work.
 import assert from "node:assert/strict"
-import { normalizeModuleURL } from "../module-url.js"
-import { registerHooks } from "node:module"
+import { instrumentRuntime } from "../runtime-transform.js"
 
 let measured, visits = 0
-let instrumented = false
 globalThis.__countLengthNode = state => { if (state === measured) visits++ }
-const moduleURL = new URL("../../src/array-length.js", import.meta.url).href
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context)
-    if (normalizeModuleURL(url) !== normalizeModuleURL(moduleURL)) return loaded
-    if (process.env.CASCADA_WORK_NOOP_LOADER === "1") return loaded
-    const marker = "for (let node = start; node;) {"
-    assert(String(loaded.source).includes(marker), "Length work counter needs updating")
-    instrumented = true
-    return { ...loaded, source: String(loaded.source).replace(marker, marker + " globalThis.__countLengthNode(this);") }
-} })
+const verifyInstrumentation = instrumentRuntime(new Map([["array-length.js", [[
+    "for (let node = start; node;) {", "$& globalThis.__countLengthNode(this);",
+]]]]), process.env.CASCADA_WORK_NOOP_LOADER !== "1")
 const r = await import("../../src/index.js")
-assert(instrumented, "Length work requires its runtime counter loader")
+verifyInstrumentation("Length work requires its runtime counter loader")
 const { metaOf } = await import("../../src/meta.js")
 
 for (const size of [2, 8, 32]) for (const imported of [false, true]) for (const view of [false, true])

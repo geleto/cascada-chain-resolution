@@ -1,7 +1,5 @@
 # Cascada chain resolution
 
-The selected [Phase 3 identity contract](docs/data-limitations.md#managed-identity) is write-based: even an equal-value write separates identity; only commands that publish nothing are no-ops. Protection and representation copies inherit identity. Searches and export will use settled publication outcomes, without comparison-evidence machinery. This integration remains planned; see the [runtime evolution plan](docs/runtime-evolution-plan.md).
-
 ## Introduction
 
 Cascada is a runtime kernel for an implicitly asynchronous data language. A
@@ -13,9 +11,10 @@ operation had run sequentially.
 A `Chain` holds a logical root value. Path operations read and update its graph,
 Promise versions preserve the exact property versions captured by pending work,
 and copy-on-write keeps mutations isolated between owners. Imported managed data is
-never modified; explicit external mutation changes only its authorized owner. Recoverable JavaScript `Error` objects are language values, so
-a rejected data Promise poisons the affected value without stopping unrelated
-work. Each language failure records its causal source operation and kind.
+never modified; explicit external mutation changes only its authorized owner.
+A rejected data Promise poisons the affected value without stopping unrelated
+work. Ordinary native Errors remain healthy data; recoverable failures use
+`PoisonError` and record their causal source operation and kind.
 
 The package is native ESM and needs no build step. Its implementation uses
 standard JavaScript APIs and relative imports, so it can load directly in

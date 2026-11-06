@@ -185,16 +185,17 @@ function collectFencedErrorWaits(value, queryWork) {
             queryWork.operationContext,
         )) {
             if (!queryWork.open) break
-            const child = languageProperties.readLanguageProperty(
+            const placement = languageProperties.readLanguagePlacement(
                 node,
                 key,
                 queryWork.operationContext,
             )
+            const child = placement.value
 
             if (errorUtils.isPoisonError(child)) {
                 queryWork.found(child)
             } else if (languageValues.isPending(child, queryWork.operationContext)) {
-                const wait = collectPromiseErrors(node, key, child)
+                const wait = collectPromiseErrors(placement)
                 if (languageValues.isPending(wait, queryWork.operationContext)) waits.push(wait)
             } else if (languageValues.isTraversable(child, queryWork.operationContext)) {
                 walk(child)
@@ -202,10 +203,10 @@ function collectFencedErrorWaits(value, queryWork) {
         }
     }
 
-    function collectPromiseErrors(parent, key, promise) {
-        const result = propertyVersions.observePromiseVersion(
-            promise,
-            propertyVersions.requirePromiseVersion(parent, key, queryWork.operationContext),
+    function collectPromiseErrors(placement) {
+        return propertyVersions.observePromiseVersion(
+            placement.value,
+            placement.sourceVersion,
             queryWork.operationContext,
             value => {
                 if (!queryWork.open) return undefined
@@ -221,7 +222,6 @@ function collectFencedErrorWaits(value, queryWork) {
             },
             queryWork,
         )
-        return result
     }
 }
 

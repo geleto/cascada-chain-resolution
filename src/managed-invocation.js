@@ -1,6 +1,5 @@
 import { createMutationOutcome } from "./mutations.js"
-import { ManagedCapture } from "./managed-capture.js"
-import { assembleCapturedGraph } from "./captured-graph.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 import * as internalSteps from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
@@ -27,21 +26,9 @@ function selectManagedMethodDescription(invocationWork) {
                     languageValues.admitReadyValue(copy, invocationWork.operationContext, node.type, node.prototype)
                     if (!mutation && preserveIdentity) metadata.requireMeta(copy, invocationWork.operationContext).generation = node.identity
                 })[0]
-                return mutation
-                    ? invokeMutation(
-                        prepared.callable,
-                        workingReceiver,
-                        prepared.args,
-                        invocationWork.operationContext,
-                        invocationWork,
-                    )
-                    : invokeObservation(
-                        prepared.callable,
-                        workingReceiver,
-                        prepared.args,
-                        invocationWork.operationContext,
-                        invocationWork,
-                    )
+                const invoke = mutation ? invokeMutation : invokeObservation
+                return invoke(prepared.callable, workingReceiver, prepared.args,
+                    invocationWork.operationContext, invocationWork)
             } finally { prepared.release() }
         },
     }
@@ -200,12 +187,12 @@ function invokeMutation(callable, receiver, args, operationContext, work) {
                     operationContext,
                     errorUtils.ERROR_KIND.InvocationFailed,
                 )
-                return { mutatedValue: failure, result: failure }
+                return failure
             }
             // Direct method failure poisons the receiver. Importing an independent
             // result can fail separately after the method has completed its mutation.
-            const failures = { errors: new Set() }
             const receiverFailure = validateReceiver(receiver, operationContext)
+            const failures = receiverFailure ? new Set([receiverFailure]) : undefined
             const outcome = createMutationOutcome(receiverFailure ?? receiver, undefined, operationContext)
             const imported =
                 value === receiver
@@ -217,7 +204,7 @@ function invokeMutation(callable, receiver, args, operationContext, work) {
                       )
             work.retainOutput(imported)
             outcome.result = receiverFailure
-                ? errorUtils.combineErrors([receiverFailure, ...failures.errors]) : imported
+                ? errorUtils.combineErrors(failures) : imported
             return outcome
         } finally {
             // Spent captures must not outlive this call through an unformatted Error.

@@ -5,8 +5,7 @@ import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-
 import * as arrayRemaps from "./array-remap.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
-import { ManagedCapture } from "./managed-capture.js"
-import { assembleCapturedGraph } from "./captured-graph.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -20,10 +19,10 @@ const arrayConcat = Array.prototype.concat
 const arrayFlat = Array.prototype.flat
 const arraySort = Array.prototype.sort
 
-// Dispatch precedence is view, direct observation, remap producer, then the
+// Dispatch precedence is direct output, observation, remap producer, then the
 // captured intrinsic on a property remap. methodResult is absent for pure
 // observations, RETURN_RECEIVER for receiver-returning mutators, or a result
-// handler. viewNativeResult reconstructs the native result a view mutation
+// handler. outputResult reconstructs the native result an output builder
 // would have returned, which methodResult then consumes.
 // leaseInputsThroughResult protects receiver placements and retained payloads
 // until a delayed observation has captured its output.
@@ -42,18 +41,18 @@ const ARRAY_METHODS = {
         leaseInputsThroughResult: true,
         prepare: prepareConcatArguments,
         remap: createConcatRemap,
-        view: tryConcatArrayView,
+        output: tryConcatArrayView,
     },
     copyWithin: {
         inputs: [numericInput, numericInput, numericInput],
         intrinsic: Array.prototype.copyWithin,
-        remap: copyWithin,
+        output: copyWithin,
         methodResult: RETURN_RECEIVER,
     },
     fill: {
         inputs: [PASS_AS_PAYLOAD, numericInput, numericInput],
         intrinsic: Array.prototype.fill,
-        remap: fill,
+        output: fill,
         methodResult: RETURN_RECEIVER,
     },
     flat: {
@@ -83,15 +82,15 @@ const ARRAY_METHODS = {
     pop: {
         intrinsic: Array.prototype.pop,
         methodResult: retainElement,
-        view: tryPopArrayView,
-        viewNativeResult: getLastElementPlacement,
+        output: tryPopArrayView,
+        outputResult: getLastElementPlacement,
     },
     push: {
         intrinsic: Array.prototype.push,
         restInput: PASS_AS_PAYLOAD,
         methodResult: plainResult,
-        view: tryAppendArrayView,
-        viewNativeResult: getViewLength,
+        output: tryAppendArrayView,
+        outputResult: getViewLength,
     },
     reverse: {
         intrinsic: Array.prototype.reverse,
@@ -101,8 +100,8 @@ const ARRAY_METHODS = {
     shift: {
         intrinsic: Array.prototype.shift,
         methodResult: retainElement,
-        view: tryShiftArrayView,
-        viewNativeResult: getFirstElementPlacement,
+        output: tryShiftArrayView,
+        outputResult: getFirstElementPlacement,
     },
     slice: { inputs: [numericInput, numericInput], prepare: prepareSliceBounds, observe: slice },
     sort: {
@@ -465,8 +464,10 @@ function prepareSearchArguments(args, invocationWork) {
     const backwards = invocationWork.method === "lastIndexOf"
     const [searchValue, fromIndex = backwards ? Infinity : 0] = args
     const at = start => ({ searchValue, start })
-    const capture = () => resolveArrayLength(invocationWork,
-        length => at(backwards ? normalizeBackwardStart(fromIndex, length) : normalizeForwardStart(fromIndex, length)))
+    const capture = () => resolveArrayLength(invocationWork, length => {
+        if (!backwards) return at(Math.max(length + fromIndex, 0))
+        return at(fromIndex < 0 ? length + fromIndex : Math.min(fromIndex, length - 1))
+    })
     return runArrayStep(invocationWork, () => {
         // Absolute forward starts need no length. An absolute backward
         // start needs only proof that the position is in range.
@@ -518,13 +519,18 @@ function fill(args, work, reportWrites) {
         reportWrites(writes)
         if (!writes) return
     }
-    const entries = new Array(Math.max(0, end - start)).fill(args[0])
-    return new arrayRemaps.ArrayRangeRemap(start, entries, length)
+    let entries = new Array(Math.max(0, end - start)).fill(args[0])
+    args = undefined
+    try { return runArrayStep(work, () => arrayRemaps.createRangeOutput(start, entries, work)) }
+    finally { entries = undefined }
 }
 
 function reverse(args, work, reportWrites) {
-    return remapSparseMutation(ARRAY_METHODS.reverse.intrinsic, args, work, reportWrites,
-        index => index !== work.arrayLength - index - 1)
+    const writes = captureArrayWrites(work)
+    const remap = arrayRemaps.createRemap(work.receiver, work.operationContext, 0, work.arrayLength, undefined,
+        (placement, index) => { if (index !== work.arrayLength - index - 1) writes.observe(placement) })
+    if (work.mutation) reportWrites(writes.outcome)
+    return Reflect.apply(ARRAY_METHODS.reverse.intrinsic, remap, args)
 }
 
 function copyWithin(args, work, reportWrites) {
@@ -538,7 +544,7 @@ function copyWithin(args, work, reportWrites) {
         return
     }
     const writes = captureArrayWrites(work)
-    const entries = arrayRemaps.createRemap(work.receiver, work.operationContext, start, start + Math.max(0, count), undefined, writes.observe)
+    let entries = arrayRemaps.createRemap(work.receiver, work.operationContext, start, start + Math.max(0, count), undefined, writes.observe)
     if (work.mutation && writes.outcome !== true) {
         for (let index = target; index < target + count && writes.outcome !== true; index++) {
             const placement = propertyVersions.getPropertyPlacement(work.receiver, String(index), work.operationContext)
@@ -546,19 +552,12 @@ function copyWithin(args, work, reportWrites) {
         }
     }
     if (work.mutation) reportWrites(writes.outcome)
-    return new arrayRemaps.ArrayRangeRemap(target, entries, length)
+    try { return runArrayStep(work, () => arrayRemaps.createRangeOutput(target, entries, work)) }
+    finally { entries = undefined }
 }
 
 // Capture presence during the existing remap walk. Holes do not write, and a
 // known write makes the remaining presence questions irrelevant to identity.
-function remapSparseMutation(intrinsic, args, work, reportWrites, touches) {
-    const writes = captureArrayWrites(work)
-    const remap = arrayRemaps.createRemap(work.receiver, work.operationContext, 0, work.arrayLength, undefined,
-        (placement, index) => { if (touches(index)) writes.observe(placement) })
-    if (work.mutation) reportWrites(writes.outcome)
-    return Reflect.apply(intrinsic, remap, args)
-}
-
 function captureArrayWrites(work) {
     const { operationContext } = work
     let published = false
@@ -894,18 +893,6 @@ function orderedIndexSearch(
                 present => present ? next() : -1)
         })
     }
-}
-
-function normalizeForwardStart(fromIndex, length) {
-    return fromIndex === Infinity
-        ? length
-        : fromIndex >= 0 ? fromIndex : Math.max(length + fromIndex, 0)
-}
-
-function normalizeBackwardStart(fromIndex, length) {
-    return fromIndex === -Infinity
-        ? -1
-        : fromIndex >= 0 ? Math.min(fromIndex, length - 1) : length + fromIndex
 }
 
 function toRelativeIndex(value, length, defaultValue) {

@@ -106,4 +106,22 @@ describe("runtime worker loader evidence", function () {
             assert.match(result.stderr, /work requires its runtime counter loader/)
         })
     }
+
+    for (const mode of ["unloaded", "missing anchor", "ambiguous anchor"]) {
+        it(`rejects ${mode} in shared work instrumentation`, () => {
+            const marker = mode === "missing anchor" ? "missing runtime counter anchor" :
+                mode === "ambiguous anchor" ? "operationContext" : anchor
+            const script = `
+                import { instrumentRuntime } from './test/runtime-transform.js';
+                const verify = instrumentRuntime(new Map([['input-preparations.js', [[${JSON.stringify(marker)}, '$&']]]]));
+                ${mode === "unloaded" ? "" : "await import('./src/index.js');"}
+                verify('work-loader-receipt');
+            `
+            const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--input-type=module", "-e", script],
+                { encoding: "utf8", timeout: 15000 })
+            assert.ifError(result.error)
+            assert.equal(result.status, 1)
+            assert.match(result.stderr, mode === "unloaded" ? /work-loader-receipt/ : /Runtime counter anchor/)
+        })
+    }
 })

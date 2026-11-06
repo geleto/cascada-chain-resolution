@@ -1,3 +1,4 @@
+import { logicalVersionEntries } from "./verify-parents.js"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -1019,7 +1020,7 @@ describe("scope boundary regressions", () => {
         for (let index = 0; index < 100; index++) r.enter(chain, [`absent${index}`], ctx, true, () => {})
         await checkpoint()
         assert.deepStrictEqual(await r.export(chain, [], ctx), {})
-        assert.deepStrictEqual(Object.keys(metaOf(chain._state.value, ctx).placementVersions ?? {}), [],
+        assert.deepStrictEqual(logicalVersionEntries(metaOf(chain._state.value, ctx)).map(([key]) => key), [],
             "An empty settled graph must not retain historical absent entries")
     })
 
@@ -1044,7 +1045,7 @@ describe("scope boundary regressions", () => {
         }
         await Promise.all(completions)
         assert.deepStrictEqual(await r.export(chain, [], ctx), { sibling: 19 })
-        assert.deepStrictEqual(Object.keys(metaOf(chain._state.value, ctx).placementVersions ?? {}), [])
+        assert.deepStrictEqual(logicalVersionEntries(metaOf(chain._state.value, ctx)).map(([key]) => key), [])
         verifyRefCounts(ctx, chain._state.value)
     })
 })

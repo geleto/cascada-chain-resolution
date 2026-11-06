@@ -95,11 +95,11 @@ class PathOperation extends OperationOwner {
                         return this.repairPlacement(target)
                     }
                     return steps.continueGraphTransition(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
-                        this.operationContext, value => ({ mutatedValue: value, result: undefined }))
+                        this.operationContext, value => ({ placement: { value, present: true }, result: undefined }))
                 }, { end: depth, observeTarget: !this.repair, preserveOnFailure: this.repair, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(selected, this.operationContext, outcome => {
                 if (errors.isPoisonError(outcome.result)) return outcome.result
-                const value = errors.isPoisonError(outcome) ? outcome : outcome.mutatedValue
+                const value = errors.isPoisonError(outcome) ? outcome : outcome.placement.value
                 return errors.isPoisonError(value) ? onValue(value) :
                     this.reachExternal(value, depth, onExternal)
             })
@@ -137,7 +137,7 @@ class PathOperation extends OperationOwner {
         const select = blocker => {
             if (blocker) {
                 identity = boundary = scope = undefined
-                return { mutatedValue: undefined, result: blocker }
+                return { result: blocker }
             }
             return steps.continueGraphTransition(this.selectRoute(start), operationContext, invalid => {
                 if (invalid && (!this.mutation || this.repair)) {
@@ -153,7 +153,7 @@ class PathOperation extends OperationOwner {
                 return steps.collectInputs([rejected ? undefined : this.externalEffect?.readiness, blocker], operationContext, ([, blocker]) => {
                     try {
                         if (!this.open) return undefined
-                        if (blocker) return this.mutation ? { mutatedValue: undefined, result: blocker } : blocker
+                        if (blocker) return this.mutation ? { result: blocker } : blocker
                         if (invalid) return invalid
                         // Invalid observations stop before the child: preserve the reached
                         // prefix's own poison, without collecting any descendant Errors.
@@ -197,7 +197,7 @@ class PathOperation extends OperationOwner {
                     try {
                         const failure = rejected ?? this.routeFailure
                         const placement = failure ? state.originalPlacement : state.baseline
-                        return { mutatedValue: placement.value, result: failure, placement }
+                        return { placement, result: failure }
                     } finally { state = undefined }
                 }, undefined, this)
             })
@@ -236,7 +236,23 @@ class PathOperation extends OperationOwner {
                     working = { holder, publication: new IdentityPublication(operationContext) }
                     versions.transferPlacement(state.baseline, holder, "value", operationContext)
                 }
-                return transform(value, state, working, depth)
+                const transformed = transform(value, state, working, depth)
+                value = state = undefined
+                if (!working) return transformed
+                return steps.continueGraphTransition(transformed, operationContext, outcome => {
+                    try {
+                        // A nested edit publishes its complete scope capture. Its
+                        // independent result and failed receiver remain separate.
+                        if (errors.isPoisonError(outcome)) return outcome
+                        if (errors.isPoisonError(outcome?.placement?.value)) {
+                            outcome.failed = true
+                            return outcome
+                        }
+                        const placement = versions.capturePlacement(working.holder, "value", operationContext)
+                        working.publication.finish()
+                        return { placement, result: outcome?.result, published: working.publication.outcome() }
+                    } finally { working = undefined }
+                })
             }, { replace: replaceScope && depth === requestedDepth, repair: this.repair,
                 consumeRestored: true, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(outcome, operationContext, published => {
@@ -257,7 +273,7 @@ class PathOperation extends OperationOwner {
 
     finishMutation(outcome) {
         return steps.continueGraphTransition(outcome, this.operationContext, outcome => {
-            const failure = errors.isPoisonError(outcome) ? outcome : errors.isPoisonError(outcome.mutatedValue) ? outcome.mutatedValue : null
+            const failure = errors.isPoisonError(outcome) ? outcome : errors.isPoisonError(outcome.placement?.value) ? outcome.placement.value : null
             // Blocked operations return result-only outcomes and preserve the
             // predecessor metadata captured at issuance.
             this.metadataSelection?.finish(false)
@@ -268,7 +284,9 @@ class PathOperation extends OperationOwner {
             // any pending result (for example an Array's removed element).
             this.chain = undefined
             this.completeExternalEffect()
-            return this.finish(errors.isPoisonError(outcome) ? outcome : outcome.result)
+            const result = errors.isPoisonError(outcome) ? outcome : outcome.result
+            outcome = undefined
+            return this.finish(result)
         })
     }
 
@@ -306,13 +324,13 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
     // creates working state nor widens an absent Array index to its owner.
     const result = walkMutationPath(chain._state, operation, target => {
         if (target.propertyKind !== properties.ORDINARY_PROPERTY)
-            return { mutatedValue: undefined, result: undefined }
+            return { result: undefined }
         return operation.repairPlacement(target)
     }, { preserveOnFailure: true,
         onExternal: depth => {
             if (!operation.route.nodes[depth]?.[externalTree.TREE_NODE].identity) return
             return steps.continueGraphTransition(operation.selectRoute(depth, true), operationContext,
-                failure => ({ mutatedValue: undefined, result: failure ?? undefined }), undefined, operation)
+                failure => ({ result: failure ?? undefined }), undefined, operation)
         } })
     return operation.finishMutation(steps.continueGraphTransition(result, operationContext, outcome => {
         if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) operation.commitRepairMetadata()

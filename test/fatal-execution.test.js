@@ -399,7 +399,7 @@ describe("fatal execution", () => {
         )
 
         expect(failure).to.be(nestedFailure)
-        const gate = context.execution._metadata.get(chain._state).placementVersions.value.value
+        const gate = context.execution._metadata.get(chain._state).outgoingPlacements.get("value").value
         expect(gate).to.be.a(Promise)
         let settled = false
         gate.then(() => {

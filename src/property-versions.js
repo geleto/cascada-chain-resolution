@@ -78,7 +78,7 @@ function capturePlacementFromVersion(version) {
 // Only logical contents and unfinished source dependencies cross placements.
 function createVersionFromPlacement(placement) {
     return {
-        value: placement.value, present: placement.present, recovery: placement.recovery,
+        value: placement.value, present: placement.present !== false, recovery: placement.recovery,
         pendingPresence: placement.sourceVersion?.pendingPresence,
         transition: placement.sourceVersion?.transition,
         discoveryBlocked: placement.discoveryBlocked,
@@ -173,7 +173,7 @@ function copyPlacement(placement, owner, key, operationContext, writeBack = true
         const version = createVersionFromPlacement(placement)
         version.promiseBacked = true
         version.publication = delivery.publication
-        version.copiedDelivery = { delivery, version, key, operationContext, active: false,
+        version.copiedDelivery = { delivery, key, operationContext, active: false,
             destination: destinationOf(owner, operationContext) }
         replacePlacement(owner, key, version, operationContext, writeBack && !version.pendingPresence)
         return
@@ -192,7 +192,7 @@ function createCopyDelivery(placement, operationContext) {
     delivery.publication = resolvePlacement(placement, operationContext, (ready, releaseCapture) => {
         try {
             delivery.placement = ready
-            for (const use of delivery.uses) refreshCopiedDelivery(use.version)
+            for (const version of delivery.uses) refreshCopiedDelivery(version)
             delivery.uses.clear()
         } finally { releaseCapture?.() }
     })
@@ -205,7 +205,7 @@ function refreshCopiedDelivery(version) {
     const use = version.copiedDelivery
     if (!use?.delivery.placement) return
     delete version.copiedDelivery
-    use.delivery.uses.delete(use)
+    use.delivery.uses.delete(version)
     publishPromiseVersion(use.active ? use.destination.owner : undefined, use.key, version,
         use.delivery.placement, use.operationContext)
 }
@@ -215,14 +215,14 @@ function retainCopiedDelivery(version, active = false) {
     if (!use) return
     use.active ||= active
     if (use.delivery.placement) refreshCopiedDelivery(version)
-    else use.delivery.uses.add(use)
+    else use.delivery.uses.add(version)
 }
 
 function releaseCopiedDelivery(version, inactive = false) {
     const use = version.copiedDelivery
     if (!use) return
     if (inactive) use.active = false
-    if (!use.active && !version.captures) use.delivery.uses.delete(use)
+    if (!use.active && !version.captures) use.delivery.uses.delete(version)
 }
 
 function transferPlacement(placement, owner, key, operationContext, destinationVersion,
@@ -299,7 +299,7 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
                 operationContext, resolve), operationContext)
         },
     }
-    const version = { value: gate.promise, promiseBacked: true, pendingPresence: true, transition,
+    const version = { value: gate.promise, present: true, promiseBacked: true, pendingPresence: true, transition,
         position: captured.position, discoveryBlocked: captured.discoveryBlocked }
     version.storageAbsent = previous ? previous.storageAbsent : !captured.present
     if (capturedVersion) {
@@ -359,12 +359,11 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
     // Captured consumers may resume after publication makes this placement
     // ready. Preserve their value before a later synchronous writer can use it.
     const commit = () => {
-        const copied = version.copiedDelivery
-        if (copied) copied.delivery.uses.delete(copied)
+        version.copiedDelivery?.delivery.uses.delete(version)
         delete version.copiedDelivery
         delete version.copyDelivery
         version.value = placement.value
-        version.present = placement.present
+        version.present = placement.present !== false
         version.recovery = placement.recovery
         version.pendingPresence = placement.pendingPresence
         version.transition = placement.transition
@@ -398,28 +397,39 @@ function detachAbsentVersion(owner, key, version, operationContext) {
         detachPlacementVersion(owner, key, operationContext)
 }
 
-function getPlacementVersion(owner, key, operationContext) {
-    return metadata.metaOf(owner, operationContext)?.placementVersions?.[key] ??
-        ArrayView.backingVersion(owner, key, operationContext)
+// Forward edges and logical overrides share one maintained placement table.
+// Physical edges contain only value; an override owns an explicit presence fact.
+function getOwnPlacementVersion(owner, key, operationContext) {
+    const placement = metadata.metaOf(owner, operationContext)?.outgoingPlacements?.get(String(key))
+    return placement?.present === undefined ? undefined : placement
 }
 
-function getPromiseVersion(owner, key, operationContext) {
-    const version = getPlacementVersion(owner, key, operationContext)
-    return version?.promiseBacked === true ? version : undefined
+function ownPlacementVersionEntries(owner, operationContext) {
+    const meta = metadata.metaOf(owner, operationContext)
+    const entries = [...(meta?.outgoingPlacements ?? [])].filter(([, placement]) => placement.present !== undefined)
+    if (meta?.type === metadata.TYPE.Array || meta?.backingOwners) entries.sort(([a], [b]) => Number(a) - Number(b))
+    return entries
+}
+
+function getPlacementVersion(owner, key, operationContext) {
+    return getOwnPlacementVersion(owner, key, operationContext) ??
+        ArrayView.backingVersion(owner, key, operationContext)
 }
 
 function installPlacementVersion(owner, key, version, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
-    meta.placementVersions ??= Object.create(null)
-    if (meta.placementVersions[key]) releaseCopiedDelivery(meta.placementVersions[key], true)
-    meta.placementVersions[key] = version
+    const placements = meta.outgoingPlacements ??= new Map()
+    const previous = placements.get(key)
+    if (previous) releaseCopiedDelivery(previous, true)
+    version.present ??= true
+    placements.set(key, version)
 }
 
 function detachPlacementVersion(owner, key, operationContext) {
-    const versions = metadata.metaOf(owner, operationContext)?.placementVersions
-    if (versions?.[key]) {
-        releaseCopiedDelivery(versions[key], true)
-        delete versions[key]
+    const version = getOwnPlacementVersion(owner, key, operationContext)
+    if (version) {
+        releaseCopiedDelivery(version, true)
+        metadata.requireMeta(owner, operationContext).outgoingPlacements.delete(key)
     }
 }
 
@@ -540,12 +550,6 @@ function resolvePropertyValueAtKey(owner, key, operationContext) {
 
 function resolvePropertyIdentityAtKey(owner, key, operationContext) {
     return new PropertyPlacement(owner, String(key), operationContext).resolveValue(captureIdentity)
-}
-
-function requirePromiseVersion(owner, key, operationContext) {
-    const promiseVersion = getPromiseVersion(owner, key, operationContext)
-    if (!promiseVersion) throw new Error("Pending property has no Promise version")
-    return promiseVersion
 }
 
 function assignProperty(
@@ -740,11 +744,10 @@ function copyArrayOverlays(
     sourceEnd = ArrayView.minimumLength(source, operationContext),
     destinationOffset = 0,
 ) {
-    const versions = metadata.requireMeta(source, operationContext).placementVersions
-    for (const sourceKey of Object.keys(versions ?? {})) {
+    for (const [sourceKey, version] of ownPlacementVersionEntries(source, operationContext)) {
         const index = Number(sourceKey)
         if (index < sourceStart || index >= sourceEnd) continue
-        const captured = capturePlacementFromVersion(versions[sourceKey])
+        const captured = capturePlacementFromVersion(version)
         copyPlacement(captured, destination, String(index + destinationOffset), operationContext, false)
     }
 }
@@ -776,10 +779,10 @@ export {
     continueCapturedPromiseVersion,
     deleteProperty,
     releaseHolder,
-    requirePromiseVersion,
     getPropertyPlacement,
-    getPromiseVersion,
     getPlacementVersion,
+    getOwnPlacementVersion,
+    ownPlacementVersionEntries,
     isPropertyPlacement,
     commitPromiseVersion,
     installPlacementVersion,

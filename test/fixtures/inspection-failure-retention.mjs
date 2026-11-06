@@ -116,6 +116,37 @@ function snapshotCase(route, cause) {
     return { ctx, result, weak: [new WeakRef(source)], retained: new WeakRef(prototype) }
 }
 
+function snapshotKeys(target) {
+    if (this.armed && this.route === "keys")
+        throw this.cause ?? new Error("fresh snapshot keys failure")
+    return Reflect.ownKeys(target)
+}
+
+function snapshotPlacement(target, key) {
+    if (this.armed && this.route === "placement" && key === "payload")
+        throw this.cause ?? new Error("fresh snapshot placement failure")
+    return Reflect.getOwnPropertyDescriptor(target, key)
+}
+
+function snapshotStructureCase(route, cause) {
+    const ctx = { execution: new r.Execution(), errorContext: route }
+    const prototype = { method() { return 1 } }
+    const handler = { route, cause, armed: false,
+        ownKeys: snapshotKeys, getOwnPropertyDescriptor: snapshotPlacement }
+    const source = new Proxy(Object.assign(Object.create(prototype), { payload: 1 }), handler)
+    assert.equal(r.managedState(source), source)
+    const host = r.externalState({ value: source })
+    const chain = new r.ContextChain({ host }, ctx, { host: {} })
+    handler.armed = route !== "healthy"
+    const result = r.lookupPath(chain, ["host", "value"], ctx)
+    r.assignPath(chain, ["host", "value"], null, ctx)
+    if (route !== "healthy")
+        return failureState(result, [source, prototype], cause, "ExternalPropertyReadFailed", ctx)
+    assert.equal(result.payload, 1)
+    assert.equal(Object.getPrototypeOf(result), prototype)
+    return { ctx, result, weak: [new WeakRef(source)], retained: new WeakRef(prototype) }
+}
+
 function declarationControl() {
     const source = { value: 1 }
     return { result: r.externalState(source), weak: [], retained: new WeakRef(source) }
@@ -132,8 +163,11 @@ for (const fresh of [false, true]) {
         cases.push([`discovery ${route}, fresh=${fresh}`, discoveryCase(route, cause)])
     for (const route of ["descriptor", "ascent"])
         cases.push([`snapshot ${route}, fresh=${fresh}`, snapshotCase(route, cause)])
+    for (const route of ["keys", "placement"])
+        cases.push([`snapshot structure ${route}, fresh=${fresh}`, snapshotStructureCase(route, cause)])
 }
-cases.push(["healthy snapshot", snapshotCase("healthy")], ["healthy declaration", declarationControl()])
+cases.push(["healthy snapshot", snapshotCase("healthy")],
+    ["healthy snapshot structure", snapshotStructureCase("healthy")], ["healthy declaration", declarationControl()])
 for (let turn = 0; turn < 25; turn++) {
     await new Promise(setImmediate)
     global.gc()

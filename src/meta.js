@@ -89,6 +89,23 @@ function isPlainObjectPrototype(prototype, reflect) {
     } finally { prototype = constructor = undefined }
 }
 
+// Declarations stop at the first invalid prototype; snapshots collect failures
+// through the remaining chain. The boundary owns diagnostics and may return a
+// failure from onUnsafe to stop inspection.
+function inspectManagedPrototype(prototype, reflect, onUnsafe) {
+    try {
+        while (prototype !== null) {
+            if (isPlainObjectPrototype(prototype, reflect)) return undefined
+            const descriptor = reflect(() => Object.getOwnPropertyDescriptor(prototype, "then"))
+            if (descriptor && (!("value" in descriptor) || typeof descriptor.value === "function")) {
+                const failure = onUnsafe()
+                if (failure) return failure
+            }
+            prototype = reflect(() => Object.getPrototypeOf(prototype))
+        }
+    } finally { prototype = undefined }
+}
+
 function identityDeclarationOf(value) {
     return IDENTITY_DECLARATIONS.get(value)
 }
@@ -176,6 +193,7 @@ export {
     isImported,
     identityDeclarationOf,
     inspectAdmissionMetaFacts,
+    inspectManagedPrototype,
     classifyTypeFacts,
     isObjectLike,
     isPlainObjectPrototype,

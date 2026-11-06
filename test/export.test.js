@@ -201,14 +201,14 @@ describe("export", () => {
         importValue(root, { ...testContext, errorContext: "re-entrant cycle" })
         const chain = new Chain(root, testContext)
         const exported = exportValue(chain, ["value"], testContext)
-        const promiseVersion = metaOf(root, testContext).placementVersions.value
+        const promiseVersion = metaOf(root, testContext).outgoingPlacements.get("value")
         const resolved = { back: root }
 
         pending.resolve(resolved)
         const copy = await exported
 
         expect(copy.back.value).to.be(copy)
-        expect(metaOf(root, testContext).placementVersions.value).to.be(promiseVersion)
+        expect(metaOf(root, testContext).outgoingPlacements.get("value")).to.be(promiseVersion)
         expect(root.value).to.be(pending.promise)
         expect(readPath(chain, ["value"], testContext)).to.be(resolved)
         buildRefIndex(root, testContext)
@@ -523,14 +523,14 @@ describe("export", () => {
         pending.resolve({ value: 1 })
         await observed
 
-        const promiseVersion = metaOf(root, testContext).placementVersions.pending
-        expect(metaOf(root, testContext).placementVersions.pending).to.be(promiseVersion)
+        const promiseVersion = metaOf(root, testContext).outgoingPlacements.get("pending")
+        expect(metaOf(root, testContext).outgoingPlacements.get("pending")).to.be(promiseVersion)
 
         const exported = exportValue(chain, [], testContext)
 
         expect(exported.then).to.be(undefined)
         expect(exported).to.eql({ pending: { value: 1 } })
-        expect(metaOf(root, testContext).placementVersions.pending).to.be(promiseVersion)
+        expect(metaOf(root, testContext).outgoingPlacements.get("pending")).to.be(promiseVersion)
     })
 
     it("does not expose imported metadata", () => {

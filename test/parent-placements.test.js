@@ -1,3 +1,4 @@
+import { logicalVersionEntries } from "./verify-parents.js"
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { metaOf } from "../src/meta.js"
@@ -124,7 +125,7 @@ describe("complete incoming placements", () => {
     it("shares backing occurrences without an overlay for every ready element", () => {
         const ctx = context(), child = {}, source = [child, child], chain = new r.Chain(source, ctx)
         const view = r.run(chain, [], "slice", [1], ctx, {})
-        assert.equal(metaOf(view, ctx).placementVersions, undefined)
+        assert.deepEqual(logicalVersionEntries(metaOf(view, ctx)), [])
         assert(pairs(child, ctx).some(p => p.parent === view && p.key === "0"))
         assert.equal(pairs(child, ctx).length, 3)
         verifyParents(ctx, source, view)

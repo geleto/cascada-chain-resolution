@@ -235,7 +235,7 @@ describe("causal Error attribution", () => {
 
         expect(occurrence.cause).to.be(native)
         expect(lookupPath(chain, ["value"], testContext)).to.be(1)
-        expect(metaOf(chain._state.value, testContext).placementVersions?.value)
+        expect(metaOf(chain._state.value, testContext).outgoingPlacements?.get("value"))
             .to.be(undefined)
     })
 

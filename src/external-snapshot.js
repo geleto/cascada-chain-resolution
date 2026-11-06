@@ -3,158 +3,127 @@ import * as errors from "./error.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import { capturePlacement } from "./property-versions.js"
-import { externalCapabilityEscapeError } from "./external-operation.js"
-import { createIdentity, captureIdentity, copyIdentity, groupCapturedIdentities } from "./captured-identity.js"
-import { CapturedGraph, assembleCapturedGraph } from "./captured-graph.js"
+import { copyIdentity, groupCapturedIdentities } from "./captured-identity.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 import { continueGraphTransition } from "./internal-step.js"
 import { isPending } from "./language-values.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { initializePlacements } from "./parent-placements.js"
 import { mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 
+// The snapshot reader validates ready-only data; graph construction, aliases,
+// cycle bounds and output disposal use the same capture as managed consumers.
+class SnapshotCapture extends ManagedCapture {
+    leaves = new Map()
+    failures = new Set()
+
+    constructor(owner, admit) {
+        super(owner, errors.ERROR_KIND.ExternalPropertyReadFailed, error => this.failed(error))
+        this.admit = admit
+    }
+
+    failed(failure) {
+        this.failures.add(failure)
+        this.discard()
+        this.leaves.clear()
+        return failure
+    }
+
+    invalid(message) {
+        return this.failed(errors.validationError(message, this.owner.operationContext,
+            errors.ERROR_KIND.InvalidExternalSnapshot))
+    }
+
+    native(action) {
+        return this.inspect(() => errors.runExternalAction(this.owner.operationContext, action))
+    }
+
+    describe(source, meta) {
+        const { operationContext } = this.owner
+        let facts, prototype
+        // Failed raw classification is consumed once within this snapshot too.
+        if (!metadata.isTraversableType(meta?.type)) this.visited.set(source, undefined)
+        try {
+            if (errors.isFatalError(source)) throw source
+            if (typeof source === "function") facts = meta ?? { type: metadata.TYPE.Function }
+            else facts = meta ?? this.inspect(() => metadata.inspectAdmissionMetaFacts(source, operationContext))
+            if (errors.isPoisonError(facts)) return facts
+            const managed = metadata.isTraversableType(meta?.type)
+            const array = facts.type === metadata.TYPE.Array
+            prototype = array ? Array.prototype : facts.admittedPrototype
+            // Never invoke then, including when it could deliver synchronously.
+            // Logical managed placements override stale physical host values.
+            const then = typeof source === "function" ? undefined : managed
+                ? this.inspect(() => captureSnapshotPlacement(source, "then", operationContext).value)
+                : mayBeThenable(source, operationContext) ? this.inspect(() => readCallableThen(source, operationContext)) : undefined
+            if (errors.isPoisonError(then)) this.failed(then)
+            if (typeof then === "function") {
+                this.invalid("External snapshots cannot contain thenables")
+                if (!managed) return undefined
+            }
+            if (!metadata.isTraversableType(facts.type)) {
+                if (this.admit && this.records && !meta) this.leaves.set(source, facts)
+                return facts
+            }
+            if (!managed && !array && !errors.isPoisonError(prototype)) this.inspectPrototype(prototype)
+            const length = array ? (managed
+                ? this.inspect(() => captureSnapshotPlacement(source, "length", operationContext).value)
+                : this.native(() => source.length)) : undefined
+            if (errors.isPoisonError(length)) this.failed(length)
+            else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
+                this.invalid("External snapshot Array has an invalid length")
+            return { type: facts.type, admittedPrototype: prototype, length, managed }
+        } finally { source = meta = facts = prototype = undefined }
+    }
+
+    keys(source, facts) {
+        try {
+            if (facts.managed) return properties.enumerableLanguageKeyCandidates(source, this.owner.operationContext)
+            return errors.runExternalAction(this.owner.operationContext, () => Reflect.ownKeys(source)).filter(
+                key => typeof key === "string" && (facts.type !== metadata.TYPE.Array || isArrayIndex(key)))
+        } finally { source = facts = undefined }
+    }
+
+    shape(source, keys, facts) { return { length: facts.length } }
+
+    placement(source, key, facts) {
+        try {
+            if (facts.managed) return captureSnapshotPlacement(source, key, this.owner.operationContext)
+            const descriptor = errors.runExternalAction(this.owner.operationContext,
+                () => Object.getOwnPropertyDescriptor(source, key))
+            return descriptor?.enumerable && "value" in descriptor
+                ? { present: true, value: descriptor.value } : { present: false }
+        } finally { source = undefined }
+    }
+
+    consume(placement, visit) { return visit(placement.value) }
+
+    inspectPrototype(prototype) {
+        const { operationContext } = this.owner
+        try {
+            this.inspect(() => metadata.inspectManagedPrototype(prototype,
+                action => errors.runExternalAction(operationContext, action), () => {
+                    this.invalid("External snapshot prototype contains an unsafe then property")
+                }))
+        } finally { prototype = undefined }
+    }
+}
+
 // Data capture is ready-only. Managed copies preserve undecided aliases through
 // captured cells; complete native output resolves them after source access ends.
 function captureExternalValue(value, owner, admit = true) {
     const { operationContext } = owner
-    const visited = new Map()
-    const failures = new Set()
-    const leaves = new Map()
-    const capture = new CapturedGraph(owner)
+    const capture = new SnapshotCapture(owner, admit)
     try {
-        const result = walk(value)
-        if (capture.records) capture.roots.push(result)
+        capture.walk(value, result => { capture.roots[0] = result })
         // Later conflicting native work must not wait for managed identity.
         owner.completeExternalEffect()
-        if (failures.size) {
-            capture.discard()
-            return errors.combineErrors(failures)
-        }
-        if (admit) for (const [leaf, facts] of leaves)
+        if (capture.failures.size) return errors.combineErrors(capture.failures)
+        if (admit) for (const [leaf, facts] of capture.leaves)
             metadata.getOrCreateMeta(leaf, operationContext, facts.type, facts.admittedPrototype)
         return capture
     } catch (failure) { capture.discard(); throw failure }
-    finally { visited.clear(); leaves.clear(); failures.clear(); value = undefined }
-
-    function collect(failure) {
-        failures.add(failure)
-        capture.discard()
-        leaves.clear()
-        return failure
-    }
-
-    function inspect(action) {
-        return errors.catchExternalThrow(action, operationContext,
-            errors.ERROR_KIND.ExternalPropertyReadFailed, collect)
-    }
-
-    function native(action) {
-        return inspect(() => errors.runExternalAction(operationContext, action))
-    }
-
-    function isPlainPrototype(prototype) {
-        return inspect(() => metadata.isPlainObjectPrototype(prototype,
-            action => errors.runExternalAction(operationContext, action)))
-    }
-
-    function invalid(message) {
-        return collect(errors.validationError(message, operationContext,
-            errors.ERROR_KIND.InvalidExternalSnapshot))
-    }
-
-    function walk(source) {
-        try {
-            if (errors.isFatalError(source)) throw source
-            if (errors.isPoisonError(source)) return collect(source)
-            if (!metadata.isObjectLike(source)) return source
-            if (typeof source === "function") {
-                if (admit && capture.records && !metadata.metaOf(source, operationContext)) leaves.set(source, { type: metadata.TYPE.Function })
-                return source
-            }
-            if (operationContext.execution._externalIdentities.has(source))
-                return collect(externalCapabilityEscapeError(operationContext))
-            if (visited.has(source)) return visited.get(source)
-            visited.set(source, undefined)
-            const meta = metadata.metaOf(source, operationContext)
-            const facts = meta ?? inspect(() => metadata.inspectAdmissionMetaFacts(source, operationContext))
-            if (errors.isPoisonError(facts)) return facts
-            const managed = metadata.isTraversableType(meta?.type)
-            const array = facts.type === metadata.TYPE.Array
-            const prototype = array ? Array.prototype : facts.admittedPrototype
-
-            // Never invoke then, including when it could deliver synchronously.
-            // Logical managed placements override stale physical host values.
-            const then = managed
-                ? inspect(() => captureSnapshotPlacement(source, "then", operationContext).value)
-                : mayBeThenable(source, operationContext) ? inspect(() => readCallableThen(source, operationContext)) : undefined
-            if (errors.isPoisonError(then)) collect(then)
-            if (typeof then === "function") {
-                invalid("External snapshots cannot contain thenables")
-                if (!managed) return undefined
-            }
-            if (!metadata.isTraversableType(facts.type)) {
-                if (admit && capture.records && !meta) leaves.set(source, facts)
-                visited.set(source, source)
-                return source
-            }
-            // Admitted managed sources have a fixed category and safe, stable
-            // prototype; only new host sources need those probes here.
-            if (!managed && !array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
-
-            const length = array ? (managed
-                ? inspect(() => captureSnapshotPlacement(source, "length", operationContext).value)
-                : native(() => source.length)) : undefined
-            if (errors.isPoisonError(length)) collect(length)
-            else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
-                invalid("External snapshot Array has an invalid length")
-            const type = facts.type
-            const node = capture.records ? {
-                identity: managed ? captureIdentity(source, operationContext) : createIdentity(),
-                type, prototype, shape: { length }, entries: new Map(),
-            } : undefined
-            visited.set(source, node)
-            if (node) capture.records.add(node)
-            const keys = managed
-                ? inspect(() => properties.enumerableLanguageKeyCandidates(source, operationContext))
-                : native(() => Reflect.ownKeys(source))
-            if (errors.isPoisonError(keys)) return keys
-            for (const key of keys) {
-                if (typeof key !== "string" || (array && !isArrayIndex(key))) continue
-                let child
-                if (managed) {
-                    const placement = inspect(() => capturePlacement(source, key, operationContext))
-                    if (placement.present !== true) continue
-                    if (placement.sourceVersion?.pendingPresence) {
-                        invalid("External snapshots require settled property presence")
-                        continue
-                    }
-                    child = placement.value
-                } else {
-                    const descriptor = native(() => Object.getOwnPropertyDescriptor(source, key))
-                    if (errors.isPoisonError(descriptor) || !descriptor?.enumerable || !("value" in descriptor)) continue
-                    child = descriptor.value
-                }
-                const copied = walk(child)
-                if (capture.records) node.entries.set(key, copied)
-            }
-            return node
-        } finally { source = undefined }
-    }
-
-    function inspectPrototype(prototype) {
-        let current = prototype
-        try {
-            for (; current !== null;) {
-                const plain = isPlainPrototype(current)
-                if (plain === true || errors.isPoisonError(plain)) return
-                const descriptor = native(() => Object.getOwnPropertyDescriptor(current, "then"))
-                if (errors.isPoisonError(descriptor)) return
-                if (descriptor && (!("value" in descriptor) || typeof descriptor.value === "function"))
-                    invalid("External snapshot prototype contains an unsafe then property")
-                current = native(() => Object.getPrototypeOf(current))
-                if (errors.isPoisonError(current)) return
-            }
-        } finally { prototype = current = undefined }
-    }
+    finally { capture.leaves.clear(); capture.failures.clear(); value = undefined }
 }
 
 function snapshotExternalValue(value, owner, admit = true) {

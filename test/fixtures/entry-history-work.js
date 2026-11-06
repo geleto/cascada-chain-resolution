@@ -1,20 +1,14 @@
 // Entry history grows around a single placement, not a deep data graph.
 import assert from "node:assert/strict"
-import { normalizeModuleURL } from "../module-url.js"
-import { registerHooks } from "node:module"
+import { instrumentRuntime } from "../runtime-transform.js"
 
 let preparations = 0
 globalThis.countEntryStructure = () => { preparations++ }
-const structureURL = new URL("../../src/placement-structure.js", import.meta.url).href
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context)
-    if (normalizeModuleURL(url) !== normalizeModuleURL(structureURL)) return loaded
-    const source = String(loaded.source)
-    assert(source.includes("prepare(placement) {"))
-    return { ...loaded, source: source.replaceAll("prepare(placement) {",
-        "prepare(placement) { globalThis.countEntryStructure();") }
-} })
+const verifyInstrumentation = instrumentRuntime(new Map([["placement-structure.js", [[
+    "prepare(placement) {", "$& globalThis.countEntryStructure();",
+]]]]))
 const r = await import("../../src/index.js")
+verifyInstrumentation("Entry work instrumentation must execute")
 const { verifyRefCounts } = await import("../verify-refcounts.js")
 const samples = []
 

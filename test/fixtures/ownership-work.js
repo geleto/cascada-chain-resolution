@@ -1,6 +1,6 @@
 // Read-only instrumentation: count actual production graph work, never replace it.
 import assert from "node:assert/strict"
-import { registerHooks } from "node:module"
+import { instrumentRuntime } from "../runtime-transform.js"
 
 let counts, nodeCounts
 const reset = () => {
@@ -28,7 +28,7 @@ globalThis.CountedOwners = class extends Set {
 const replacements = {
     "captured-identity.js": [["capture(value) {", "identities"]],
     "placement-structure.js": [
-        ["function defineCopyProperty(copy, key, value) {", "copies"],
+        [/function defineCopyProperty(?:Untraced)?\(copy, key, value\) \{/g, "copies"],
     ],
     "parent-placements.js": [
         ["meta.relationshipsActive = true", "activations", "owner"],
@@ -43,29 +43,19 @@ const replacements = {
         ["for (let node = start; node;) {", "lengthVisits"],
     ],
 }
-const sourceRoot = new URL("../../src/", import.meta.url).href
-registerHooks({ load(url, context, next) {
-    const result = next(url, context)
-    if (!url.startsWith(sourceRoot)) return result
-    let source = String(result.source)
-    if (url.endsWith("/array-view.js")) {
-        assert(source.includes("this.owners = new Set()"))
-        source = source.replace("this.owners = new Set()", "this.owners = new globalThis.CountedOwners()")
-    }
-    if (url.endsWith("/parent-placements.js")) {
-        const marker = "return meta.destination ??= { owner: meta.relationshipsActive ? owner : undefined }"
-        assert(source.includes(marker), "Missing publication-destination allocation counter")
-        source = source.replace(marker, "if (!meta.destination) globalThis.countOwnershipWork('destinations');\n    " + marker)
-    }
-    for (const [originalMarker, key, node = "undefined"] of replacements[url.slice(sourceRoot.length)] ?? []) {
-        const marker = source.includes(originalMarker) ? originalMarker : originalMarker.replace(/function (\w+)\(/, 'function $1Untraced(')
-        assert(source.includes(marker), `Missing work counter: ${marker}`)
-        source = source.replaceAll(marker, `${marker}\n globalThis.countOwnershipWork("${key}", ${node});`)
-    }
-    return { ...result, source }
-} })
+const changes = new Map(Object.entries(replacements).map(([file, rows]) => [file,
+    rows.map(([marker, key, node = "undefined"]) =>
+        [marker, `$&\n globalThis.countOwnershipWork("${key}", ${node});`]),
+]))
+changes.get("array-view.js").push(["this.owners = new Set()", "this.owners = new globalThis.CountedOwners()"])
+changes.get("parent-placements.js").push([
+    "return meta.destination ??= { owner: meta.relationshipsActive ? owner : undefined }",
+    "if (!meta.destination) globalThis.countOwnershipWork('destinations');\n    $&",
+])
+const verifyInstrumentation = instrumentRuntime(changes)
 reset()
 const r = await import("../../src/index.js")
+verifyInstrumentation("Ownership work instrumentation must execute")
 const { metaOf } = await import("../../src/meta.js")
 const { getParentPlacements } = await import("../../src/parent-placements.js")
 const ctx = () => ({ execution: new r.Execution(), errorContext: "ownership work" })

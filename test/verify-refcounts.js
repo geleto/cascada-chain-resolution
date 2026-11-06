@@ -1,3 +1,5 @@
+import { getPromiseVersion } from "./verify-storage.js"
+import { logicalVersionEntries } from "./verify-parents.js"
 // Test-only consistency oracle. It independently recounts projected
 // placements, verifies cycle-cut shape and both parent-edge directions, and
 // rejects cycles in the projected parent graph. It also runs the storage
@@ -120,7 +122,7 @@ function verifyCycleCuts(node, operationContext) {
         }
     }
 
-    for (const key of Object.keys(meta?.placementVersions ?? {})) {
+    for (const [key] of logicalVersionEntries(meta)) {
         const version = propertyVersions.getPlacementVersion(node, key, operationContext)
         // Installed versions are logical placements, even when absent or not
         // mirrored in storage. Edge/count checks below use that same surface.
@@ -176,7 +178,7 @@ function verifyParentGraph(node, states, operationContext) {
 
 // Recount each property here instead of using the count helpers being checked.
 function recountProperty(node, key, operationContext) {
-    const promiseVersion = propertyVersions.getPromiseVersion(node, key, operationContext)
+    const promiseVersion = getPromiseVersion(node, key, operationContext)
     let child = readPropertyForRecount(node, key, operationContext)
     let frontierCount = 0
     let errorCount = 0

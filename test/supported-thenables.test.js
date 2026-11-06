@@ -1,3 +1,4 @@
+import { getPromiseVersion } from "./verify-storage.js"
 import { externalLocationPaths } from "./support.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import * as internalSteps from "../src/internal-step.js"
@@ -196,10 +197,10 @@ describe("supported thenables", () => {
         const chain = new runtime.Chain(ready(root), ctx)
         assert.equal(chain._state.value, root)
         assert.equal(runtime.lookupPath(chain, ["count"], ctx), 1)
-        assert.equal(properties.getPromiseVersion(root, "count", ctx), undefined)
+        assert.equal(getPromiseVersion(root, "count", ctx), undefined)
         runtime.assignPath(chain, ["count"], ready(2), ctx)
         assert.equal(chain._state.value.count, 2)
-        assert.equal(properties.getPromiseVersion(chain._state.value, "count", ctx), undefined)
+        assert.equal(getPromiseVersion(chain._state.value, "count", ctx), undefined)
         assert.equal(ctx.execution._thenables, undefined)
     })
 
@@ -209,7 +210,7 @@ describe("supported thenables", () => {
         const root = Object.freeze({ child: source })
         assert.equal(runtime.import(root, ctx), root)
         assert.equal(root.child, source)
-        const version = metadata.metaOf(root, ctx).placementVersions.child
+        const version = metadata.metaOf(root, ctx).outgoingPlacements.get("child")
         assert.deepEqual(version.value, { count: 1 })
         assert.equal(version.promiseBacked, undefined)
         assert.equal(runtime.lookupPath(new runtime.Chain(root, ctx), ["child", "count"], ctx), 1)

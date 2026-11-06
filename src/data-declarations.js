@@ -124,21 +124,10 @@ function managedStateClass(...classes) {
 }
 
 function validateManagedPrototype(prototype, reflect) {
-    let current = prototype
     try {
-        for (; current !== null;) {
-            const plain = metadata.isPlainObjectPrototype(current, reflect)
-            if (plain) return undefined
-            const descriptor = reflect(() => Object.getOwnPropertyDescriptor(current, "then"))
-            if (
-                descriptor &&
-                (!("value" in descriptor) || typeof descriptor.value === "function")
-            ) return errorUtils.declarationValidationError(
-                "Managed class prototypes cannot contain an unsafe then",
-            )
-            current = reflect(() => Object.getPrototypeOf(current))
-        }
-    } finally { prototype = current = undefined }
+        return metadata.inspectManagedPrototype(prototype, reflect, () =>
+            errorUtils.declarationValidationError("Managed class prototypes cannot contain an unsafe then"))
+    } finally { prototype = undefined }
 }
 
 function validateTarget(value, api, reflect) {

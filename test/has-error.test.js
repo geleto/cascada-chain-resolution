@@ -124,7 +124,7 @@ describe("hasError", () => {
         expect(counter.errorCount).to.be(0)
         expect(counter.frontierCount).to.be(2)
 
-        const promiseVersion = metaOf(branch, testContext).placementVersions.pending
+        const promiseVersion = metaOf(branch, testContext).outgoingPlacements.get("pending")
         let versionValue = promiseVersion.value
         // Fault after shared publication but before the query continuation.
         pending.promise.then(() => {
@@ -196,8 +196,8 @@ describe("hasError", () => {
         expect(await badResult).to.be(true)
         expect(cleanRoot.pending).to.be(cleanPending.promise)
         expect(badRoot.pending).to.be(badPending.promise)
-        expect(metaOf(cleanRoot, testContext).placementVersions.pending).not.to.be(undefined)
-        expect(metaOf(badRoot, testContext).placementVersions.pending).not.to.be(undefined)
+        expect(metaOf(cleanRoot, testContext).outgoingPlacements.get("pending")).not.to.be(undefined)
+        expect(metaOf(badRoot, testContext).outgoingPlacements.get("pending")).not.to.be(undefined)
         expect(getRefCounter(cleanRoot, testContext)).to.be(undefined)
         expect(getRefCounter(badRoot, testContext)).to.be(undefined)
     })

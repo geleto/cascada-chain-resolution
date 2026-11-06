@@ -5,7 +5,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import { LengthState } from "./array-length.js"
 import { addParent, removeParent, PlacementConstruction, activateRelationships } from "./parent-placements.js"
-import { copyArrayOverlays } from "./property-versions.js"
+import { copyArrayOverlays, getOwnPlacementVersion, ownPlacementVersionEntries } from "./property-versions.js"
 
 class ArrayBacking {
     constructor(array, operationContext) {
@@ -27,8 +27,8 @@ class ArrayBacking {
 
     // Includes the original Array alongside its derived views.
     visitViewPlacements(indexes, operationContext, visit) {
-        const versions = metadata.metaOf(this.producers, operationContext)?.placementVersions
-        return this.visitStoragePlacements(versions ? [...indexes].filter(index => !versions[index]) : indexes,
+        return this.visitStoragePlacements(this.producers ? [...indexes].filter(
+            index => !getOwnPlacementVersion(this.producers, index, operationContext)) : indexes,
             operationContext, visit)
     }
 
@@ -44,7 +44,7 @@ class ArrayBacking {
                 const logical = index - start
                 if (logical < 0 || length !== undefined && logical >= length) continue
                 const key = String(logical)
-                if (!meta.placementVersions?.[key] && visit(owner, key) === false) return false
+                if (!getOwnPlacementVersion(owner, key, operationContext) && visit(owner, key) === false) return false
             }
         }
     }
@@ -177,7 +177,6 @@ class ArrayView {
         let record = meta.arrayBacking
         if (!record && metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type)) {
             record = meta.arrayBacking = new ArrayBacking(backing, operationContext)
-            if (meta.relationshipsActive) record.owners.add(backing)
         }
         if (!record) return
         removeParent(previous, record, index, operationContext)
@@ -219,7 +218,7 @@ class ArrayView {
         if (range && Number(key) >= ArrayView.minimumLength(owner, operationContext)) return
         const backing = range?.backing ?? owner
         const producers = metadata.metaOf(backing, operationContext)?.arrayBacking?.producers
-        return metadata.metaOf(producers, operationContext)?.placementVersions?.[(range?.start ?? 0) + Number(key)]
+        return getOwnPlacementVersion(producers, (range?.start ?? 0) + Number(key), operationContext)
     }
 
     // Logical version consumers need only the selected range's maintained
@@ -231,18 +230,17 @@ class ArrayView {
         if (meta?.type !== metadata.TYPE.Array || !range) return
         const producers = metadata.metaOf(range.backing, operationContext)?.arrayBacking?.producers
         const producerMeta = metadata.metaOf(producers, operationContext)
-        const versions = producerMeta?.placementVersions
-        if (!versions) return
+        if (!producerMeta) return
         const end = range.start + ArrayView.minimumLength(owner, operationContext)
         start += range.start
         if (start >= end) return
         const keys = end - start <= producerMeta.outgoingPlacements.size
-            ? indexKeys(start, end) : Object.keys(versions)
+            ? indexKeys(start, end) : producerMeta.outgoingPlacements.keys()
         for (const key of keys) {
             const index = Number(key)
             if (index < start || index >= end) continue
-            const logical = String(index - range.start), version = versions[key]
-            if (version && !meta.placementVersions?.[logical]) yield [logical, version]
+            const logical = String(index - range.start), version = getOwnPlacementVersion(producers, key, operationContext)
+            if (version && !getOwnPlacementVersion(owner, logical, operationContext)) yield [logical, version]
         }
     }
 
@@ -253,7 +251,7 @@ class ArrayView {
         const meta = metadata.metaOf(owner, operationContext)
         const range = meta?.arrayRange
         if (meta?.type !== metadata.TYPE.Array || !range || range.backing === owner || meta.parents ||
-            !isArrayIndex(key) || meta.placementVersions?.[key] ||
+            !isArrayIndex(key) || getOwnPlacementVersion(owner, key, operationContext) ||
             Number(key) >= ArrayView.minimumLength(owner, operationContext) ||
             ArrayView.hasOtherStorageUse(owner, key, operationContext)) return
         const backingMeta = metadata.requireMeta(range.backing, operationContext)
@@ -283,17 +281,18 @@ class ArrayView {
             // Imported storage cannot be extended, regardless of its host descriptors.
             if (metadata.isImported(source, operationContext) ||
                 metadata.isImported(backing, operationContext)) return
-            if (ArrayView.readyLength(source, operationContext) === undefined) return
+            const logicalLength = ArrayView.readyLength(source, operationContext)
+            if (logicalLength === undefined) return
             // Repeated end growth on a moving window must not retain its whole
             // discarded prefix. Materialize the live range through the ordinary
             // fallback; other owners keep their existing backing unchanged.
-            if (count > 0 && range?.start > ArrayView.minimumLength(source, operationContext)) return
+            if (count > 0 && range?.start > logicalLength) return
             // Check tail availability before attaching a new logical owner.
             // An empty extension needs no physical write.
             let nextPhysicalLength
             if (count > 0) {
                 const length = ArrayView.#physicalLength(backing, operationContext)
-                if (range && range.start + ArrayView.minimumLength(source, operationContext) !== length) return
+                if (range && range.start + logicalLength !== length) return
                 // Only the native backing owner can reserve growth beyond physical
                 // storage: distinct views materialize or extend storage first.
                 // Its pending creation reserves the intervening holes too.
@@ -306,8 +305,10 @@ class ArrayView {
                 if (descriptor?.writable !== true) return
                 nextPhysicalLength = length + count
             }
-            if (!ArrayView.tryShareStorage(source, operationContext)) return
-            const next = new ArrayView(source, operationContext, 0, ArrayView.minimumLength(source, operationContext) + count)
+            // The checks above establish sharing eligibility. Pure storage
+            // inspection cannot change this captured logical shape.
+            if (!range) ArrayView.#setState(source, logicalLength, operationContext)
+            const next = new ArrayView(source, operationContext, 0, logicalLength + count)
             return PlacementConstruction.initializeAndPublish(next, operationContext, next => {
                 copyArrayOverlays(source, next, operationContext)
                 if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length = nextPhysicalLength })
@@ -337,7 +338,7 @@ class ArrayView {
                     keys[String(Number(key) - offset)] = true
                 }
                 const producers = metadata.metaOf(backing, operationContext)?.arrayBacking?.producers
-                for (const key of Object.keys(metadata.metaOf(producers, operationContext)?.placementVersions ?? {})) {
+                for (const [key] of ownPlacementVersionEntries(producers, operationContext)) {
                     if (Number(key) >= start && Number(key) < end) keys[String(Number(key) - offset)] = true
                 }
                 return Object.keys(keys)

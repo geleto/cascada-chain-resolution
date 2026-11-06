@@ -8,7 +8,7 @@ import { registerHooks } from "node:module"
 assert(global.gc, "Run with --expose-gc")
 let copies, loaded = false
 globalThis.phase4SelectionCopy = value => copies?.push(new WeakRef(value))
-const target = new URL("../../src/captured-graph.js", import.meta.url).href
+const target = new URL("../../src/managed-capture.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result

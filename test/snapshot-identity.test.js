@@ -32,6 +32,20 @@ function pendingPair(ctx, write = false, onResume = () => {}) {
 
 describe("snapshot canonical identity", () => {
     for (const route of ["lookup", "export"]) {
+        it(`consumes a failed source classification once across aliases: ${route}`, () => {
+            const ctx = context(), cause = new Error("snapshot classification")
+            let reads = 0
+            const failed = new Proxy({}, { getPrototypeOf() { reads++; throw cause } })
+            const pair = { first: failed, nested: { again: failed } }
+            const chain = new r.ContextChain({ api: r.externalState({ pair }) }, ctx, { api: {} })
+            const result = select(route, chain, ctx)
+            assert.equal(result.cause, cause)
+            assert.equal(result.kind, r.ERROR_KIND.ExternalPropertyReadFailed)
+            assert.equal(reads, 1)
+            assert.equal(select(route, chain, ctx).cause, cause)
+            assert.equal(reads, 2, "A later snapshot may retry its independent source inspection")
+        })
+
         it(`preserves original/observation-copy aliases and cycles: ${route}`, async () => {
             const ctx = context()
             const raw = { value: 7, self() { return this } }

@@ -1,5 +1,6 @@
+import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
-import { publishPromiseVersion, getPromiseVersion } from "../src/property-versions.js"
+import { publishPromiseVersion } from "../src/property-versions.js"
 import {
     Chain,
     assignPath,
@@ -257,7 +258,7 @@ describe("Promise versions and lookupPath", () => {
         const livePending = deferred()
         const liveRoot = {}
         assignPath(new Chain(liveRoot, testContext), ["value"], livePending.promise, testContext)
-        const liveVersion = metaOf(liveRoot, testContext).placementVersions.value
+        const liveVersion = metaOf(liveRoot, testContext).outgoingPlacements.get("value")
 
         expect(getPromiseVersion(liveRoot, "value", testContext)).to.be(liveVersion)
         expect(liveVersion.value).to.be(livePending.promise)
@@ -273,7 +274,7 @@ describe("Promise versions and lookupPath", () => {
         const detachedRoot = {}
         const detachedChain = new Chain(detachedRoot, testContext)
         assignPath(detachedChain, ["value"], detachedPending.promise, testContext)
-        const detachedVersion = metaOf(detachedRoot, testContext).placementVersions.value
+        const detachedVersion = metaOf(detachedRoot, testContext).outgoingPlacements.get("value")
         assignPath(detachedChain, ["value"], "replacement", testContext)
 
         expect(getPromiseVersion(detachedRoot, "value", testContext)).to.be(undefined)
@@ -484,10 +485,10 @@ describe("Promise versions and lookupPath", () => {
 
         assignPath(chain, ["value"], pending.promise, testContext)
         const copy = chain._state.value
-        const promiseVersion = metaOf(copy, testContext).placementVersions.value
+        const promiseVersion = metaOf(copy, testContext).outgoingPlacements.get("value")
 
         expect(copy).not.to.be(owner)
-        expect(metaOf(copy, testContext).placementVersions.value).to.be(promiseVersion)
+        expect(metaOf(copy, testContext).outgoingPlacements.get("value")).to.be(promiseVersion)
         expect(copy.value).to.be(pending.promise)
         expect(metaOf(copy, testContext).cycleCuts).to.be(undefined)
         expect(metaOf(owner, testContext).cycleCuts.has("value")).to.be(true)

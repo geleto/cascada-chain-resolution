@@ -1,19 +1,12 @@
 import assert from "node:assert/strict"
-import { registerHooks } from "node:module"
-import { normalizeModuleURL } from "../module-url.js"
+import { instrumentRuntime } from "../runtime-transform.js"
 
-const target = normalizeModuleURL(new URL("../../src/external-access.js", import.meta.url))
 globalThis.nativeAuthorityVisits = 0
-let hooked = false
-registerHooks({ load(url, context, next) {
-    const result = next(url, context)
-    if (normalizeModuleURL(url) !== target) return result
-    const source = String(result.source), marker = "for (identity of identities ?? []) {"
-    assert(source.includes(marker))
-    hooked = true
-    return { ...result, source: source.replace(marker, marker + " globalThis.nativeAuthorityVisits++;") }
-} })
+const verifyInstrumentation = instrumentRuntime(new Map([["external-access.js", [[
+    "for (identity of identities ?? []) {", "$& globalThis.nativeAuthorityVisits++;",
+]]]]))
 const r = await import("../../src/index.js")
+verifyInstrumentation("Native authority work instrumentation must execute")
 const { OrderedThenable } = await import("../ordered-thenable.js")
 
 for (const deferred of [false, true]) for (const depth of [8, 32, 128]) {
@@ -30,5 +23,4 @@ for (const deferred of [false, true]) for (const depth of [8, 32, 128]) {
     assert(globalThis.nativeAuthorityVisits <= depth * 2,
         `Repeated unchanged prefix scans: depth=${depth}, visits=${globalThis.nativeAuthorityVisits}`)
 }
-assert(hooked)
 console.log("Linear native authority work across ready and deferred path keys")

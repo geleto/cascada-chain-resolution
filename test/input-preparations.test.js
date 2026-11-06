@@ -218,7 +218,7 @@ describe("shared input preparation", () => {
         pending.resolve(resource)
         assert.equal((await r.lookupPath(new r.Chain(shared, ctx), ["pending"], ctx)).kind,
             r.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(metaOf(shared, ctx).placementVersions.pending.value, resource)
+        assert.equal(metaOf(shared, ctx).outgoingPlacements.get("pending").value, resource)
         const rejected = await r.lookupPath(new r.Chain(result, ctx), ["pending"], ctx)
         assert.equal(rejected.kind, r.ERROR_KIND.ExternalLocationConflict)
         verifyParents(ctx, shared, result, authority._state)

@@ -1,7 +1,7 @@
 import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { capturePlacement, getPlacementVersion } from "./property-versions.js"
+import { capturePlacement, getPlacementVersion, ownPlacementVersionEntries } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 import { continueGraphTransition } from "./internal-step.js"
 
@@ -235,13 +235,13 @@ function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end
             ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
             : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
         const meta = metadata.metaOf(value, operationContext)
-        const versions = meta?.placementVersions
-        if (!versions) return array ? keys : keys.filter(key => typeof key === "string")
-        if (array) return mergeArrayKeys(keys, Object.keys(versions).filter(
+        const versions = ownPlacementVersionEntries(value, operationContext).map(([key]) => key)
+        if (!versions.length) return array ? keys : keys.filter(key => typeof key === "string")
+        if (array) return mergeArrayKeys(keys, versions.filter(
             key => Number(key) >= start && (end === undefined || Number(key) < end)))
         const candidates = Object.create(null)
         for (const key of keys) if (typeof key === "string") candidates[key] = true
-        for (const key of Object.keys(versions)) {
+        for (const key of versions) {
             candidates[key] = true
         }
         return orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)

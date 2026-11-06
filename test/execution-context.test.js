@@ -1,3 +1,4 @@
+import { getPromiseVersion } from "./verify-storage.js"
 import * as metadata from "../src/meta.js"
 import { ArrayView } from "../src/array-view.js"
 import * as propertyVersions from "../src/property-versions.js"
@@ -135,19 +136,19 @@ describe("operation context", () => {
         expect(secondMeta.imported).to.be(true)
         expect(Object.hasOwn(firstMeta, "importPolicy")).to.be(false)
         expect(Object.hasOwn(secondMeta, "importPolicy")).to.be(false)
-        expect(propertyVersions.getPromiseVersion(
+        expect(getPromiseVersion(
             value,
             "pending",
             firstOperationContext,
-        )).not.to.be(propertyVersions.getPromiseVersion(
+        )).not.to.be(getPromiseVersion(
             value,
             "pending",
             secondOperationContext,
         ))
 
         await flushMicrotasks()
-        expect(firstMeta.placementVersions.pending.value).to.eql({ ready: true })
-        expect(secondMeta.placementVersions.pending.value).to.eql({ ready: true })
+        expect(firstMeta.outgoingPlacements.get("pending").value).to.eql({ ready: true })
+        expect(secondMeta.outgoingPlacements.get("pending").value).to.eql({ ready: true })
     })
 
     it("isolates ownership and Array projections by execution", () => {

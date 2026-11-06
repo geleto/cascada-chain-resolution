@@ -1,22 +1,15 @@
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
-import { normalizeModuleURL } from '../module-url.js'
+import { instrumentRuntime } from '../runtime-transform.js'
 
-let visits = 0, substitutions = 0
+let visits = 0
 globalThis.countRangePlacement = () => { visits++ }
-const root = normalizeModuleURL(new URL('../../src/property-versions.js', import.meta.url).href)
-registerHooks({ load(url, context, next) {
-    const loaded = next(url, context)
-    if (normalizeModuleURL(url) !== root || process.argv.includes('--no-op-loader')) return loaded
-    const anchor = 'function capturePlacement(owner, key, operationContext, capturedVersion, storage) {'
-    const source = String(loaded.source)
-    assert.equal(source.split(anchor).length - 1, 1)
-    substitutions++
-    return { ...loaded, source: source.replace(anchor, anchor + '\n    globalThis.countRangePlacement();') }
-} })
+const verifyInstrumentation = instrumentRuntime(new Map([['property-versions.js', [[
+    'function capturePlacement(owner, key, operationContext, capturedVersion, storage) {',
+    '$&\n    globalThis.countRangePlacement();',
+]]]]), !process.argv.includes('--no-op-loader'))
 const r = await import('../../src/index.js')
 const { verifyRefCounts } = await import('../verify-refcounts.js')
-assert.equal(substitutions, 1, 'Range work instrumentation must execute')
+verifyInstrumentation('Range work instrumentation must execute')
 const samples = []
 for (const method of ['fill', 'copyWithin']) for (const size of [64, 128, 256]) {
     const ctx = { execution: new r.Execution(), errorContext: 'range work' }

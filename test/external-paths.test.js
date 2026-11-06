@@ -1555,7 +1555,7 @@ describe("public external paths", () => {
             data.self = data
             const source = r.import(data, ctx)
             const input = new r.Chain(source, ctx)
-            const version = metaOf(source.child, ctx).placementVersions.pending
+            const version = metaOf(source.child, ctx).outgoingPlacements.get("pending")
             const receiver = r.externalState({ value: 0, result() { this.value++; return { source, alias: source } } })
             const native = registered ? receiver : r.externalState({ receiver })
             const chain = new r.ContextChain({ api: native }, ctx, { api: {} })
@@ -1568,7 +1568,7 @@ describe("public external paths", () => {
             assert.equal(r.lookupPath(output, ["alias"], ctx), copy)
             assert.equal(r.lookupPath(output, ["source", "self"], ctx), copy)
             assert.equal(r.lookupPath(output, ["source", "stable"], ctx), stable)
-            assert.equal(metaOf(source.child, ctx).placementVersions.pending, version)
+            assert.equal(metaOf(source.child, ctx).outgoingPlacements.get("pending"), version)
             r.assignPath(chain, [...path, "value"], 2, ctx)
             assert.equal(await r.lookupPath(chain, [...path, "value"], ctx), 2)
             pending.resolve(receiver)
@@ -1580,7 +1580,7 @@ describe("public external paths", () => {
             if (registered) assert.equal(sourceValue.kind, r.ERROR_KIND.ExternalLocationConflict)
             else assert.equal(sourceValue, receiver)
             assert.equal(version.value, receiver)
-            assert.equal(metaOf(source.child, ctx).placementVersions.pending, version)
+            assert.equal(metaOf(source.child, ctx).outgoingPlacements.get("pending"), version)
             assert.equal(await r.getErrors(chain, [], ctx), null)
             verifyRefCounts(ctx, chain._state, input._state, output._state)
         })

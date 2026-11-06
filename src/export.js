@@ -2,8 +2,7 @@ import * as errorUtils from "./error.js"
 import * as steps from "./internal-step.js"
 import * as values from "./language-values.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
-import { ManagedCapture } from "./managed-capture.js"
-import { assembleCapturedGraph } from "./captured-graph.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>

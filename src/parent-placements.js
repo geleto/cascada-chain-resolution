@@ -1,5 +1,6 @@
-import { observePlacementCapture, refreshCopiedDelivery, retainCopiedDelivery, releaseCopiedDelivery } from "./property-versions.js"
+import { observePlacementCapture, refreshCopiedDelivery, retainCopiedDelivery, releaseCopiedDelivery, getOwnPlacementVersion } from "./property-versions.js"
 import { reconsider } from "./ownership.js"
+import { retireRefIndex } from "./refcounts.js"
 import * as metadata from "./meta.js"
 import { ArrayView, isArrayView, isArrayIndex } from "./array-view.js"
 
@@ -84,7 +85,6 @@ function initializePlacements(owner, operationContext, entries) {
     const meta = metadata.requireMeta(owner, operationContext)
     if (meta.placementsInitialized) return
     const array = meta.type === metadata.TYPE.Array
-    const versions = meta.placementVersions
     meta.placementsInitialized = true
     meta.outgoingPlacements ??= new Map()
     if (array) ArrayView.registerOwner(owner, operationContext)
@@ -92,12 +92,8 @@ function initializePlacements(owner, operationContext, entries) {
         for (const [key, value] of entries ?? Object.entries(owner)) {
             if (array) {
                 if (isArrayIndex(key)) ArrayView.recordBackingPlacement(owner, key, undefined, value, operationContext)
-            } else if (!versions?.[key]) addParent(value, owner, key, operationContext)
+            } else if (!getOwnPlacementVersion(owner, key, operationContext)) addParent(value, owner, key, operationContext)
         }
-    }
-    for (const key of Object.keys(versions ?? {})) {
-        const version = versions[key]
-        recordVersion(owner, key, version, operationContext)
     }
     activateRelationships(owner, operationContext)
 }
@@ -149,11 +145,12 @@ class PlacementConstruction {
 function recordLogicalPlacement(owner, key, before, after, operationContext, wasOverlay) {
     const meta = metadata.requireMeta(owner, operationContext)
     if (!meta.placementsInitialized) return
-    if (meta.type !== metadata.TYPE.Array || wasOverlay) removeParent(before, owner, key, operationContext)
-    const version = meta.placementVersions?.[key]
-    if (version) recordVersion(owner, key, version, operationContext)
-    else {
-        clearRecovery(owner, key, operationContext)
+    if (meta.type !== metadata.TYPE.Array || wasOverlay) unlinkParent(before, owner, key, operationContext)
+    const version = getOwnPlacementVersion(owner, key, operationContext)
+    if (version && meta.relationshipsActive) activatePlacement(owner, key, version, operationContext)
+    else clearRecovery(owner, key, operationContext)
+    if (!version) {
+        meta.outgoingPlacements?.delete(key)
         if (meta.type !== metadata.TYPE.Array && !meta.backingOwners)
             addParent(after, owner, key, operationContext)
     }
@@ -175,16 +172,13 @@ function destinationOf(owner, operationContext) {
     return meta.destination ??= { owner: meta.relationshipsActive ? owner : undefined }
 }
 
-function recordVersion(owner, key, version, operationContext) {
-    const meta = metadata.requireMeta(owner, operationContext)
-    ;(meta.outgoingPlacements ??= new Map()).set(key, version)
-    if (meta.relationshipsActive) retainCopiedDelivery(version, true)
+function activatePlacement(owner, key, placement, operationContext) {
+    retainCopiedDelivery(placement, true)
     clearRecovery(owner, key, operationContext)
-    if (meta.relationshipsActive && version.recovery) preserveRecovery(owner, key, version.recovery, operationContext)
-    if (meta.relationshipsActive && version.present !== false) {
-        activateRelationships(version.value, operationContext)
-        linkParent(version.value, owner, key, operationContext)
-    }
+    if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)
+    if (placement.present === false) return
+    activateRelationships(placement.value, operationContext)
+    linkParent(placement.value, owner, key, operationContext)
 }
 
 function activateRelationships(owner, operationContext) {
@@ -201,13 +195,8 @@ function activateRelationships(owner, operationContext) {
         activateRelationships(record, operationContext)
         activateRelationships(record.producers, operationContext)
     }
-    for (const [key, placement] of meta.outgoingPlacements ?? []) {
-        retainCopiedDelivery(placement, true)
-        if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)
-        if (placement.present === false) continue
-        activateRelationships(placement.value, operationContext)
-        linkParent(placement.value, owner, key, operationContext)
-    }
+    for (const [key, placement] of meta.outgoingPlacements ?? [])
+        activatePlacement(owner, key, placement, operationContext)
 }
 
 function retireRelationships(owner, operationContext) {
@@ -226,14 +215,7 @@ function retireRelationships(owner, operationContext) {
         releaseCopiedDelivery(placement, true)
         if (placement.present !== false) unlinkParent(placement.value, owner, key, operationContext)
     }
-    for (const parents of meta.counterChildren ?? []) parents.delete(owner)
-    for (const version of meta.backingCounterVersions ?? []) {
-        version.counterProjections.delete(owner)
-        if (!version.counterProjections.size) delete version.counterProjections
-    }
-    delete meta.backingCounterVersions
-    for (const field of ["parents", "frontierCount", "errorCount", "cycleCuts", "counterChildren"])
-        delete meta[field]
+    retireRefIndex(owner, operationContext)
 }
 
 function clearRecovery(owner, key, operationContext) {

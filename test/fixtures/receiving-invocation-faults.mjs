@@ -20,7 +20,7 @@ export const receivingFaults = [
             }`,
     } },
     { name: "alias", assertion: /preserve aliases and cycles/, edit: {
-        file: "src/captured-graph.js",
+        file: "src/managed-capture.js",
         find: "defineCopyProperty(node.copy, key, outputOf(node.entries.get(key)))",
         replace: `defineCopyProperty(node.copy, key,
             key === "right" && capture.owner.operationContext.errorContext === "before native mutation"

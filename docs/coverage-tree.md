@@ -1,6 +1,6 @@
 # Runtime coverage and simplification search
 
-Updated 2026-11-05 against the current runtime and working-tree changes. The last
+Updated 2026-11-06 against the current runtime and working-tree changes. The last
 full compilation was `4f0849d` (2026-10-03); `d47332b` (2026-10-22) adjusted two
 leaves and `0026794` (2026-10-27) changed two migration notes. This update includes
 the intervening implementation and review work, rather than only changes after
@@ -153,7 +153,7 @@ future work is listed separately below.
       - Source-free identity keys and pending publication cells across ancestor and entry changes
       - Bounded representative forwarding, comparison waits, and iterative nested completion
       - Data readiness, shape readiness, and alias-partition readiness are distinct dependencies
-      - Shared captured-graph assembly for exports, native receivers, and external snapshots
+      - Shared captured-graph construction and assembly for exports, native receivers, and external snapshots
       - Inspect every required physical representation even when logical identities alias; canonicalization cannot suppress reflection failures
       - Fresh snapshot identity domains preserve captured alias decisions without delaying unrelated managed access
   - C07 — Errors and recovery
@@ -370,7 +370,7 @@ These are entry points for checking the additions, not a second exhaustive test 
 
 | Coverage | Current implementation / contract | Representative evidence |
 | --- | --- | --- |
-| C03, C06, C11, C14: prepared results, identity, common assembly | [Receiving contract](data-limitations.md#method-results), [identity](../src/captured-identity.js), [capture and assembly](../src/captured-graph.js) | [Method-result identity](../test/method-result-identity.test.js), [snapshot identity](../test/snapshot-identity.test.js), [output identity release](../test/fixtures/capture-output-identity-release.mjs) |
+| C03, C06, C11, C14: prepared results, identity, common assembly | [Receiving contract](data-limitations.md#method-results), [identity](../src/captured-identity.js), [capture and assembly](../src/managed-capture.js) | [Method-result identity](../test/method-result-identity.test.js), [snapshot identity](../test/snapshot-identity.test.js), [output identity release](../test/fixtures/capture-output-identity-release.mjs) |
 | C05, C06, C12: backing producers, copied delivery, bounded storage | [Property versions](../src/property-versions.js), [Array backing](../src/array-view.js), [range remaps](../src/array-remap.js) | [Pending push](../test/pending-push-work.test.js), [pending copy](../test/pending-copy-work.test.js), [range recovery](../test/array-range-recovery.test.js), [queue storage](../test/array-history-storage.test.js) |
 | C04, C10, C12: Promise keys and selection handoff | [Path protocol](promise-path-segments.md), [route consumption](../src/path-context.js), [mutation traversal](../src/mutations.js) | [Promise paths](../test/promise-path-segments.test.js), [search ordering](../test/array-search-ordering.test.js), [Promise-key differential](../test/fixtures/promise-key-differential.js) |
 | C07, C08, C13: versioned metadata, repair, canonical authority | [External ordering](external-context-ordering.md), [metadata versions](../src/external-metadata.js), [external access](../src/external-access.js) | [Metadata histories](../test/external-metadata.test.js), [repair-and-call](../test/repair-call-recovery.test.js), [binding diagnostics](../test/external-binding-diagnostics.test.js) |
@@ -416,8 +416,9 @@ search axis**. Searching each existing module in isolation tends to preserve the
 historical architecture. These branches deliberately cut across modules and
 follow the same fact from capture through publication, observation, and release.
 
-The implementation searches below are **open hypotheses**, ordered by likely
-structural payoff, not findings that a replacement is already correct or simpler.
+The implementation searches below are hypotheses, ordered by likely
+structural payoff. The review status table records implemented replacements and
+evaluated alternatives; unimplemented alternatives remain open hypotheses.
 The future contracts listed under F01–F05 remain selected; their implementation
 and simplification benefit still need evidence. The first review's small local
 edits do not close these branches. Different lifetime, failure, or ordering
@@ -426,9 +427,9 @@ mechanism rather than reasons to retain parallel engines.
 
 - S1 — One captured-data and logical-producer model (C02, C03, C05, C06, C11, C12, C14)
   - S1.1 — Share graph capture, not just final assembly
-    - Compare `ManagedCapture.walk`, `captureExternalValue.walk`, receiver adoption, and common input preparation. Start with the two capture walkers' admitted-managed-source case.
-    - Try one captured graph construction path with concrete boundary readers; keep consuming availability versus rejecting unavailable snapshot data at those readers.
-    - Deletion target: a complete duplicate graph-construction walk, visited/output bookkeeping, and source-disposal path. Merely extracting a visitor with policy callbacks is insufficient.
+    - **Implemented:** `ManagedCapture.walk` constructs both ordinary managed captures and snapshots; `SnapshotCapture` supplies concrete ready-only source reads. The separate `captureExternalValue.walk` and its visited/output/source-disposal path are removed. Capture now owns output assembly/disposal directly; the single-use `CapturedGraph` base and module are removed.
+    - Consumption of availability versus rejection of unavailable snapshot data remains at the readers. Receiver adoption and fresh input preparation still publish their own admission transactions.
+    - Further sharing must remove an actual traversal or protocol, not wrap the remaining admission transactions in policy callbacks.
     - Preserve per-representation inspection, required Error collection after output discard, snapshot no-subscription, source release before alias assembly, and fresh admission's transactional commit.
   - S1.2 — One logical producer with independent destination uses
     - Compare copied delivery, canonical backing producers, construction destinations, pending captures, and placement transition publication in `property-versions.js`, `array-view.js`, and `parent-placements.js`.
@@ -441,9 +442,8 @@ mechanism rather than reasons to retain parallel engines.
     - Deletion target: repeated placement-resolution, subscription, and source-retention loops in capture and Array preparation; avoid a second query wrapper around all existing loops.
 - S2 — One managed publication outcome and commit protocol (C04, C05, C06, C07, C10, C11, C12)
   - S2.1 — Replace overlapping mutation result forms
-    - Trace direct poison, `{mutatedValue, result}`, and optional `placement`, `published`, and `releasePublication` through `createMutationOutcome`, `captureMutationResult`, `transformProperty`, `run`, and Array/managed invocation.
-    - Try one complete placement outcome with an independent result and write/publication fact.
-    - Deletion target: duplicated `mutatedValue`/`placement.value`, repeated poison normalization, and scope-result adapters. Migrate all producers in the batch.
+    - **Implemented:** managed outcomes carry one complete `placement`, an independent `result`, and their publication fact. `mutatedValue`, fallback placement reconstruction, `captureMutationResult`, and caller-specific scope adapters are removed.
+    - `PathOperation.mutate` captures nested scope outcomes centrally. Normalization distinguishes new failure from stored poison data; native blockers remain result-only.
     - Preserve absence/order/recovery, independent-result timing, publication-failure aggregation, and publication's own release point.
   - S2.2 — Make one transition own all effects of a placement commit
     - Map storage, structure, logical parents, counters, recovery, identity, and entered-holder mirroring across the existing commit helpers.
@@ -461,7 +461,7 @@ mechanism rather than reasons to retain parallel engines.
     - Remove re-derivable route state and duplicate selection adapters; retain distinct native-access and metadata-only permissions.
 - S4 — One Array mapping and shape engine (C05, C06, C12; future F01–F03)
   - S4.1 — Replace competing construction carriers
-    - Compare eager remaps, `ArrayRangeRemap`, derived views, dense-presence preparation, and materialization; evaluate the selected persistent layout as a replacement.
+    - Compare eager remaps, direct selected-range output, derived views, dense-presence preparation, and materialization (`ArrayRangeRemap` has been removed); evaluate the selected persistent layout as a replacement.
     - Deletion target: old remap/range carriers and duplicated view/remap dispatch for migrated families, not an additional layout engine beside them.
     - Separate current-semantic refactoring from the planned pending-control and regional-failure cutover. Preserve sparse holes, selected-range work, and callback/native boundaries.
   - S4.2 — Represent captured shape once
@@ -501,6 +501,30 @@ mechanism rather than reasons to retain parallel engines.
   - Remove unused adapter formats, policy branches, compatibility paths, duplicated caches, and test scaffolding for removed implementations.
   - Audit trusted control validation separately from application/reflection failure handling; remove only costly defenses for excluded misuse.
   - Keep independent semantic oracles and fault sensitivity. Tests of a replacement must not merely mirror its internal representation.
+
+### Structural review status
+
+These conclusions apply to the specific alternatives examined, not every design
+in a branch. [The review record](../simplifications.md#structural-review--2026-11-05)
+contains the state flows, deletion targets, counterexamples and verification.
+
+| Branch | Status and evidence |
+| --- | --- |
+| S1.1 | Kept: one real graph-construction walker with concrete managed/snapshot readers; duplicate snapshot construction removed. |
+| S1.2 | Open: backing producers already use ordinary placement-version publication. Collapsing copied delivery into mutable source versions loses historical delivery; a smaller source/destination model is unproven. |
+| S1.3 / S4.3 | Evaluated, no replacement kept: eager shared graph capture would inspect unused search/flattening data; a demand dispatcher would keep the old reducers and add policies. |
+| S2.1 | Kept: one placement outcome and centralized nested-scope capture; poison assignment and mutation failure remain distinct. |
+| S2.2 | Kept: shared forward version state and one placement activation path. Storage, structure and optional counters already derive from one prepared commit; a larger transition record would only package those callbacks. |
+| S3.1 | Reverted prototype: merged native/managed observation progression added mode, terminal-authority and lifetime branches without a clearer path. Mutation reconstruction and non-consuming entry discovery remain explicit. |
+| S3.2 | Evaluated: consumed route already supplies normalized keys, depth and canonical nodes. Issuance scope and dynamic provenance cannot be recomputed from the final selected node. |
+| S4.1–S4.2 | Kept: direct range construction removes the range carrier; views/ranges/remaps share one output finalizer. Dense remap unification still loses selected-range work; persistent layouts remain future implementation work. |
+| S5 | Kept: metadata consumption transfers one final state/callback; removed recursive reconsumption and ancestor collection's separate completion/cleanup. Identity/metadata generic forwarding still retains different wake rules. |
+| S6.1 | Kept: one forward placement Map replaces mirrored version/ownership stores; initialization mirroring is removed and activation is shared. Counter projections remain because ordinary occurrence expansion scans unrelated Array owners. |
+| S6.2 | Kept: one staged identity record replaces paired import maps; optional method diagnostics have no carrier; reservations derive memberships from the retained route. Source, publication and output last-use points remain distinct. |
+| S7 | Needs contract decisions: status-only repair, registration-before-first-use and logical-only managed storage change supported behavior. No semantic cutover was made. |
+| S8 / C15 | Kept: one exact-source instrumentation and load-receipt protocol replaces twelve fixture loaders; independent counters and disabled controls remain. |
+
+The [implementation-wide review](../simplifications.md#implementation-wide-review--2026-11-06) records concrete coverage across all runtime responsibilities, retained replacements, disproving cases and the combined verification record. The first structural pass's assertion that larger changes needed a contract decision was withdrawn.
 
 ## How to work this search tree
 
