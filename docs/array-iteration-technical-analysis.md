@@ -26,7 +26,7 @@ Evaluate the question the consumer actually asks:
 | Failure membership | Actual retained Errors/statuses and unresolved output-relevant selections, not every retained input. |
 | Effect/completion | Prescribed writes, identity, validation, and direct-result work independent of payload readiness. |
 
-Do not expose a payload Promise merely because membership is true. For `[R(width 0..1), Z]`, index zero exists but its source is unknown. Sequential iteration waits; a numeric lookup may retain that unresolved selection, and unordered discovery may identify Z separately.
+Do not deliver an elem Chain merely because membership is true. For `[R(width 0..1), Z]`, index zero exists but its source is unknown. Sequential iteration waits; a numeric lookup may retain that unresolved selection, and unordered discovery may identify Z separately.
 
 ## 3. Small common reduction rules
 
@@ -61,22 +61,23 @@ Per-command effects and direct results remain separate. For example, a failed re
 
 ## 5. A bounded splice fallback
 
-### The missing bound constraint
+### Bounds come from the method
 
-Suppose the captured source is `[A,B,C,D]`, insertion count is one, deletion count is zero, and normalized insertion position is in `[1,2]`:
+For captured source `[A,B,C,D]`, insertion count one, deletion count zero, and a raw failed insertion position, normalization gives [0,4]:
 
 ```text
-Successful possibilities: [A,X,B,C,D] or [A,B,X,C,D]
-Already fixed:            A at 0, C at 3, D at 4
-Wrong fallback:           [A,B,C,D,X]
-Valid fallback:           [A,B,X,C,D]
+Possible insertion boundaries: 0, 1, 2, 3, 4
+Guaranteed survivors:          A, B, C, D, X
+Streaming fallback:            [A,B,C,D,X]
+Sequential status:             all five positions flagged
+Unordered status:              all five occurrences usable
 ```
 
-The fallback must preserve C/D's established positions even if nobody happened to read them before failure. Choose the latest allowed insertion boundary, not an unconditional physical end. With the unrestricted range `[0,L]`, that boundary is L and this reduces to the agreed append fallback.
+No narrower range follows from a failed application's intended calculation. Internal range restrictions must have a retained method/layout derivation; the raw run API supplies none. Always choose the latest boundary allowed by those actual facts, preserving established publications. Here that boundary is the captured end, independently of later appends or settlement order.
 
 ### Known source length and rectangular control bounds
 
-Let source length be L, inserted count k, normalized start bounds `[sLo,sHi]`, and nonnegative deletion-count bounds `[cLo,cHi]` before clamping to `L-s`. Bounds are captured facts; the runtime does not infer them from the later live Array.
+Let source length be L, inserted count k, normalized start bounds `[sLo,sHi]`, and nonnegative deletion-count bounds `[cLo,cHi]` before clamping to `L-s`. These formulas accept projections of captured method facts, not arbitrary annotations on failed arguments. A raw failed start has bounds [0,L]; a raw failed deletion count can use [0,L] before the final clamp. Ready normalized arguments are singleton ranges. The runtime does not infer bounds from the later live Array.
 
 The following rule is closed for this case:
 
@@ -100,23 +101,23 @@ Examples:
 | Inputs after relevance is established | Streaming fallback |
 | --- | --- |
 | `[A,B,C,D].splice(2, failedCount, X)`, count domain `[0,2]` | `[A,B,X,Error,Error]` |
-| Same source, start 1, count domain `[1,2]`, insert X | `[A,X,Error,D]`; D's intended index varies, so sequential mode flags D. B is definitely deleted. |
-| Same source, start domain `[1,2]`, count 0, insert X | `[A,B,X,C,D]`; sequential mode flags B/X only. |
-| `[A,B,C]`, start domain `[0,2]`, count 1, insert X | `[Error,Error,X]`; sequential mode also flags X. Length stays three, not four. |
+| Same source, start 1, raw failed count clamped to `[0,3]`, insert X | `[A,X,Error,Error,Error]`; A/X have fixed positions, while B/C/D may have been deleted. |
+| Same source, raw failed start normalized to `[0,4]`, count 0, insert X | `[A,B,C,D,X]`; sequential mode flags all five occurrences. |
+| `[A,B,C]`, raw failed start normalized to `[0,3]`, count 1, insert X | `[Error,Error,Error,X]`; sequential mode also flags X. Start 3 deletes nothing, so fallback length is four. |
 
 An issued splice has a known inserted argument count. These cases need no missing-output marker: their output uncertainty is already represented by inserted values, positional flags, or structural Error slots.
 
 ### Limits of this result
 
-The probe covers dense unique occurrences, known L, bounded rectangular start/count domains, and known k. A ready normalized start/count is a singleton domain. Omitted arguments and negative/raw numeric inputs first use the method's specified normalization.
+The probe covers dense unique occurrences, known L, arbitrary rectangular start/count domains, and known k. Its artificial tighter-domain witnesses test arithmetic only; they do not establish a run contract for attaching ranges to failed arguments. Production acceptance uses raw domains or an explicit retained derivation. Omitted arguments and negative/raw numeric inputs first use the method's specified normalization.
 
-Do not apply the rectangular rule after discarding a correlation that matters. The [completed shared-control rules](array-method-specification.md#3-unknown-lengths-and-shared-controls) preserve normalizer relationships and define consistent fallback bindings; the [copying and range rules](array-method-specification.md#5-endpoint-and-copying-families) cover the corresponding source and result boundaries. Sparse/runtime witnesses are included in the expanded probe.
+Do not apply the rectangular rule after discarding an internal relationship that matters. The [normalizer rules](array-method-specification.md#3-unknown-lengths-and-shared-controls) preserve source-length and deletion-clamp relationships while keeping distinct argument positions independent, even for the same Promise or Error. The [copying and range rules](array-method-specification.md#5-endpoint-and-copying-families) cover the corresponding source and result boundaries. Sparse/runtime witnesses are included in the expanded probe.
 
 ## 6. Coverage of the remaining method rules
 
 ### Determined shape: slice and fill
 
-For known L, normalized start in `[a,b]` and end in `[c,d]`, ordinary interval selection gives:
+For known L, normalized start in `[a,b]` and end in `[c,d]`, ordinary interval selection gives the following rules. As for splice, these intervals must come from normalization or a named internal derivation; raw failed start/end arguments each have domain [0,L], independently.
 
 | Fact | Rule |
 | --- | --- |

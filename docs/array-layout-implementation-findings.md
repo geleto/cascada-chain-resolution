@@ -55,7 +55,7 @@ Preserve explicitly shared internal control facts and normalization context. Two
 
 Apply such local composition when installing the mapping, without awaiting payloads or replaying the command. Separate command completion and identity may still need their own facts. Do not generalize this example into enumeration of all combinations of unrelated conditions.
 
-The probes supply that shared control explicitly. They do not establish transport through the current run API: separate lookups produce different outward Promises, and a shared PoisonError is not proof of a shared computed input. The [captured-control boundary](../iterate-plan.md#captured-control-identity-at-the-api-boundary) requires no new provenance API solely to recover that sharing. Apply this reduction where shared facts already exist; compare resolved normalized arguments normally elsewhere. The probe is evidence for internal composition, not a requirement to identify separately wrapped arguments.
+The probes supply that shared internal control explicitly. Under the [captured-control boundary](../iterate-plan.md#captured-control-identity-at-the-api-boundary), distinct argument positions remain independent even for the exact same Promise or Error; separate lookup wrappers obey the same rule. Apply this reduction only where internal facts already share a control, and compare successful normalized argument values normally elsewhere. The probe is evidence for internal composition, not argument-provenance inference.
 
 ## 2. Use sliced ownership, not a producer-wide range registry
 
@@ -174,7 +174,7 @@ The expanded [method probe](../test/experiments/array-method-specification-probe
 | Evidence | Coverage |
 | --- | --- |
 | Coupled copying | 63,264 selector queries and 44,328 sparse-placement checks against native copyWithin. |
-| Coordinates | 238,383 normalization/length witnesses and a shared-control fallback counterexample. |
+| Coordinates | 238,383 normalization/length witnesses. The shared-argument fallback counterexample predates the independent-argument rule and is not production acceptance; replace it with separate API-argument and shared-internal-fact witnesses. |
 | Sorting | 1,386 permutation cases with fixed undefined/hole suffixes under the earlier fallback proposal. Healthy failure fallback/early-suffix witnesses must be replaced for the selected whole-sort failure boundary. |
 | Flattening | 70 depth domains, including holes and repeated aliases. |
 | Runtime integration | Four fulfillment/rejection and pre-delivery-detachment cases: indexed publication before callbacks, captured queries, alias/cycle export, retirement, and re-entry without resubscription. |

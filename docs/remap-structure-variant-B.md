@@ -42,7 +42,7 @@ Each node exposes a **count measure**: its number of output positions, either ex
 | An unresolved deletion from two positions | `[0, 2]` |
 | A length-preserving deferred fill | The captured input length |
 
-Extend the existing captured-shape boundary for subtraction, truncation, shifts, and failed layout. For a layout-backed version, it obtains length and `inRange(index)` from the logical root's semantic shape, including region constraints and indexed-growth transitions. Node count intervals are cached projections of those facts, not a second authority or a complete failure state.
+Extend the existing captured-shape boundary for subtraction, truncation, shifts, and the shape of failure fallbacks. A failed structural control does not itself leave length poisoned; its fallback can establish an exact length. For a layout-backed version, obtain length and `inRange(index)` from the logical root's semantic shape, including region constraints and indexed-growth transitions. Node count intervals are cached projections of those facts, not a second authority or a complete failure state.
 
 Shape-only captures reference independent count facts, not payload-owning tree nodes. Exclusive content storage can therefore coexist with an earlier captured shape; editing that storage must preserve the captured count version. Fuse ready additions and trims into the [compact shift/clamp form](array-layout-implementation-findings.md#compact-ready-count-transforms) rather than retaining a linked shape history.
 

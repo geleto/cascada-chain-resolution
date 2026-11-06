@@ -214,7 +214,7 @@ All publication examples assume target, authority, ordering, and validation prer
 4. If out of range, finish. If a required structural fact is pending, retain the question. If it fails, report structural failure without issuing a guessed occurrence, positional flag, or missing-output marker as a healthy item.
 5. Resume at that position when relevant facts change.
 
-Already-issued payload Promises settle independently. Their settlement need not restart the cursor. Required errors and completion retain the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
+Pending payloads in delivered elem Chains settle independently. Their settlement need not restart the cursor. Required errors and completion retain the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
 
 The [future unordered iterator](iterate-plan.md#future-out-of-order-element-delivery) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. Implement occurrence discovery in the unordered stage; ordinary payloads can already settle out of order.
 
@@ -581,7 +581,7 @@ Reuse existing Arrays and simple ArrayViews when they already represent the layo
 
 A controlled push onto an ordinary Array or simple ArrayView with determined length uses the existing compact append machinery. Push alone must not promote that representation to a block layout. Pending or poisoned argument payloads occupy fixed placement versions; they do not require a tree or delay the new length. Target and capacity validation, ownership protection, and publication still apply.
 
-Thus an append-only `results!.push(fetch(x))` loop starting from a compact known-shape Array requires no block allocation or tree traversal merely because fetch results are pending. Iteration captures final-slot Promises through the same property boundary. This is a specialization of the shared mapping/write rules, not a second method implementation.
+Thus an append-only `results!.push(fetch(x))` loop starting from a compact known-shape Array requires no block allocation or tree traversal merely because fetch results are pending. Iteration captures each final selected payload through the same property boundary into its delivered elem Chain. This is a specialization of the shared mapping/write rules, not a second method implementation.
 
 Pushing onto an already fragmented layout need not flatten it first. Extend a compatible tail run through append storage, preserving earlier captured bounds. One uncertain region followed by such appends can stay `[R] + [X1 ... Xn]`; payload count alone must not create one remap entry per push.
 
@@ -597,7 +597,7 @@ Internal materialization can transfer pending placements without awaiting their 
 
 A retained block layout and a materialized Array are representations of the same captured logical version, not competing authorities. Sharing unchanged structure across versions is persistence; it does not require a balanced tree or permanent storage of every command.
 
-If unresolved logical facts remain, retain their layout/shape state; physical storage is not authoritative for them. Earlier captures and already-issued slot Promises keep their logical versions rather than switching to a later live Array. Release replaced layout uses only after equivalent state takes over.
+If unresolved logical facts remain, retain their layout/shape state; physical storage is not authoritative for them. Earlier captures and delivered elem Chains keep their logical versions rather than switching to a later live Array. Release replaced layout uses only after equivalent state takes over.
 
 ### 9.2 Block storage and indexing
 

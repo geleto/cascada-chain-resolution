@@ -22,13 +22,7 @@ An exposed copy's root cannot later become a call Error or retroactive path flag
 
 ### Sorting requires order
 
-Sort is an explicit exception to unordered position-only recovery. A required sorting failure blocks the whole affected Array/result. Invoking sort requests ordering even when the Chain can otherwise stream unordered occurrences. Do not return healthy survivors from that sort and later attempt to poison an already exposed result. Required comparator/key/preparation success is therefore a publication prerequisite for sort and toSorted in every mode, including for otherwise fixed suffixes.
-
-The [selected contract](iterate-plan.md#13-selected-decisions) publishes no sort data writes until required preparation and comparison succeed. On their failure, `a!.sort()` reports failure and retains its captured pre-sort data under repairable Array-path status in every mode, including complete mode. Repair exposes that unchanged data without retrying sorting; no fallback permutation or repair-only baseline is retained. Publishing new own status is effective for identity even when payloads have not moved.
-
-On the same failure, `a.sort()` and `a.toSorted()` return ordinary result-root poison in every mode and preserve a; there is no repairable failed copy. After ordering succeeds, storage/publication failure follows its ordinary causal boundary and preserves committed effects, with no sort-specific rollback.
-
-Keep argument irrelevance: an unused comparator is not a sorting failure. Existing source blockers retain their normal causal boundary, and retained payloads keep their original producers and roles. The former healthy unordered sort fallback is superseded.
+Sorting uses the [normative sort failure contract](iterate-plan.md#13-selected-decisions). It explicitly overrides unordered position-only recovery and complete mode's usual mutating structural-failure representation. That section owns the mutation/copy distinction, publication prerequisites, retained data, repair, identity, and later publication-failure boundary. Do not infer sort outcomes from the general mode table alone. The [method specification](docs/array-method-specification.md#7-sort-and-tosorted) defines preparation and comparison work.
 
 ### Payloads are independent of structural publication
 
@@ -127,7 +121,7 @@ Use entry publication, not iterator draining, to establish these dependencies. Q
 
 This includes a sequential occurrence whose payload survives at a fallback index. Repair exposes that retained payload there; it neither discovers the intended position nor reorders the Array. It does not resume an old captured iterator. Later captures see the repaired successor.
 
-Ordinary payload poison, permanent structural poison, and missing-output markers are Error data rather than repairable flags. Replacement, overwrite, deletion, or ordinary structural edits can remove their placements; status clearing does not. Whole-Array Error in complete mode has no hidden Array for repair. Failed mutating sort is the explicit exception: required preparation/comparison failure retains pre-sort data under own status even in complete mode. Clearing it neither reruns sorting nor rolls back writes; no sort data writes were published at that failure boundary. Copying-sort root Error has no hidden copy to repair.
+Ordinary payload poison, permanent structural poison, and missing-output markers are Error data rather than repairable flags. Replacement, overwrite, deletion, or ordinary structural edits can remove their placements; status clearing does not. Whole-Array Error in complete mode has no hidden Array for repair. Sort's explicit status-versus-data distinction follows its [normative contract](iterate-plan.md#13-selected-decisions).
 
 For genuine own-path status, eligibility does not depend on an explicit-! origin. Failed computed-key writes, selected scope failures, and canonical external own-state failure retain their established selection/authority rules. Clearing a parent does not clear descendant status.
 

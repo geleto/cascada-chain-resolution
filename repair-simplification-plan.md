@@ -31,7 +31,7 @@ Traversing an intermediate Error or an unavailable parent is still a selection d
 
 ## 2. No repair-only predecessor
 
-Under the [sort exception](poison-policy-plan.md#sorting-requires-order), required preparation/comparison failure in `a!.sort()` retains the captured pre-sort data under repairable own status, including in complete mode. Repair exposes that unchanged data without retrying sorting or asserting that it is sorted. No sort data writes were published, so this needs no rollback or separate repair baseline. A failure after successful ordering instead follows ordinary storage/publication rules and preserves committed effects. Failed `a.sort()` and `a.toSorted()` return ordinary root Error, preserve their source, and retain no hidden failed copy for repair.
+The [normative sort contract](iterate-plan.md#13-selected-decisions) selects when sort publishes repairable status rather than Error data and what that status retains. Use this same status-clearing transition for it; add no sort-specific repair path or baseline.
 
 Keep current logical data and own failure status in the same versioning system. A flagged path blocks access to its retained data until repair or permitted replacement. Unaffected siblings remain accessible. Unordered mode avoids creating positional flags; it does not bypass an existing one. No mode needs a hidden earlier value solely for repair.
 
