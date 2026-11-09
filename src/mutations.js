@@ -54,33 +54,36 @@ function transformProperty(target, operationContext, transform, { replace = fals
     let baseline = replace || target.sourceVersion
         ? propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
         : languageProperties.readLanguagePlacement(parent, key, operationContext)
-    if (languageValues.isPending(baseline.value, operationContext) || baseline.sourceVersion?.transition) beforeWait?.()
+    if ((!repair && languageValues.isPending(propertyVersions.placementValue(baseline), operationContext)) || baseline.sourceVersion?.transition) beforeWait?.()
     let originalPlacement
     let leased
     let gate, releasePublication
     // Replacement waits for unfinished publication without consuming old data.
-    const readiness = replace
+    const readiness = replace || repair
         ? propertyVersions.resolvePlacementTransition(baseline, operationContext, apply)
-        : propertyVersions.resolvePlacement(baseline, operationContext, apply)
+        : propertyVersions.resolveVisiblePlacement(baseline, operationContext, apply)
     function apply(placement) {
         originalPlacement = placement
         baseline = placement
         placement = undefined
-        if (!replace && errorUtils.isPoisonError(baseline.value)) {
-            if (!repair || !baseline.recovery)
-                return { placement: baseline, result: baseline.value, published: false }
-            baseline = baseline.recovery
-            // Repair alone republishes the captured baseline without consuming
-            // it. A consuming mutation needs its ready value and baseline lease
-            // before dispatch, even when recovery introduced another Promise.
-            if (consumeRestored) return propertyVersions.resolvePlacement(baseline, operationContext, restored => {
-                baseline = restored
+        if (!replace && baseline.ownFailure) {
+            if (!repair)
+                return { placement: baseline, result: baseline.ownFailure, published: false }
+            baseline = { ...baseline, ownFailure: undefined }
+        }
+        if (repair && consumeRestored) {
+            // Clearing status does not consume data. A following call still
+            // waits for its receiver and obeys ordinary data-Error semantics.
+            return propertyVersions.resolvePlacement(baseline, operationContext, restored => {
+                baseline = { ...restored, ownFailure: undefined }
                 restored = undefined
                 if (errorUtils.isPoisonError(baseline.value))
-                    return { placement: baseline, result: baseline.value, published: true }
+                    return { placement: baseline, result: baseline.value, published: Boolean(originalPlacement.ownFailure) }
                 return applyCurrent()
             })
         }
+        if (!replace && !repair && errorUtils.isPoisonError(baseline.value))
+            return { placement: baseline, result: baseline.value, published: false }
         return applyCurrent()
     }
     function applyCurrent() {
@@ -90,7 +93,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
             leased = metadata.incrementReadLease(current, operationContext)
         }
         try { return internalSteps.continueGraphTransition(errorUtils.catchExternalThrow(
-            () => transform(current, { present: baseline.present, baseline, originalPlacement, preserveBaseline }), operationContext,
+            () => transform(current, { present: propertyVersions.placementPresent(baseline), baseline, originalPlacement, preserveBaseline }), operationContext,
             errorUtils.ERROR_KIND.PropertyMutationFailed), operationContext, normalize) }
         finally { current = undefined }
     }
@@ -135,10 +138,10 @@ function transformProperty(target, operationContext, transform, { replace = fals
         releasePublication = outcome.releasePublication
         if (errorUtils.isPoisonError(outcome))
             outcome = { placement: { value: outcome, present: true }, result: outcome, failed: true }
-        // Stored poison is valid assignment data. Only this operation's own
-        // failure replaces the selected scope and creates a recovery baseline.
+        // Stored Error data is not path status. Failure of this operation
+        // marks its selected path while keeping the uncommitted work private.
         if (outcome.failed) {
-            outcome.placement = { value: outcome.placement.value, present: true, recovery: baseline }
+            outcome.placement = { ...baseline, ownFailure: outcome.placement.value }
             outcome.published = true
         }
         delete outcome.failed
@@ -148,20 +151,20 @@ function transformProperty(target, operationContext, transform, { replace = fals
     function publish(outcome) {
         let placement, publication, destinationVersion, structure
         try {
-            // A blocked repair can select the original poison and recovery intact;
-            // a successful repair selects the unwrapped baseline instead.
+            // Status clearing publishes a successor over the same current data.
             placement = outcome.placement
-            let published = baseline !== originalPlacement && placement !== originalPlacement
+            let published = originalPlacement.ownFailure && !baseline.ownFailure && placement !== originalPlacement
                 ? true : outcome.published ?? placement !== originalPlacement
             // Result holders and assigned inputs are different placements. Only
             // this destination's preceding presence determines its insertion order.
-            publication = { ...placement, position: originalPlacement.present ? originalPlacement.position : Infinity }
+            publication = { ...placement, position: propertyVersions.placementPresent(originalPlacement) ? originalPlacement.position : Infinity }
             destinationVersion = gate?.version ?? target.sourceVersion
             structure = gate?.structure ?? target.structure
             const failure = errorUtils.catchExternalThrow(() => {
                 if (gate || placement !== originalPlacement) {
+                    const statusOnly = placement.ownFailure || repair && (placement === baseline || placement === originalPlacement)
                     const failure = propertyVersions.transferPlacement(publication, parent, key, operationContext, destinationVersion,
-                        errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure)
+                        errorUtils.ERROR_KIND.AssignmentValueFailed, !statusOnly, structure)
                     return failure
                 }
             }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
@@ -171,7 +174,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
                 outcome = { placement: { value: poison, present: true }, result: includePublicationFailure(outcome.result, poison, operationContext) }
                 if (restoring) {
                     published = false
-                    // A failed repair leaves the original poison and recovery intact.
+                    // A failed repair leaves the prior data and status intact.
                     if (destinationVersion) propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
                         originalPlacement, operationContext, false, structure)
                 } else if (destinationVersion) propertyVersions.publishPlacementFailure(parent, key, destinationVersion,
@@ -209,13 +212,11 @@ function includePublicationFailure(result, publishedValue, operationContext) {
     )
 }
 
-// Path failure replaces a placement with new poison, preserving the same
-// repairable value whether publication is immediate or through a key gate.
-// Keep only the baseline facts, not its former publication destination.
-function pathRecovery(next, recovery, baseline) {
-    return recovery ?? (errorUtils.isPoisonError(next) && !errorUtils.isPoisonError(baseline.value)
-        ? { value: baseline.value, present: baseline.present !== false, recovery: baseline.recovery }
-        : undefined)
+// Failure marks the selected path over its current data. Reconstruction carries
+// that complete placement; it does not retain a predecessor for later repair.
+function pathFailure(next, flagged, current) {
+    return flagged ?? (errorUtils.isPoisonError(next) && !errorUtils.isPoisonError(current.value)
+        ? { ...current, ownFailure: next } : undefined)
 }
 
 // path identifies the complete mutation target. The walk starts at the private
@@ -283,7 +284,7 @@ function walkMutationPath(
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it
     // for every recursive frame.
-    function complete(writeBack, next, targetResult = undefined, recovery = undefined) {
+    function complete(writeBack, next, targetResult = undefined, flagged = undefined) {
         pathSelectionComplete = true
         if (!languageValues.isPending(next, operationContext)) languageValues.admitReadyValue(next, operationContext)
         const outcome =
@@ -292,7 +293,7 @@ function walkMutationPath(
                 : targetResult
         publicationValue = next
         operationResult = outcome
-        writeBack(next, recovery)
+        writeBack(next, flagged)
         return operationResult
     }
 
@@ -323,8 +324,9 @@ function walkMutationPath(
         if (placement) {
             const publish = writeBack
             const version = placement.sourceVersion ?? propertyVersions.getPlacementVersion(placement.parent, placement.key, operationContext)
-            const baseline = { value, present: placement.present !== false, recovery: version?.recovery }
-            writeBack = (next, recovery) => publish(next, pathRecovery(next, recovery, baseline))
+            const current = version ? propertyVersions.capturePlacementFromVersion(version) :
+                { value, present: placement.present !== false }
+            writeBack = (next, flagged) => publish(next, pathFailure(next, flagged, current))
         }
         try { return errorUtils.catchExternalThrow(
             () => walkReady(value, index, writeBack, placement),
@@ -367,11 +369,11 @@ function walkMutationPath(
         placement = { ...placement, sourceVersion: { ...captured, sourceVersion: undefined } }
         publication.suspend()
         writeBack(gate.promise)
-        const publish = (next, recovery) => {
-            recovery = pathRecovery(next, recovery, captured)
-            propertyVersions.transferPlacement({ ...captured, value: next, recovery, sourceVersion: undefined },
+        const publish = (next, flagged) => {
+            flagged = pathFailure(next, flagged, captured)
+            propertyVersions.transferPlacement(flagged ?? { ...captured, value: next, sourceVersion: undefined },
                 placement.parent, placement.key, operationContext, gate.version,
-                errorUtils.ERROR_KIND.AssignmentValueFailed, true, gate.structure)
+                errorUtils.ERROR_KIND.AssignmentValueFailed, !flagged, gate.structure)
             gate.resolve()
             gate = undefined
         }
@@ -380,7 +382,7 @@ function walkMutationPath(
                 const result = errorUtils.catchExternalThrow(() => walkKey(value, index, publish, placement, key),
                     operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed,
                     failure => fail(publish, combinePathFailure(failure)))
-                if (gate) publish(captured.value, captured.recovery)
+                if (gate) publish(captured.value, captured.ownFailure ? captured : undefined)
                 return result
             } finally {
                 if (leased) metadata.decrementReadLease(value, operationContext)
@@ -411,7 +413,8 @@ function walkMutationPath(
             return completeTarget({ ...placement, receiver: placement.parent,
                 propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: start + index - 1 }, parent => {
                     // Failed publication may have copied the parent to hold poison.
-                    writeBack(propertyVersions.capturePlacement(parent, placement.key, operationContext, placement.sourceVersion).value)
+                    const current = propertyVersions.capturePlacement(parent, placement.key, operationContext, placement.sourceVersion)
+                    writeBack(propertyVersions.placementValue(current), current.ownFailure ? current : undefined)
                 })
         }
         if (propertyKind === languageProperties.INVALID_ARRAY_KEY) {
@@ -460,17 +463,18 @@ function walkMutationPath(
             }, writeBack)
         }
 
-        const { value: capturedValue, present, sourceVersion: source } = languageProperties.readLanguagePlacement(parent, key, operationContext)
-        const child = present ? capturedValue : undefined
+        const captured = languageProperties.readLanguagePlacement(parent, key, operationContext)
+        const present = propertyVersions.placementPresent(captured), source = captured.sourceVersion
+        const child = present ? propertyVersions.placementValue(captured) : undefined
         if (languageValues.isPending(child, operationContext)) {
             beforeWait?.()
             // Native selection captures managed state; its external reservation
             // owns ordering. Only managed mutation installs a publication version.
             const onValue = (propertyValue, promiseVersion, structure) => {
                 const result = walk(
-                    propertyValue,
+                    promiseVersion.ownFailure ?? propertyValue,
                     index + 1,
-                    (next, recovery) => {
+                    (next, flagged) => {
                         if (next !== propertyValue && next !== promiseVersion.value) {
                             publicationValue = next
                             // This version is runtime-owned: ordinary mutation
@@ -478,14 +482,14 @@ function walkMutationPath(
                             // prefixes wait only at runtime scope gates because
                             // initial authority paths are directly ready.
                             const publicationFailure = errorUtils.catchExternalThrow(
-                                () => propertyVersions.transferPlacement({ value: next, present: true, recovery },
+                                () => propertyVersions.transferPlacement(flagged ?? { value: next, present: true },
                                     parent, key, operationContext, promiseVersion,
-                                    errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure),
+                                    errorUtils.ERROR_KIND.AssignmentValueFailed, !flagged, structure),
                                 operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
-                            if (errorUtils.isPoisonError(publicationFailure) || errorUtils.isPoisonError(promiseVersion.value)) {
+                            if (errorUtils.isPoisonError(publicationFailure)) {
                                 publication.published = true
-                                const failure = combinePathFailure(publicationFailure ?? promiseVersion.value)
-                                const baseline = recovery ?? { value: propertyValue, present }
+                                const failure = combinePathFailure(publicationFailure)
+                                const baseline = flagged ?? { value: propertyValue, present }
                                 propertyVersions.publishPlacementFailure(parent, key, promiseVersion,
                                     failure, baseline, operationContext, structure, promiseVersion.position)
                                 operationResult = includePathFailure(failure)
@@ -510,7 +514,7 @@ function walkMutationPath(
         return walk(
             child,
             index + 1,
-            (next, recovery) => {
+            (next, flagged) => {
                 if (next === child) {
                     writeBack(value)
                     return
@@ -527,7 +531,8 @@ function walkMutationPath(
                     parent = prepareParent(value, key, atTarget, preserveParent)
                     if (index > 0) publication.capture(parent)
                 }
-                if (recovery) propertyVersions.transferPlacement({ value: next, present: true, recovery }, parent, key, operationContext)
+                if (flagged) propertyVersions.transferPlacement(flagged, parent, key, operationContext, undefined,
+                    errorUtils.ERROR_KIND.AssignmentValueFailed, false)
                 else propertyVersions.assignProperty(parent, key, next, operationContext)
                 writeBack(parent)
             },

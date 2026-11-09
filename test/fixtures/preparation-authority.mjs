@@ -10,7 +10,7 @@ import * as trace from "../trace-state.js"
 
 let overlays = 0, transitions = 0, histories = 0, cacheRefusals = 0
 for (const array of [false, true])
-for (const state of ["fixed", "absent", "pending", "recovery"])
+for (const state of ["fixed", "absent", "pending", "status"])
 for (const route of ["root", "wrapper", "late"]) {
     const execution = new r.Execution()
     const original = { execution, errorContext: { producer: true } }
@@ -18,9 +18,11 @@ for (const route of ["root", "wrapper", "late"]) {
     const key = array ? "0" : "x", source = array ? [17] : { x: 17 }
     admitReadyValue(source, original, array ? TYPE.Array : TYPE.Record, array ? undefined : Object.prototype)
     const pending = new OrderedThenable(), child = r.import({ n: 3 }, original)
+    const ownFailure = state === "status" ? r.createPoisonError(new Error("own status"), original,
+        r.ERROR_KIND.PropertyMutationFailed) : undefined
     if (state === "pending") pv.assignProperty(source, key, pending, original, r.ERROR_KIND.AssignmentValueFailed)
     else pv.copyPlacement({ value: state === "absent" ? undefined : child, present: state !== "absent",
-        recovery: state === "recovery" ? { value: 17, present: true } : undefined }, source, key, original, false)
+        ownFailure }, source, key, original, false)
     const version = pv.getPlacementVersion(source, key, original), subscriptions = pending.subscriptions
     assert(version)
     let held
@@ -41,7 +43,12 @@ for (const route of ["root", "wrapper", "late"]) {
         assert.equal(failure.kind, r.ERROR_KIND.AssignmentValueFailed)
         assert.equal(failure.cause, cause)
     } else assert.equal(r.lookupPath(held, [...(route === "root" ? [] : ["source"]), key], later),
-        state === "absent" ? undefined : child)
+        state === "absent" ? undefined : ownFailure ?? child)
+    if (ownFailure) {
+        const path = [...(route === "root" ? [] : ["source"]), key]
+        assert.equal(r.repairPath(held, path, later), undefined)
+        assert.equal(r.lookupPath(held, path, later), child)
+    }
     verifyParents(later, held._state)
     overlays++
 }

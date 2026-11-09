@@ -31,7 +31,7 @@ const changes = new Map([
             '$&\n    globalThis.reviewHistoryCounts().copiedPlacements++;'],
         ['for (const [sourceKey, version] of ownPlacementVersionEntries(source, operationContext)) {',
             '$&\n        globalThis.reviewHistoryCounts().overlayVisits++;'],
-        ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation) {',
+        ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation, project) {',
             '$&\n    const measured = globalThis.reviewHistoryCounts(); measured.live++; let measuredClosed = false;'],
         ['const complete = () => {\n        unregister?.()',
             'const complete = () => {\n        if (!measuredClosed) { measuredClosed = true; measured.live-- }\n        unregister?.()'],

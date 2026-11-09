@@ -77,19 +77,22 @@ For `[R(width 0..1), Z]`, position 0 is guaranteed but selects R or Z. After a n
 
 Do not let the shared width fact retain R's payload. This is a lookup/lifetime example, not permission for sequential iteration to issue a structurally unresolved occurrence. That cursor waits for final source selection; future unordered discovery can capture Z separately.
 
-## 3. Reuse parent-derived preservation for deferred inputs
+## 3. Deferred-input ownership remains an integration obligation
 
-The runtime already separates logical placement parents from preservation parents:
+[D01](audit-report.md#d01---exact-path-status-repair-implemented) removed the
+repair-only preservation-parent index. Current failed placements retain data
+through their ordinary logical parent relationships; `preserveRecovery` and
+its separate retention callbacks no longer exist. The former experiment-only
+adapter for that index is retired, so it supplies no current integration evidence.
 
-- [parent-placements.js](../src/parent-placements.js) exposes preservation parents to retirement without reporting them as language placements.
-- [meta.js](../src/meta.js) makes preserved children require copy-on-write.
-- [ownership.js](../src/ownership.js) retires unrooted cycles through the combined retention graph.
-
-Generalize that preservation mechanism for layout-owned captured inputs. The live layout owner retains each required input through a preservation use; this creates neither a guessed numeric key nor an Error/Promise membership claim. Use ordinary external captures/leases for independently held results and unfinished operation work at their existing lifetimes.
-
-Extract the capture-observation and release logic already used by `preserveRecovery`, rather than adding another pending-value subscription path. Its `observePlacementCapture` subscription follows property-version publication; a layout use supplies its own owner and selection identity. Activation, narrowing, and retirement attach or remove that use at the same boundary as its forward capture.
-
-Do not implement layout-owned inputs as unconditional lease roots. A cycle `Array -> deferred input -> Array` would otherwise keep itself alive after the Array loses its external owner. Parent-derived preservation lets the existing retirement proof inspect the cycle and release its layout uses.
+Future layout-owned inputs still need ownership before a destination key is
+known, without inventing a numeric placement or an Error/Promise membership
+claim. Design that retention from the layout's authoritative forward selections
+and existing retirement rules. An unconditional lease root is insufficient:
+a cycle `Array -> deferred input -> Array` must retire when its external owner
+is released. Independently held results and unfinished operation work retain
+their existing capture/lease lifetimes. No replacement layout mechanism is
+implemented by D01.
 
 ### Publication baseline
 
@@ -103,7 +106,7 @@ Direct updates can cost O(M) for M affected managed placements, even when the la
 
 Store authoritative forward selection uses on the owner. Active reverse preservation links and publication destinations follow the owner's existing activation/retirement lifecycle. Retirement removes them and releases internal-node uses; re-entry restores from maintained forward state without host reinspection.
 
-The probe exercises ready-child preservation, COW, and cycle retirement. Pending-child delivery, re-entry, aggregate Error/Promise membership, and placement publication remain integrated-runtime verification requirements. A possibly selected input must not enter an output Error counter solely because it is retained.
+Ready-child retention, COW, cycle retirement, pending-child delivery, re-entry, aggregate Error/Promise membership, and placement publication all remain integrated-runtime verification requirements. A possibly selected input must not enter an output Error counter solely because it is retained.
 
 ## 4. Propagate changed facts, not dirty notifications
 
@@ -163,7 +166,7 @@ node test/experiments/array-layout-technical-probes.mjs
 | Sliced ownership and cursor frontier | Overlapping uses release independently; 32 consumed leaves release while 32 unread leaves remain; uncertain slot and suffix use different candidates. Backward demand rules pass 4,042 comparisons against enumerated source sets. | Structural use counts and simple drop/join demand rules, not GC timing or a full nested deferred-range selector. |
 | Fact propagation | Fixed-size counterexample above; failure without narrower bounds and later masking success are checked. | Small max-growth projection, not all shape/failure reductions. |
 | Selection propagation | 196,608 comparisons against an independent sequential winner scan across three settlement orders. | Conditional fixed-slot writes; not arbitrary splice history. |
-| Runtime preservation adapter | Real COW/retirement code protects an unplaced ready child, reports no guessed key, and retires two cycle cases with/without an independent hold. | Experiment-only use of the current preservation protocol; no production layout code added. |
+| Runtime preservation adapter | Retired after D01 removed its repair-only parent protocol. | Historical evidence only; future layout retention needs a new integrated witness. |
 
 ## 6. Specification and integration acceptance
 

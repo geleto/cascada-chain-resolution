@@ -34,10 +34,11 @@ class PropertyPlacement {
         const captured = this.ensureCaptured()
         // The caller receives pending data through another Promise reaction.
         // Protect it at publication, before a later writer can resume.
-        return resolvePlacement(captured, this.operationContext, placement => {
+        return resolveVisiblePlacement(captured, this.operationContext, placement => {
             Object.assign(this, placement)
             // Search identity is captured at delivery, before later writers resume.
-            return project ? project(this.value, this.operationContext) : this.value
+            const value = placementValue(this)
+            return project ? project(value, this.operationContext) : value
         })
     }
 
@@ -52,7 +53,7 @@ class PropertyPlacement {
 }
 
 // Capture without consuming an unused old value. A replacement must not wait
-// for the value it replaces merely to retain a recovery baseline.
+// for the value it replaces merely to preserve current data on failure.
 // Deferred selection supplies its captured version, even if it is now detached.
 function capturePlacement(owner, key, operationContext, capturedVersion, storage) {
     const version = capturedVersion ?? getPlacementVersion(owner, key, operationContext)
@@ -68,7 +69,8 @@ function capturePlacementFromVersion(version) {
     return {
         value: version.value, present: version.present !== false,
         sourceVersion: version.promiseBacked ? version : undefined,
-        recovery: version.recovery,
+        ownFailure: version.ownFailure,
+        pendingPresence: version.pendingPresence,
         discoveryBlocked: version.discoveryBlocked,
         position: version.position ?? (version.present === false ? Infinity : -1),
     }
@@ -78,23 +80,40 @@ function capturePlacementFromVersion(version) {
 // Only logical contents and unfinished source dependencies cross placements.
 function createVersionFromPlacement(placement) {
     return {
-        value: placement.value, present: placement.present !== false, recovery: placement.recovery,
-        pendingPresence: placement.sourceVersion?.pendingPresence,
+        value: placement.value, present: placement.present !== false, ownFailure: placement.ownFailure,
+        pendingPresence: placement.pendingPresence,
         transition: placement.sourceVersion?.transition,
         discoveryBlocked: placement.discoveryBlocked,
         position: placement.position,
     }
 }
 
+// Status belongs to this placement, independently of its retained data. Only
+// consumers project it to an Error; copying and publication keep both facts.
+function placementValue(placement) { return placement.ownFailure ?? placement.value }
+function placementPresent(placement) { return Boolean(placement.ownFailure) || placement.present !== false }
+
+function resolveVisiblePlacement(placement, operationContext, onReady) {
+    if (!languageValues.isPending(placementValue(placement), operationContext)) return onReady(placement)
+    let version = placement.sourceVersion
+    return continueCapturedPromiseVersion(placement.value, version, operationContext, (value, releaseCapture) => {
+        try {
+            const captured = capturePlacementFromVersion(version)
+            if (!languageValues.isPending(captured.value, operationContext)) captured.sourceVersion = undefined
+            return onReady(captured, releaseCapture)
+        } finally { version = onReady = undefined }
+    }, undefined, placementValue)
+}
+
 // A pending capture follows its own version, never a later live placement.
 // Reception has already installed the version and its causal validation policy.
-// Delivery fixes presence and recovery together with the logical value.
+// Delivery fixes presence and own status together with the logical value.
 function resolvePlacement(placement, operationContext, onReady) {
     if (!languageValues.isPending(placement.value, operationContext)) return onReady(placement)
     let version = placement.sourceVersion
     return continueCapturedPromiseVersion(placement.value, version, operationContext, (value, releaseCapture) => {
         try {
-            return onReady({ value, present: version.present !== false, recovery: version.recovery, position: version.position,
+            return onReady({ value, present: version.present !== false, ownFailure: version.ownFailure, position: version.position,
                 discoveryBlocked: version.discoveryBlocked, sourceVersion: undefined }, releaseCapture)
         } finally { version = onReady = undefined }
     })
@@ -124,8 +143,8 @@ function resolvePlacementTransition(placement, operationContext, onReady) {
 }
 
 // Captures subscribe to the version's publication, not its source Promise.
-// Each publication transfers its complete recovery obligation too. Recovery
-// may introduce another pending version after this capture was registered.
+// Publication transfers the current payload. Path status adds no second
+// predecessor or separately retained graph.
 function observePlacementCapture(placement, accept) {
     const subscribed = new Set()
     const visit = placement => {
@@ -138,7 +157,6 @@ function observePlacementCapture(placement, accept) {
             placement = version
         }
         accept(placement.value)
-        if (placement.recovery) visit(placement.recovery)
     }
     visit(placement)
     return () => {
@@ -166,21 +184,32 @@ function copyPlacement(placement, owner, key, operationContext, writeBack = true
             const destination = ArrayView.placementDestination(owner, key, operationContext)
             if (destination) { owner = destination.owner; key = destination.key }
         }
-        const source = placement.sourceVersion
-        const delivery = source.copiedDelivery?.delivery ?? (source.copyDelivery ??=
-            createCopyDelivery(placement, operationContext))
-        if (delivery.placement) return copyPlacement(delivery.placement, owner, key, operationContext, writeBack)
-        const version = createVersionFromPlacement(placement)
-        version.promiseBacked = true
-        version.publication = delivery.publication
-        version.copiedDelivery = { delivery, key, operationContext, active: false,
-            destination: destinationOf(owner, operationContext) }
+        const version = createCopiedVersion(placement, owner, key, operationContext)
+        if (!languageValues.isPending(version.value, operationContext))
+            return copyPlacement(version, owner, key, operationContext, writeBack)
         replacePlacement(owner, key, version, operationContext, writeBack && !version.pendingPresence)
         return
     }
     if (writeBack && placement.present) defineCopyProperty(owner, key, placement.value)
-    if (!writeBack || placement.recovery || placement.discoveryBlocked)
+    if (!writeBack || placement.ownFailure || placement.discoveryBlocked)
         installPlacementVersion(owner, key, createVersionFromPlacement(placement), operationContext)
+}
+
+// Copies and status successors share a payload producer. Each destination still
+// commits its own status, parent edges, counters and publication authority.
+function createCopiedVersion(placement, owner, key, operationContext) {
+    const source = placement.sourceVersion
+    const delivery = source.copiedDelivery?.delivery ?? (source.copyDelivery ??=
+            createCopyDelivery(placement, operationContext))
+    if (delivery.placement) return createVersionFromPlacement({ ...delivery.placement,
+        ownFailure: placement.pendingPresence || source.transition ? delivery.placement.ownFailure : placement.ownFailure,
+        position: placement.pendingPresence || source.transition ? delivery.placement.position : placement.position ?? delivery.placement.position })
+    const version = createVersionFromPlacement(placement)
+    version.promiseBacked = true
+    version.publication = delivery.publication
+    version.copiedDelivery = { delivery, key, operationContext, active: false,
+        destination: destinationOf(owner, operationContext) }
+    return version
 }
 
 // Representation copies share one captured delivery, not mutable placement
@@ -230,18 +259,24 @@ function transferPlacement(placement, owner, key, operationContext, destinationV
     const ownerMeta = metadata.metaOf(owner, operationContext)
     if (writeBack && !destinationVersion && !structure && ownerMeta?.type === metadata.TYPE.Array &&
         ownerMeta.arrayRange && ownerMeta.arrayRange.backing !== owner &&
-        (placement.sourceVersion || placement.recovery || placement.discoveryBlocked ||
+        (placement.sourceVersion || placement.ownFailure || placement.discoveryBlocked ||
             languageValues.isPending(placement.value, operationContext) ||
             ArrayView.backingVersion(owner, key, operationContext))) {
         const destination = ArrayView.placementDestination(owner, key, operationContext)
         if (destination) { owner = destination.owner; key = destination.key }
     }
-    if (writeBack && !destinationVersion && !placement.present) {
+    if (writeBack && !destinationVersion && !placementPresent(placement)) {
         deleteProperty(owner, key, operationContext)
         return undefined
     }
-    let version = createVersionFromPlacement(placement)
     const construction = metadata.metaOf(owner, operationContext)?.construction
+    if (placement.sourceVersion && !placement.pendingPresence && !placement.sourceVersion.transition &&
+        !destinationVersion && !structure && !construction && languageValues.isPending(placement.value, operationContext)) {
+        const version = createCopiedVersion(placement, owner, key, operationContext)
+        replacePlacement(owner, key, version, operationContext, writeBack)
+        return undefined
+    }
+    let version = createVersionFromPlacement(placement)
     let destination
     const deliver = (resolved, releaseCapture) => {
         try {
@@ -266,7 +301,7 @@ function transferPlacement(placement, owner, key, operationContext, destinationV
             // captured version only after its complete placement has committed.
             version = destinationVersion
         } else if (!writeBack || version.pendingPresence) replacePlacement(owner, key, version, operationContext, false)
-        else if (version.present === false) deleteProperty(owner, key, operationContext)
+        else if (!placementPresent(version)) deleteProperty(owner, key, operationContext)
         else replacePlacement(owner, key, version, operationContext)
         return pending ? undefined : publication
     } finally {
@@ -295,7 +330,8 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
             gate.owner = undefined
             // Replacement may proceed after publication. Value consumers still
             // wait for any pending data that was published through the gate.
-            markPromiseHandled(continueCapturedPromiseVersion(version.value, version,
+            if (version.ownFailure) resolve(version.ownFailure)
+            else markPromiseHandled(continueCapturedPromiseVersion(version.value, version,
                 operationContext, resolve), operationContext)
         },
     }
@@ -315,8 +351,8 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
 
 function completePlacementGate(gate, placement, operationContext) {
     // Completion is exposed through the gate; this helper owns pending publication.
-    // A nested command may still change presence or recovery. Finish that
-    // transition here so failed publication follows the same recovery path as
+    // A nested command may still change presence or status. Finish that
+    // transition here so failed publication follows the same failure path as
     // ready completion. Pending data itself does not delay gate publication.
     const publication = resolvePlacementTransition(placement, operationContext, resolved => {
         const failure = errorUtils.catchExternalThrow(
@@ -326,7 +362,7 @@ function completePlacementGate(gate, placement, operationContext) {
         if (errorUtils.isPoisonError(failure)) {
             gate.publication.published = true
             publishPlacementFailure(gate.owner, gate.key, gate.version,
-                combinePublicationErrors(resolved.value, failure), resolved.recovery ?? resolved,
+                combinePublicationErrors(placementValue(resolved), failure), resolved,
                 operationContext, gate.structure, resolved.position)
         }
         gate.resolve()
@@ -335,13 +371,11 @@ function completePlacementGate(gate, placement, operationContext) {
     return publication
 }
 
-// The caller selects the recovery baseline: pre-mutation state for mutation,
-// completed contained state for entry publication. Failure writes no storage.
-// A retained baseline may have an older record position than the live placement.
+// Failed private work is never adopted. Keep the selected current data and
+// publish only this path's failure status; no Error owns a recovery payload.
 function publishPlacementFailure(owner, key, version, failure, baseline, operationContext, structure, position = baseline.position) {
-    const placement = { value: failure, present: true, recovery: baseline, position }
-    if (version) commitPlacementVersion(owner, key, version, placement, operationContext, false, structure)
-    else replacePlacement(owner, key, placement, operationContext, false)
+    return transferPlacement({ ...baseline, ownFailure: failure, position }, owner, key,
+        operationContext, version, errorUtils.ERROR_KIND.AssignmentValueFailed, false, structure)
 }
 
 function combinePublicationErrors(...values) {
@@ -364,7 +398,7 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
         delete version.copyDelivery
         version.value = placement.value
         version.present = placement.present !== false
-        version.recovery = placement.recovery
+        version.ownFailure = placement.ownFailure
         version.pendingPresence = placement.pendingPresence
         version.transition = placement.transition
         version.publication = placement.publication
@@ -378,7 +412,7 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
         const commitStructure = structure?.prepare(placement)
         return () => { commit(); commitStructure?.() }
     }
-    const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
+    const absent = !placementPresent(placement)
     return preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack, storageAbsent => {
         if (storageAbsent !== undefined) version.storageAbsent = storageAbsent
         commit()
@@ -391,7 +425,7 @@ function detachAbsentVersion(owner, key, version, operationContext) {
     // is safe: it may still mask physical storage or a canonical backing value.
     // Present versions can still authorize queued path publication after they
     // settle; matching physical storage alone does not make them disposable.
-    if (version.present === false && version.storageAbsent && !errorUtils.isPoisonError(version.value) && !version.writing &&
+    if (!placementPresent(version) && version.storageAbsent && !version.writing &&
         !ArrayView.backingVersion(owner, key, operationContext) &&
         isLivePlacementVersion(owner, key, version, operationContext))
         detachPlacementVersion(owner, key, operationContext)
@@ -437,7 +471,7 @@ function isLivePlacementVersion(owner, key, version, operationContext) {
     return getPlacementVersion(owner, key, operationContext) === version
 }
 
-function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation) {
+function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation, project) {
     const release = retainPlacement(capturePlacementFromVersion(promiseVersion), operationContext)
     let unregister
     const complete = () => {
@@ -451,7 +485,9 @@ function continueCapturedPromiseVersion(promise, promiseVersion, operationContex
     const resume = signal => internalSteps.continueGraphTransition(signal, operationContext, deliver,
         signal === promiseVersion.publication ? undefined : deliver, operation)
     function deliver() {
-        const value = promiseVersion.value
+        // Data publication follows its payload even behind a failed path.
+        // Observations can finish as soon as that path's status is known.
+        const value = project ? project(promiseVersion) : promiseVersion.value
         if (languageValues.isPending(value, operationContext))
             return resume(value === promise ? promiseVersion.publication : value)
         // Direct consumers can release after transferring this capture.
@@ -491,10 +527,11 @@ function observePromiseVersion(
             promise = promiseVersion = onValue = undefined
             // Observers capture every remaining dependency synchronously or
             // transfer protection to their consumer before returning readiness.
-            try { return consume(value, version) }
+            try { return consume(placementValue(version), version) }
             finally { releaseCapture() }
         },
         operation,
+        placementValue,
     )
 }
 
@@ -512,14 +549,16 @@ function installMutationVersion(owner, key, source, operationContext, onValue) {
     prepareEdgeUpdate(owner, key, captured, version.value, operationContext,
         () => installPlacementVersion(owner, key, version, operationContext))()
     let result
-    transition.promise = resolvePlacement(captured, operationContext, (placement, releaseCapture) => {
+    transition.promise = resolveVisiblePlacement(captured, operationContext, (placement, releaseCapture) => {
         version.writing = true
-        publishPromiseVersion(owner, key, version, placement, operationContext, structure)
+        if (placement.ownFailure) transferPlacement(placement, owner, key, operationContext,
+            version, errorUtils.ERROR_KIND.AssignmentValueFailed, false, structure)
+        else publishPromiseVersion(owner, key, version, placement, operationContext, structure)
         // Only a live destination accepts this capture. A displaced writer
         // keeps its lease through descent: the remaining parent may belong to
         // another owner. The capture releases when this callback returns.
         if (isLivePlacementVersion(owner, key, version, operationContext)) releaseCapture?.()
-        result = onValue(version.value, version, structure)
+        result = onValue(placementValue(version), version, structure)
         delete version.writing
         detachAbsentVersion(owner, key, version, operationContext)
         transition.placement = capturePlacementFromVersion(version)
@@ -596,11 +635,14 @@ function publishPromiseVersion(
     const validationFailure = languageProperties.validatePropertyValue(key, value, operationContext)
     value = validationFailure ?? value
     languageValues.admitReadyValue(value, operationContext)
-    const ready = { value, present: placement.present, recovery: placement.recovery,
+    const ready = { value, present: placement.present,
+        // Ordinary payload delivery cannot reinstate status cleared by a later
+        // placement version. A structural transition still selects its status.
+        ownFailure: structure || promiseVersion.transition || promiseVersion.pendingPresence ? placement.ownFailure : promiseVersion.ownFailure,
         discoveryBlocked: placement.discoveryBlocked,
         // Ordinary payload settlement does not insert the property again.
         // Only an unfinished transition still owns its structural decision.
-        position: structure || promiseVersion.pendingPresence ? placement.position : promiseVersion.position ?? placement.position }
+        position: structure || promiseVersion.transition || promiseVersion.pendingPresence ? placement.position : promiseVersion.position ?? placement.position }
     commitPromiseVersion(owner, key, promiseVersion, ready, operationContext, true, structure)
     return validationFailure
 }
@@ -645,7 +687,7 @@ function replacePlacement(owner, key, placement, operationContext, writeBack = t
         preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack, () => {
             // Failed storage work must leave the old logical version available.
             detachPlacementVersion(owner, key, operationContext)
-            if (!writeBack || placement.promiseBacked || placement.recovery || placement.discoveryBlocked ||
+            if (!writeBack || placement.promiseBacked || placement.ownFailure || placement.discoveryBlocked ||
                 ArrayView.backingVersion(owner, key, operationContext))
                 installPlacementVersion(owner, key, placement, operationContext)
         })()
@@ -665,7 +707,7 @@ function preparePlacementStorage(owner, key, placement, operationContext) {
         owner = gate.owner
         key = gate.key
     }
-    const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
+    const absent = placement.present === false
     for (let index = destinations.length - 1; index >= 0; index--) {
         const destination = destinations[index]
         destination.descriptor = absent
@@ -718,15 +760,16 @@ function preparePropertyCommit(owner, key, placement, operationContext, structur
                 updateProperty(absent)
                 commitStructure(absent !== undefined)
             } finally { storage = updateProperty = commitStructure = undefined }
-        })
+        }, placementValue(placement))
     } finally { owner = placement = undefined }
 }
 
 // Prepared placement inspection never consumes values. Storage, shape, and
 // optional counters can therefore be prepared against one stable edge capture.
-function prepareEdgeUpdate(owner, key, before, value, operationContext, commit) {
+function prepareEdgeUpdate(owner, key, before, value, operationContext, commit, visible = value) {
     const wasOverlay = Boolean(getPlacementVersion(owner, key, operationContext))
-    let updateCounter = refcounts.prepareCounterUpdate(owner, key, before.value, value, operationContext)
+    let updateCounter = refcounts.prepareCounterUpdate(owner, key, placementValue(before), visible, operationContext)
+    visible = undefined
     return () => {
         try {
             commit()
@@ -753,6 +796,9 @@ function copyArrayOverlays(
 }
 
 export {
+    placementValue,
+    placementPresent,
+    resolveVisiblePlacement,
     refreshCopiedDelivery,
     retainCopiedDelivery,
     releaseCopiedDelivery,

@@ -65,7 +65,7 @@ describe("run", () => {
             { repair: false, mutationScopeDepth: 0 },
         )
         expect(mutationError instanceof Error).to.be(true)
-        expect(mutation._state.value).to.be(mutationError)
+        expect(readPath(mutation, [], testContext)).to.be(mutationError)
 
         const unsupportedMode = new Chain([1], testContext)
         const unsupportedModeError = run(
@@ -77,7 +77,7 @@ describe("run", () => {
             { repair: false, mutationScopeDepth: 0 },
         )
         expect(unsupportedModeError instanceof Error).to.be(true)
-        expect(unsupportedMode._state.value).to.be(unsupportedModeError)
+        expect(readPath(unsupportedMode, [], testContext)).to.be(unsupportedModeError)
         expect(registrations() > before).to.be(true)
         const beforeObservation = registrations()
 
@@ -1269,7 +1269,7 @@ describe("run", () => {
             { ...testContext, errorContext: "test run" },
             { repair: false },
         ))).to.be(direct)
-        expect(mutation._state.value).to.be(mutationFailure)
+        expect(readPath(mutation, [], testContext)).to.be(mutationFailure)
 
         const mutationPending = deferred()
         const delayedMutation = new Chain([1, 2], testContext)
@@ -1284,7 +1284,7 @@ describe("run", () => {
         mutationPending.reject(rejected)
         const delayedFailure = await mutationResult
         expect(errorCause(delayedFailure)).to.be(rejected)
-        expect(delayedMutation._state.value).to.be(delayedFailure)
+        expect(readPath(delayedMutation, [], testContext)).to.be(delayedFailure)
     })
 
     it("does not resolve ignored controlled Array arguments", () => {
@@ -2106,7 +2106,7 @@ describe("run", () => {
 
         start.reject(failure)
         expect(errorCause(await result)).to.be(failure)
-        expect(errorCause(receiver._state.value)).to.be(failure)
+        expect(errorCause(readPath(receiver, [], testContext))).to.be(failure)
         expect(metaOf(payload, testContext).readLeaseCount).to.be(undefined)
     })
 
@@ -2502,7 +2502,7 @@ describe("run", () => {
         const result = run(chain, [], "sort", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(result instanceof Promise).to.be(false)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         expect(readPath(chain, [0], testContext)).to.be(value)
         pending.resolve(1)
     })
@@ -2524,7 +2524,7 @@ describe("run", () => {
 
         expect(result instanceof Error).to.be(true)
         expect(registrations()).to.be(1)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         expect(values).to.eql([2, 1])
         comparison.resolve(0)
     })
@@ -3327,8 +3327,8 @@ describe("run", () => {
         const result = run(chain, ["missing"], "push", [1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 1 })
 
         expect(result instanceof Error).to.be(true)
-        expect(root.missing).to.be(result)
-        expect(Object.keys(root)).to.eql(["missing"])
+        expect(logicalProperty(root, "missing", testContext)).to.be(result)
+        expect([...logicalKeys(root, testContext)]).to.eql(["missing"])
     })
 
     it("uses only controlled Array methods", () => {
@@ -3392,7 +3392,7 @@ describe("run", () => {
             )
 
             expect(result instanceof Error).to.be(true)
-            expect(root.target).to.be(result)
+            expect(logicalProperty(root, "target", testContext)).to.be(result)
             expect(receiver.length).to.be(length)
         }
     })
@@ -3495,7 +3495,7 @@ describe("run", () => {
         const result = run(chain, [], "reverse", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(lookupPath(chain, [0], testContext)).to.be(2)
         expect(errorCause(lookupPath(chain, [1], testContext))).to.be(failure)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         expect([...receiver]).to.eql([1, 2])
     })
 
@@ -3561,7 +3561,7 @@ describe("run", () => {
         ], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(errorCause(result)).to.be(failure)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         expect(source).to.eql([2, 1])
     })
 
@@ -3586,7 +3586,7 @@ describe("run", () => {
 
         const outcome = await result
         expect(errorCause(outcome)).to.be(failure)
-        expect(chain._state.value).to.be(outcome)
+        expect(readPath(chain, [], testContext)).to.be(outcome)
         expect(source).to.eql([2, 1])
     })
 

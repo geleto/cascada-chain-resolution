@@ -520,7 +520,7 @@ describe("write-based identity conformance", () => {
     })
 
     for (const gated of [false, true])
-    it(`failed repair with no publication preserves identity: gated=${gated}`, async () => {
+    it(`metadata repair publishes identity without a storage write: gated=${gated}`, async () => {
         const ctx = context(), cause = new Error("refused repair")
         let refuse = false
         const storage = new Proxy({ then: 1 }, {
@@ -542,12 +542,10 @@ describe("write-based identity conformance", () => {
         const repair = r.repairPath(source, ["then"], ctx)
         release.resolve()
         await entry
-        const failed = await repair
-        assert(r.isPoisonError(failed))
-        assert.equal(failed.cause, cause)
-        assert.equal(r.lookupPath(source, ["then"], ctx), poison, "Original poison remains installed")
+        assert.equal(await repair, undefined)
+        assert.equal(r.lookupPath(source, ["then"], ctx), 1)
         candidate.resolve(value(source, ctx))
-        assert.equal(await same, true, "An independent Error result is not a publication")
+        assert.equal(await same, false, "Clearing status is a logical publication")
     })
 
     it("successful repair publishes even when it restores pre-failure contents", async () => {

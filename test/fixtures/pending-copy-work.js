@@ -23,7 +23,7 @@ globalThis.CountedCopyUses = class extends Set {
 const changes = new Map([
     ['property-versions.js', [
         ['const delivery = { uses: new Set() }', 'const delivery = { uses: new globalThis.CountedCopyUses() }'],
-        ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation) {',
+        ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation, project) {',
             '$&\n    const measured = globalThis.pendingCopyWorkCounts(); measured.live++; let measuredClosed = false;'],
         ['const complete = () => {\n        unregister?.()',
             'const complete = () => {\n        if (!measuredClosed) { measuredClosed = true; measured.live-- }\n        unregister?.()'],

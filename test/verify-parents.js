@@ -131,7 +131,7 @@ function verifyParents(context, ...roots) {
         seen.add(node)
         if (!meta.placementsInitialized) fail("Published managed container has incomplete parent preparation")
         if (!meta.relationshipsActive) {
-            if (meta.incomingParents || meta.preservationParents || meta.parents || meta.counterChildren || meta.backingCounterVersions ||
+            if (meta.incomingParents || meta.parents || meta.counterChildren || meta.backingCounterVersions ||
                 meta.frontierCount !== undefined || meta.errorCount !== undefined ||
                 meta.cycleCuts || meta.destination?.owner || meta.backingRecord?.owners.has(node))
                 fail("Retired container retains active ownership state")
@@ -179,7 +179,7 @@ function verifyParents(context, ...roots) {
             if (forward(parent).get(key) !== node) fail("Incoming parent placement does not hold its child")
             const parentMeta = metadata.metaOf(parent, context)
             if (!parentMeta?.relationshipsActive) fail("Incoming parent placement belongs to a retired parent")
-            if (parentMeta.parents && !parentMeta.cycleCuts?.has(key))
+            if (parentMeta.parents && !logicalVersion(parent, key, context)?.ownFailure && !parentMeta.cycleCuts?.has(key))
                 projection.set(parent, (projection.get(parent) ?? 0) + 1)
         }
         if (meta.parents) {

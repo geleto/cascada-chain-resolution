@@ -1,0 +1,1380 @@
+{
+  "schemaVersion": 1,
+  "decision": "D01",
+  "auditDate": "2026-11-07",
+  "baselineCommit": "d91f1bd825620c25238c2c901497ea6e03d7faa4",
+  "baselineDirty": false,
+  "status": "complete",
+  "environment": {
+    "platform": "Windows",
+    "shell": "PowerShell",
+    "node": "24.14.1",
+    "npm": "11.11.0",
+    "mocha": "11.3.0"
+  },
+  "executionInputs": {
+    "algorithm": "SHA256 over sorted path + NUL + raw-file SHA256 + LF",
+    "digest": "ed381368378e95ef735c41347aafe7d91559a42bc6427cd5032244e293816c6b",
+    "count": 301,
+    "files": {
+      "docs/phase5-probes/coordinator-probe.mjs": "dd4c33fe92177604b8610bbe99d7a7f1f24f0577da42b682f9bce0656861a761",
+      "docs/phase5-probes/copied-delivery-extra.mjs": "a4eb7f392159351ede155cf2441c9194561ac6824de0137f8b57affb1ccb71a7",
+      "docs/phase5-probes/copied-delivery-recovery.mjs": "5a750eb4aec6ba9dc07e9692464f3af91f0b547f854edbf6341f124b5639d6ea",
+      "docs/phase5-probes/deep-copy-history.mjs": "17ca2623faff6b50e2be16d5578f464d20705beabc1add111820a1828eb9d546",
+      "docs/phase5-probes/delivery-lifetime-probe.mjs": "91dba26b5e1d85b42c2083e1032893f031280de954e809251464dd4d6d38d84d",
+      "docs/phase5-probes/delivery-presence.mjs": "d3bb72748a0d2ba7370b71285afca15fafe0f718f6c75e10cc0f593579174c28",
+      "docs/phase5-probes/delivery-recovery.mjs": "7fdd52d45422ed4b546ae489f0f5897229194fb7fc36d0e5f339772a19ef297f",
+      "docs/phase5-probes/independent-probe.mjs": "475baa0d2b9beaea8b8b15cb029ea796d8318f58e8aa20ed9ba9337d26455f8c",
+      "docs/phase5-probes/lifetime-overflow.mjs": "5f39fc838459d22adc10c23138cfb6859c8bf599f6b8254ea1c6e609fef8ca9a",
+      "docs/phase5-probes/lifetime-preparation-controls.mjs": "2fcddef351837ee5c241b087bbb1dec0ffa6e7dbcdae36ede24e77cd0e7f4066",
+      "docs/phase5-probes/lifetime-remaps.mjs": "faa5701b469a1c219a65ea8485d17cf0b1e6105fe6791ba963b17ebc3c3e5430",
+      "docs/phase5-probes/range-selected-retention.mjs": "acb587a5f10394f039a9b73255428053b6c4374a741af64bafecc90a842dde62",
+      "docs/phase5-probes/ready-controls.mjs": "f2f315209098161a8abbe285069bc889e10122badf7c84e784ee75d59c11d4e8",
+      "docs/phase5-probes/sibling-lifetime-probe.mjs": "2aa2aac88c78e0f00c61c72a03854bcca12582c3051712b1ebf279f04347013d",
+      "docs/phase5-probes/work-histories.mjs": "684c9c3739a0ed0243f6cb258d620ffad928b9f9ce57a298d9bf1615cb29bc83",
+      "docs/phase5-probes/work-release.mjs": "d997fb5411a7a57e4756fdb29d6fe2f5725fbc925167be0d9d738dff321d7082",
+      "package-lock.json": "6e5852d827dfec10b610d851e7eaccf45c1f45bd6df3432e2dd8530bc2faec01",
+      "package.json": "6aed7ff24f10906924029e4aa7490225569dd9d69c0961e9bc23c3ed7f329f86",
+      "src/array-flat-capture.js": "953edf239194f31fc5b58a685b5d782cc4c5fdfe6209e3c22bd7617d3135543a",
+      "src/array-flat.js": "1369c51618ef61d92eb359ca63fb00d21c27eab519f01f36a54eb8b238940535",
+      "src/array-invocation.js": "5b4f76a5ee34049122f9a4302080bbff93f0ab6a4b5ed97bf6bbd3043f654f3d",
+      "src/array-length.js": "591aca6fe713c16c643f5820ce97fd8f4f03e9102a53cf5a872f2c817d70fa55",
+      "src/array-methods.js": "99f44eb170cad1791f656be9022be1539dd82d22ef80f3f11c2fa9a795f72876",
+      "src/array-remap.js": "e4cad1143cabca2a83cc532f02827ecbbbe931fe512077248a451700a87d12ea",
+      "src/array-view.js": "f1975942ec7ff3851a38d43e1c86abf847e98f9ac02d97705a6d59ac13d7c12c",
+      "src/captured-identity.js": "9497645d7cdeeba198be26a4822c43a8a06382e9866267bb2bf9dad874a475e5",
+      "src/chain.js": "82a400c0eb9e2b29d966872ca37a6ec7922c4c56fdf22cfb8d43d1201b44fb56",
+      "src/data-declarations.js": "2eabb58cc5c15c872bc18be02f291faa2f66d97d5c7eb154c60a365733193e6c",
+      "src/enter.js": "6f23b727502ed6eabc3c66cdd309ff6235255dbb6a79ace63dac397a424d8e5d",
+      "src/error.js": "5a3b52a50707399e024639eac84e078724b7e13941fe3bfb455a8cb4c2dc9a2a",
+      "src/execution.js": "316241a867060c7192ce8a9d750afc3bf94d0c981225acf8177bfd10462f7380",
+      "src/export.js": "9dc065c96099782cf05883c9e3bd0ff3ff5892adca0622e6bef272e96afd457a",
+      "src/external-access.js": "932960777ffa532a7576d4bcd8f5f92e6759620097fbdc63b265acd1eb9831cc",
+      "src/external-metadata.js": "a0461b6d0784f002c07612fb8305ff69b2b2d9d1ec18df687a8dc85a55c0ef5e",
+      "src/external-mutation-tree.js": "0d64510c2243a2b71f4b04fc5fd7ddf547dab2cbd8251cbf8b23c411ef62b29e",
+      "src/external-operation.js": "363e89edd07bdf57b2b3db6cadf83624ee69bcf7c5fdaaf867aee910011275c4",
+      "src/external-snapshot.js": "79ab8aa4a4b7d2a21d56b0ba5e859983a2005d2fae831ab2ddfdbef2c109978b",
+      "src/import.js": "9b8cc9b6fbf2a99eb5ce50c2a8061cba21fc0950a2c2e25b442d32ac4adfe95f",
+      "src/index.js": "baadd65a9574ab1e23068e7911368c3e077f8b0a240704d2141538754be1b5cb",
+      "src/input-preparations.js": "8f51c203ebfcabff3a0077c754a5936a6bb086ff8af7a8e72c22744cdcbfe74d",
+      "src/internal-step.js": "53ddd99dd4ed6e2d7fbf90bfa07ddf684d74726febf0deff3ea871468f905407",
+      "src/invocation.js": "082715568141e12dedb50324773e0309cf30bb73040c2c6fb6ea23600f4c49e3",
+      "src/language-conversion.js": "2bc2f5ed3b46dbb3be2eab109190a6767a1b9ea171d0ee33cecd1de2894f0d10",
+      "src/language-properties.js": "d7a2adc6836dc313a5ac32bfe14771f79c679bfe9620ab5540e494bb53de91cd",
+      "src/language-values.js": "f836a915654b8f5a98d7d929978bbd008d6f79268520d7bc3801b8c0ab237257",
+      "src/managed-capture.js": "bc00e53f8fe9c1de7e0a2e342e756d05d0149159c363b1c77562810478eaf386",
+      "src/managed-invocation.js": "ac48141619b60ee46520270ed850f054e63ac1c51e386aa9997dc470acc75944",
+      "src/meta.js": "c72d44f2e7ee11e0d610720809d6f3a760fb75c3f778c607efb732bc7b8dd865",
+      "src/mutate-property.js": "60b4038e6070b843b5e18446236aa27de842f68914b9fb94989240b4790c7e2a",
+      "src/mutations.js": "772102c97fdd05f253e8247685243c4df834f4fcc986ae0b5df8e3befb67baf9",
+      "src/observations.js": "d43aaf2d3f15ab34e3a6d335221b427518b4ebeb99697a08be2e094c7a3723ea",
+      "src/operation-lifecycle.js": "3981aa0a2631c625d0b6d6fea2c5e77739ff46479f30dd26f3eb7160f9cf4f64",
+      "src/operation-result.js": "eb31870551330e403788c934581fdf9a6dc4deff28c2a52aa796b14e73a6ad40",
+      "src/ownership.js": "9bb234a5496ac5ca462f59a2b9bae7a981bdf469bf65b5d84e7806140f8d067b",
+      "src/parent-placements.js": "4c97c8e032657d86e069bea5c997d7b54f25c5e3356d51c7f378e7b5f32ab088",
+      "src/path-context.js": "9d8e19c5b15d0ea8076250390b68fa7a612739075f55ec6514395d9780a38528",
+      "src/path-operation.js": "4884876d8e63a5ca4d370b3774094d758ea0291b9e70395db08cba3ce446988d",
+      "src/placement-structure.js": "5e2ab364c1827996c51ab074f160ad36c56797202e9a5a729abe3098836b7d4c",
+      "src/poisoned-value.js": "44a03aa2e11b21fb7aed7dee6ee4d3c1809aa82fd1864743d84f15f40f59f649",
+      "src/property-versions.js": "d3c8807cdf5fdc24845e9cb0c1b4cf62a0d66f54b80f7f110ae35cb02b1bda17",
+      "src/refcounts.js": "84bd483eb4edccdb5cc8e8b61a607078601291449300e22aa0917d546d1e90c6",
+      "src/run.js": "d675b3c3d457876a5a75e6e4b98f5392fecd545f147b83100005cc5b715a9aa4",
+      "src/thenable-subscription.js": "05f596748cb9b5216dc3c513939597372e1741b45aaa3fc2e0ba7e15bae85d32",
+      "test/action-throw-boundaries.test.js": "a6b2b8b315d7271b7b1110a0a91e5d3ed66c4c353a2347f3f64cf6f0423c474a",
+      "test/array-backing-producers.test.js": "737bc47173194650b3fbf493437259f266cde7b93e674ccb881ad7ba691295df",
+      "test/array-complete-collection.test.js": "bb363f3ac5ccb9dbcb50fcf12a86b226560839b57fbe918e29e1df98316e0897",
+      "test/array-consumption.test.js": "223dbd5fe664a56ddb87f0cbc28e45205b5b6c5b439ad8af301e0426ad01f620",
+      "test/array-flat-work.test.js": "a8d58d1b15aa2ab91a1ec88005ebd17daf76060cd13f58d1587758ac82c7f308",
+      "test/array-flat.test.js": "d5492b7ca5fa21cabbc92d396adc02e5557aa2341366ae79c9a331cd9e4fd6ae",
+      "test/array-history-storage.test.js": "e9a14796d411456e619258ca89001f3e951eb54cb2ac52c5715aa42abc935199",
+      "test/array-intrinsic-boundaries.test.js": "461626ec036929abbd358e5c6b960f1132c1638cf847d85706d7c57bc948d6d7",
+      "test/array-length.test.js": "e094beafcb79dac6568e17d9a77f4af3c306bdc068cd004ab2e6cc9815411e38",
+      "test/array-native-equivalence.test.js": "eb994138dc7c896b39cf2aa0596b0f3a1116b7460bef51580bd4f2acd5ea4fe6",
+      "test/array-preparation.test.js": "3cf0eaac4425c141958c3f353f22190351935429ba7fb97f00b218361f23e51c",
+      "test/array-range-identity.test.js": "fbfb69e0c70232c0f2135d17be73c34b0d436ada54502602cf7f2fdce53af900",
+      "test/array-range-recovery.test.js": "89962c550b745f21b9ed4a3589de7374920b25d30433878af699366d018f4344",
+      "test/array-range-work.test.js": "a004bfb2b97d6237de6f00244337e3ab02dca3c02403055c63ee83b7e0631e2a",
+      "test/array-search-ordering.test.js": "bb3523903825ab74c219b289d497bad94dc2f4412a636e998b57f532e73ee996",
+      "test/array-search.test.js": "84c9ab0abd8b01e3330a24c3703ec5f77da96c610c0b7e47088bd3f7c0d77bc0",
+      "test/array-sort-boundaries.test.js": "85149242ad73411891c3043185f14b883867bc93a4f1998adcafd2a8ca6f01e7",
+      "test/array-transition-capture.test.js": "3a162e5ad88f68687fea2eb5dd8fb768d883d231eeeb94682a1aff8de773685b",
+      "test/array-view-action-boundaries.test.js": "76d40268d14128882ab5ab61ff00b155bea2ebcc091eed9eb455d334b74887b7",
+      "test/array-view.test.js": "52613fd24792dc645cfeb8a017b486088bb09b34d3c8827e40e03d3c6b17d96a",
+      "test/boundary-contracts.test.js": "a47b460d6e091b8b3bdfbf8b41bb393b01ef8b987bf6d8b0a1e71fabf338423d",
+      "test/boundary-histories.test.js": "ca35528bdd162512de36dda31f01012f0330433c941accc7af776316799520dc",
+      "test/boundary-lifetimes.test.js": "2634b856756c650eb5a951a58045ea79d27aba135aad71f93456d6555c857411",
+      "test/boundary-policy.test.js": "2ef7280ebd5ef672dc0f451ec418ad4f5db48d5917a55039befdb00c4fda2021",
+      "test/browser-loading.test.js": "c792ff7f848e492f2ade27e70dd2cd5ccfc655305051db46d09839da38d53bd9",
+      "test/captured-inputs.test.js": "6ad153fe3c425b1afee3c7008eac411bf965b72a38d26dd411e7de1b4b068a4a",
+      "test/captured-shape.test.js": "f9976c8c40d8917133a47fe63f7bacc6b3982b42c33016de42e3e441a0eec90b",
+      "test/causal-failures.test.js": "7809feb76d36a190592f34f57c4c5a462face0218b35085cb2de50fb99116122",
+      "test/chain.test.js": "39bd8bc10d721a1e615464db6cf8176cdf7e6c1c0b530617834f4d4a8ae013ab",
+      "test/classification-failures.test.js": "6f07b920587052e742a663d39a1151df6574b24d66694ac785e4248b33fef496",
+      "test/complete-failures.test.js": "ac78b928380f4f1e83fc1e1f69adfb886fd3cfe329228fcc4bfb7dcdd7dbf961",
+      "test/copied-delivery.test.js": "b77604076c32bcb7af0ac7c0e404d7af258a3741946e9d1adad9899e60de0359",
+      "test/data-classes.test.js": "291b3f3b709fb3a76158428bda7ab67fa7db277df94f8b9d01dedef26730201d",
+      "test/data-declarations.test.js": "16a4a6300a52024757166f62e9e675b91c1e7bbfbe1585d17881c52ee8b85055",
+      "test/declaration-failure-boundaries.test.js": "79028af4ca2e76887ec2f621b471f1229c5421da2c9ed7072c5bb3c7b3a5d087",
+      "test/detached-cleanup-boundaries.test.js": "8acdf1e1034a4dfbef9ce97a6e0ee4cf12a1a889a2afc8df52fde5bbd317649a",
+      "test/enter.test.js": "f5fd62d16ac924584fbe5c66a85e1fcb5be8d55c258d35a8bec503f014e22399",
+      "test/entry-identity-dependencies.test.js": "0f7a01fca60e154c0b6eb176871947c7ea747307ad7e798dfbb7a86c7553e95f",
+      "test/entry-identity.test.js": "ec44891015be7317eeee889afbbe9f8b8268d54e0ce0b834b34a06d6e0c823f4",
+      "test/entry-storage.test.js": "0f089fe282e5a7c608c18c314f1a6adf8c78d4b16f0076166b4ff3daf7a057f4",
+      "test/entry-structure.test.js": "8770704ec58e34fb19b2cb2de6cad000c12fae0c3f66c90746cca267cdeabe96",
+      "test/error-attribution.test.js": "c4e6a17b85bf8cd3effded5cd9b14be2cf1ae8ea48865aa9003a4ee787b8ac3c",
+      "test/error-union.test.js": "19d5fea775de959960e41235c66faaf29cd181cc04fb29a2f9d38fa5fafbaddf",
+      "test/execution-context.test.js": "652577bfed4873f2aacb969d2c0f28a82cb72a6733cfd5a9f84d8fad5bdae978",
+      "test/experiments/array-iteration-contract-probes.mjs": "42e775ca83fc0ea1ef397e7ca0f61d2e607aa9603e19e72dff29fb3f4df28283",
+      "test/experiments/array-layout-technical-probes.mjs": "8292906ee39f7c5741b299f1a292b6cb02a09725fd8ac67d30c4778219577a7d",
+      "test/experiments/array-method-specification-probes.mjs": "593cd7de8ea28cccfb38f01daa4a571c9e528672de2fab1b1783d7254aaaf56d",
+      "test/experiments/error-reporting-order.mjs": "3d42ee64c2e39b87e1abed4aa56070da25123898d2989b750805d53ff1d2de28",
+      "test/experiments/phase2-ownership-model.mjs": "c9a757bbc96d9e43bedcdbbc359ccfdfc46b4cdcec9b8a05381d598b49af98bb",
+      "test/experiments/phase2-retirement.mjs": "8eb96e64c9be5c64467440c4450accf3a88b01064d00de9a2ce1af0e05d76370",
+      "test/export.test.js": "1106021661fd12eefcf186d75817b6507e4d913f2e222757c023ff6090f99320",
+      "test/expression-boundary.test.js": "ea53a1be6aff944beae35c2aad3bbc2aee8fab385164a0e451b5d515cc50a294",
+      "test/external-array-length-boundaries.test.js": "1be74c897dd5afd9588bbb969482c2423b5c30ec38898e03340280d4f33e5bec",
+      "test/external-binding-diagnostics.test.js": "130145ff724e85975085776f5585ab99661b8ae851a56a1301337c1aeb238117",
+      "test/external-context.test.js": "0aee7e7e3f295d8024f5896844ad7f038362f93bc6d051c5b1a4c6c5b62db932",
+      "test/external-coordination.test.js": "2893d421382653456d239458490f17391070d26f2f2214502d47d9133ca88d8b",
+      "test/external-error-oracle.js": "b2f82f9b04c2f9732da6a4195d72490290b26d710ada486f067fd8185047af3c",
+      "test/external-error-oracle.test.js": "d99c6e702892bab429853df648bd5d18df2d278f40998d4115d771ce11af70a2",
+      "test/external-metadata.test.js": "dedbbd181ed1c3e45e48d7972d14a20a5f085d9e6c6854cc2eabff835c20383c",
+      "test/external-paths.test.js": "62758c3487c380e80af16d8744771f4344e62df0003c3921be8c3868f3afe0d5",
+      "test/external-then-probe.test.js": "b9b6aef855158a9313d0fec25a6034fce9daf3850403d61478c3ba408d8bd5de",
+      "test/external-tree.test.js": "78ceaff7a354bc744a4056ee47fd87d81cf065ca7aab7336fde9a3e1b54ce899",
+      "test/fatal-execution.test.js": "be65e9bde60eb1f49fa89563de3816db2dfce5572258923f71eb068dacbd8c66",
+      "test/fixtures/argument-preparation-failure.js": "556da164af85040f3c124883fb9e7c6bb55d5419c1384a6e02247a68d6035c96",
+      "test/fixtures/array-enumeration-work.js": "b8f80bcb57f8884717236ce502a151237932f641b765ca36be1132c8def86325",
+      "test/fixtures/array-failure-release.mjs": "687d9f75e304990e80136bd6b4c7ba1b4803aab32ae68563b31da400821dd90c",
+      "test/fixtures/array-flat-work.mjs": "642c08884739874ff198def1dd12806b0ab8f91b3237bf03a733f833cc5b0c9e",
+      "test/fixtures/array-point-work.js": "3fce4e0109ac9ebbaf7f3086e4b8ac5e7f3f2aa1c963feb089e04b0e341e0c71",
+      "test/fixtures/array-range-failure-retention.mjs": "ccdcb2733aa304bcdb83656e72fbdf58882b5b310da907a2db6e4a7594bd08f7",
+      "test/fixtures/array-range-work.js": "58f597faf052ac11c6f95fc9f60779964ae5b080ea36b1be7ccdda4a1279f552",
+      "test/fixtures/array-reflection-release.mjs": "01162183ddb736604601db299f48f39dcd74ac82811e924c507d1d379972afbb",
+      "test/fixtures/array-remap-failure-retention.mjs": "9b5807c924e51723edc42b9151b8629538c7327884353ccd9081310204eecd1f",
+      "test/fixtures/array-sequences.js": "febb984c8a5c733e970d33409f3722b4cd58986a6664ec834fa141bbc302f865",
+      "test/fixtures/array-surface.mjs": "7f98693067be42a1b9e01f6b51c660a0fd1d9c7c76860f9a6a1e016ff360f116",
+      "test/fixtures/array-validation-retention.mjs": "0f9201c9afceaa3fdadd6a8b98026e0a2b96637d3a4f7035650d2f6364ddf722",
+      "test/fixtures/array-view-failure-retention.mjs": "cbe30cbf390a4b05cb4c384f19eeb49b59b63aefbad23aea12aa1312192429c4",
+      "test/fixtures/boundary-histories.js": "ba0ae33f61b3833183e3cc07e57d42cd3a32ba8ac0937d045025bb983f46126e",
+      "test/fixtures/boundary-release.mjs": "b72d63d4af7d61ef9164226799376d5b22a1de7d73dc69791572c3895e784f78",
+      "test/fixtures/call-selection-release.mjs": "bf0844f918d827774d8f9b8c6284cbccab666d934f164630e42a01d20813285a",
+      "test/fixtures/capture-fatal.mjs": "1eaf500a6d17173c3e0b02251197ebedb9a498db305fd5fd826ba7d251552ceb",
+      "test/fixtures/capture-output-identity-release.mjs": "a71e3e3516cfd3b3a7c841f0c236c3301f71893e0a091e07185cecf13dc41113",
+      "test/fixtures/classification-declaration-failure.js": "c8327b0f80a27fc715252ca81070ee6598a95ea418932a450b36d8d6accaa240",
+      "test/fixtures/completed-work-retention.js": "1dc61a44f3a4eaa0bdd0414bf6204601f5eecaba2ca26ee6db62911a6050a9b0",
+      "test/fixtures/conflict-matrix.js": "fd7ef0fad1b06dd9c7e668ff483b53ce876265961d750b65f81e796ecafa743d",
+      "test/fixtures/construction-retention.js": "d963d6feba74fb4886a4f7f62af8b1176465bcf8f6aa2f7cdebd89d02c976f14",
+      "test/fixtures/continuation-failure.js": "83aaf5a2c54bff4381e36e1016d5431348cfdc037e244a2b26b19406bc7bf6ae",
+      "test/fixtures/deferred-validation-retention.mjs": "d7717b06a06d55eea4f6a60d7fc67da6de078b22be47808b5488cd9dd6e3666c",
+      "test/fixtures/detached-cleanup-failure.js": "7b36ef0aa7b31cef27731bc350505db071c6359529d634e93812b8ea6dad0228",
+      "test/fixtures/discarded-argument-leaves.mjs": "cc669edaa23d5396540d8c5fc6cab7efe085a508b3656198752a69091518d67c",
+      "test/fixtures/enter-direct-import.js": "52de64472b187c230e44638cd77e68761938bc7c21174909f8421538da9a1633",
+      "test/fixtures/entry-failure.js": "bd38b4676298eed994b2d85c07b5c52d924afd62350bae066e1133366d7f2f59",
+      "test/fixtures/entry-history-work.js": "b2f4667c06bc0b373e0d008f42e05e311b849b7449eeeb98c66a72631d70e45d",
+      "test/fixtures/external-owner-release.mjs": "d3e5a2b7cea4b782a6e43e1c304ec9e2d6becbc4b6de0e9ac147ec8eaac554a3",
+      "test/fixtures/external-sequences.js": "2184fc86e2657d41a026902a1e1bfabf5c5ebefe01c9761b46a692c1188412e1",
+      "test/fixtures/finite-flat.mjs": "b46510edc3daa7adfe8563266997d25a8e91ad94d8e5386b45b7f56b4a5ca18c",
+      "test/fixtures/flat-completion.mjs": "064159f64c0de197ea889f54a6b5e0a273f2b636d0ec4f3b6e3d38de5c9772c6",
+      "test/fixtures/generated-runner-control.mjs": "8671930cfff75b14a46b492b5f2cbc1d047275248ccf5b554b850b638c461be1",
+      "test/fixtures/identity-work.js": "4b120febd08737b11ef7ff4e8ff05af1a463397c146a885c70c9c4c1b4ab9618",
+      "test/fixtures/import-retention.js": "752474ae44c3f197c8c60633deb471ecb361d4a24904366d2f7e7135759d8ddf",
+      "test/fixtures/imported-path-lifetime.mjs": "30e172eaeaeb539c912384d0f54bb143b26ebe18dd86df9d9803db6935f5354b",
+      "test/fixtures/inspection-failure-retention.mjs": "5963928b9dacc08ae2ef89a6568f075f387867e68f35ec8273e7236faa50b1c0",
+      "test/fixtures/internal-stage-failure.js": "f0671b5cd6a70bd467ef9a607fd7032f14a36ab66347657692c825b9ca21be9a",
+      "test/fixtures/invocation-completion-failure.js": "04e1c8a1134a0d461c4e5eb8a8ea97440375581e92b0eedab0d18037fe42562a",
+      "test/fixtures/join-internal-failure.js": "c9770f2e6412e5d68f19675713c13798790d01cc60cf56373ed1fda550c70b2a",
+      "test/fixtures/length-fork-work.js": "15056df747720039ec3c9f14400ff3a3db830d8d9dc498c1664c7cf0e46d7959",
+      "test/fixtures/managed-capture-work.js": "e8bb0cc9c424bb3eb585aff92fdb0157cd1d81ebab176b1736c44d050521a659",
+      "test/fixtures/mutation-failure-retention.mjs": "41b2278b6ef0ad3b3fee0664fc28e985ddea0ba51a679419192110be5b6e270f",
+      "test/fixtures/native-authority-work.mjs": "c29ca2775805823565764c082904f44075014fa9aa666375eea1e4c5691cf97a",
+      "test/fixtures/native-error-data.mjs": "f80f9283f7ca5c87054d120b7f701a59ef95521cd32aaeeb2e5b09d28e6b1c89",
+      "test/fixtures/nested-sequences.js": "18b4f9621202328b768e43a91f9de88bafc85021c656120ac875fdd76af9f615",
+      "test/fixtures/outward-completion-failure.js": "a8e12139f9e97ba159ff386d07bdf9688533ff8739a36216b7871face6d56552",
+      "test/fixtures/outward-registration-release.mjs": "d84871cef08a30de88bfd769d76637a2bd2b09cac6a14fa102fbf534fb47bfc8",
+      "test/fixtures/owner-finalization-failure.js": "dd13a6e10c5aaeb5a1cfaee084e4192d0aae7d84914ce4e0dea3c9319f6fdfdd",
+      "test/fixtures/ownership-destinations.js": "aa8bf404eb53e849ff6e0f6735ff726cef81bdd2ec1ac53c6f4be36372f0eb46",
+      "test/fixtures/ownership-interactions.js": "f56041bd2ce5ff55691837e99ddcf12ec21ebe62a9e5414e8c3517dadd31210f",
+      "test/fixtures/ownership-lifecycle.js": "11e1c2f427cd038b8efea2b05dbd71ee694291d75c57ba503e5883c8871f0166",
+      "test/fixtures/ownership-work.js": "f59813aa66ef314b2e36884de59b02bbc47c7f24588e829b7484be5aedea897b",
+      "test/fixtures/path-release.mjs": "8491552cc322d4bd5dc96eedaf3f596f4a421b0e1f700625ec223ddce54f4621",
+      "test/fixtures/path-selection-work.mjs": "fb0f267173856a13786a92c3f70cec1ec23e80605de74a92bc6fb72cc7c9efbd",
+      "test/fixtures/pending-copy-work.js": "04c1e9d75a59f4f562b52f9a3f38b511e147a4aa5dbe09343d94a9d7f6154fda",
+      "test/fixtures/pending-push-work.js": "cb56d2aeeadc23040a1fc7e51adb9e18676069ae480aadea871306cf4f9f363d",
+      "test/fixtures/pending-structural-publication.js": "b10ee07e28fed53e904c57de07ed9edf5d1a1adfd707c6990aaf8c67a5ebf0bf",
+      "test/fixtures/placement-capture-failure-retention.mjs": "7641b8a46adfa10b3614ed1d95cbe4802e72504a70c6807917b97cd5bc448089",
+      "test/fixtures/placement-sequences.js": "dd49fb5ddfcb1ce59413739a42ac217b3e5cc537e8018ad5dba22ae33a0cf0c6",
+      "test/fixtures/preparation-authority.mjs": "a5a2bfa411fdf5454526a17e22b599198aa814a11fc686f17ae63e69ad1de394",
+      "test/fixtures/preparation-back-references.mjs": "c9cdcd6aa8226350b979bbc62a44e9c00ee747cfed71fa0a30d96d19a3e3322f",
+      "test/fixtures/preparation-output-release.mjs": "4c2191d17e68970795d4794a26c9c3f786a6ec6848856f2d60759a7f5fc4df80",
+      "test/fixtures/preparation-sequences.js": "ed51192e69d536f289a528ab3bbeaf98f2c716e998e80ea42b4bac301a25caa4",
+      "test/fixtures/preparation-work.js": "0e0e7142c07824caa2fefe336bf8a0410a7792fc941008f620ac887ad5fe9ce2",
+      "test/fixtures/prepared-boundaries.mjs": "a3f46033d31cc290904cb7233479841bd5cc4ddf9bc7979295b9de2c91bbe374",
+      "test/fixtures/promise-key-differential.js": "626aea27265a204246c2f52809682a711b78d735a745182dfbc927854bfc613e",
+      "test/fixtures/public-surface-release.mjs": "55a20770c9b3b49c53960f8f18295b2ad9527923e9ca685a3a720ba58fc09360",
+      "test/fixtures/publication-model.js": "87aff8e329579c8d92b3bcf6021a1d85afa46cd4e8d5be42b8ccf19ab0734bd8",
+      "test/fixtures/publication-pairs.js": "ba890cb2f5ebe461da1fed1b3f5b26705e70ea0f64d821acc383cdb1a75544e7",
+      "test/fixtures/publication-rejection-audit.js": "3cc9d27463d5380471c30f7ecac06f8b2721792495e8751f17af2e081512e703",
+      "test/fixtures/query-frontier-work.mjs": "847eba9062cb7639b9f7ac07ca66bb15cdccdc94abd1b75381114ef0c6262111",
+      "test/fixtures/queue-storage-release.mjs": "0e5adf8653a0d2d791de1ce6347ce075df3df7e3f110fce94b4d9090bded20c1",
+      "test/fixtures/receiver-identity.mjs": "f36d221d1ce18440dfd69979704347744440592ab20322e50d0a08efa780024d",
+      "test/fixtures/receiving-branch-poison.mjs": "bb92751b1b40b220e143e23479f0979f20c53156e262a0483c046e2a26b9f2c4",
+      "test/fixtures/receiving-invocation-differential.mjs": "e9332d6b0a58c7ee7c5dbe7d97e8316030a8061e91f68d5dcebc654a78f57662",
+      "test/fixtures/receiving-invocation-faults.mjs": "56082b0e657825c7de35bab1989b825d6fbb05ab6f217efdfafd56287767a4fd",
+      "test/fixtures/registration-release.mjs": "f3d51f382068afb39ccb909e34b94d2ab3d956c266837e5845f82c13fdfb4643",
+      "test/fixtures/result-contract.mjs": "10c638a45e1232ac8f352ca0d0d4b2509bf67ac169d0b2a3435b711295e1f1ac",
+      "test/fixtures/snapshot-identity-lifetime.js": "f9fd04544142ad7b780da2947a9942f495ca64c2cd4c44331b1d2a35e0164995",
+      "test/fixtures/snapshot-internal-failure.js": "d001946af89016bfd0fe12a451ff2ae366382b2f44c91f31eed845a5d41f630b",
+      "test/fixtures/stable-receiving-categories.mjs": "d5498d160f057ed5075de1ff19a643907953af0d24e513b7fce4247604bfa0db",
+      "test/fixtures/status-repair-retention.mjs": "c1a5fbdfe7e48c6bf24351b7654fe32d3495ae8315bd8bf335ed842358415aae",
+      "test/fixtures/status-repair-work.mjs": "c1cb2a46196879a2d127347e239dccf7b3f9042aa744838a5af74f2e8c0beb31",
+      "test/fixtures/suspended-mutator-fatal.js": "db882474b89ec37b597fb9fd77f0f9a2159f4a6eef5925f948c20773c024deec",
+      "test/fixtures/terminal-release.mjs": "42abe3b1764f011c0c62452276a46aca4fa7d0c113d6d4849a94921986bd3751",
+      "test/generated-runner.js": "cb573dad7b4162780507a7d04e145a9169695d774c9746222af58f57e018fab2",
+      "test/generated-runner.test.js": "2e8dd784e557eba47771857a512bbde7d80d940d9507505bd9aee0bf086e9891",
+      "test/generated-sequences.test.js": "aff39449c2664231fc57765c79df4d3d21e7100fbe4b3e812201fe18fd0525fb",
+      "test/generated-settings.js": "f507c5ba1574e20e2e7895158cb59ad831ca592dcca65b6c9b30e5c785470b77",
+      "test/generated-settings.test.js": "de14e08d10d8d7b75069d7f8d85e8e5ddbfbb975694fa41aad317d97b9e94662",
+      "test/get-errors.test.js": "ed5303d0e52510f73cd245b87e095f9dbeaeaab5776439501c37c27a2b6fc142",
+      "test/graph-oracle.js": "b6d493447097200cb5a37dba29b71406c0a792a41a263a2ec53e94c6ea987552",
+      "test/graph-oracle.test.js": "86937d2f2a7ebb99e348bd3567f3913ebffcb1053856f9e1b4245ab7f9b3f83e",
+      "test/has-error.test.js": "c9e6a3d5b0697b99ece02c83e30f338375d874237f63a1b1be665306eceaa886",
+      "test/identity-lineage.test.js": "7de704e4b447b0318bc882b91e72e1d3c1c2ed1fb1521fdcfb24a74c777e9d14",
+      "test/import-progress.test.js": "b8f0f4d40337cb1bcab093f66c939a187dfe19c30982eb5b3a4600c8d3cdf913",
+      "test/import.test.js": "0a279c1bf4e16d2d53f93e58d7140f1538f55972014d37d26ce6274b79f08233",
+      "test/imported-path-interactions.test.js": "df426794fae65eeb638c0cf2e50db1725568626877d667661857e973b1233d34",
+      "test/index-recovery.test.js": "2cd63f55bda83c33c1bf6d39b2bcf1d65561b2292ef7f3227256a9f779a72911",
+      "test/input-preparations.test.js": "c4b984fbe4ca9a5255ab59d1a40dcd4466ca94bcd7537a9d41ae03d6bc8a36b0",
+      "test/inspection-outcomes.test.js": "9af9e5778586494fbe1d2675c0605e77a54cd68e9e69a5ccf59b44fda37eb1f1",
+      "test/internal-stage-boundaries.test.js": "aa53c040ce262feaec3e03818c08942586543372f652c12a00bdb027c4a27834",
+      "test/invocation-failure-boundaries.test.js": "1de42772226953f65bd290510bc4876919466e0e002ab52f8ba6adc2dc58ed1e",
+      "test/invocation-inputs.test.js": "7aa01f59422394ae6e1197b2e14dc5e68776d6c519d052358b3f5257eb6353b4",
+      "test/invocation-preparation.test.js": "f2190e499b660a226e3586d9444f6fce0736d4531d863ab6f106904f3b7b384c",
+      "test/join-failure-boundaries.test.js": "c031895687e1568b6a92a4e31c515f6f826a2edf9279fb8ff15057664398bc04",
+      "test/language-values.test.js": "c645276654615d545be7b4d102cc8e2bd3e08a81d058140d80d33878208768b2",
+      "test/managed-capture.test.js": "7820305c6d9a942b104f2175f9a0bace36f9c88f8d60f17b909e060fb9809937",
+      "test/managed-invocation.test.js": "9f6790a5dbd99cbba6072531c9416ef8caefe23f402d262c6c66c993d6267064",
+      "test/managed-then-probe.test.js": "2afaa2cf4bf164140bf368e32ed1ea20f626a09d5dfc5819f622319e287cec4a",
+      "test/meta.test.js": "6265848db53447839ce3f75dfbbe659cd9557ea309ec65298482134489078bb3",
+      "test/method-result-identity.test.js": "fb14e2aff18743ef9b9efcddff14649372929edb9f6f09a057ff040257248439",
+      "test/module-url.js": "94fd65292bcb1e2a503a7e2cf1680c36a7a8c56fef6426e0d29750dcc1455c7d",
+      "test/native-equivalence-support.js": "b008e499c962100bb745af79e22f0da173842991e8015a9883d945c803be86a3",
+      "test/operation-lifecycle.test.js": "05573bb5f703dcba50dd508048d0f4c91b3bd159a9f36d394672986a1ec2c7cd",
+      "test/operation-sequences.test.js": "167de6dada4d49ced3b0cc9a3e21c4be3f82b9b86c9923ca4b64e52b4c892601",
+      "test/ordered-thenable.js": "5de45436577123c480ecf0dcd59d39d3c8a02b1383093b595173b9349845915f",
+      "test/ownership-isolation.test.js": "c8c595846dfb83f779bdaf6fe9d0dddafa38050c5e243b006fdbdb8900eedd88",
+      "test/ownership.test.js": "06ee46ab4b0b42cb01460e5cb742eb7b4ece5e99c8ba1de79857bd6f7a5d8eca",
+      "test/parent-placements.test.js": "48722b36e2292db62fdaaf48947428c6d165f8a54e7ad7e3ec27e9c4125c85e5",
+      "test/path-operations.test.js": "68882f9d43b099c3a81d04313d451a8c5cfe2526c2f573fb5ac0fa77c7f3fe3c",
+      "test/pending-boundary-histories.test.js": "37860536efcc71da5615c2c3495aab8ad4253a2dfdd45e7e7d75a4b6135cc2c5",
+      "test/pending-copy-work.test.js": "43bff5edea82e6bf81fff1dcc6afbd42f4a5cc9d3b7c417d745b6f3debfd71a0",
+      "test/pending-push-work.test.js": "260b305a41957dff5d7731dc088b4c31d8e2713e5cc72df660f7b3b46c1bae08",
+      "test/phase5-boundary-intersections.test.js": "4c8a3941c7337f0fed5dbef0acae5f7c11001d68da722228741c2df3d6de1ec5",
+      "test/phase5-execution-interactions.test.js": "a479939b1ddd78b2564e811fb3727ebf02d21a842c3752eec1aafb27f5f9b135",
+      "test/phase5-surface-intersections.test.js": "bb880166fa0d017fda093bfc8847df5e81a51a2ad816c585ab186709b693721c",
+      "test/placement-version-boundaries.test.js": "965b203386ca446f1a882453f61d94c79b58ff77c7a0c04b25ac9ab513a5abbf",
+      "test/poison-reception-attribution.test.js": "5fa905c870a8710ea3d7dbc8b0b74c57df747e06e6fd3c1febee273031411c0d",
+      "test/prepared-input-failure-boundaries.test.js": "0f5bea07d141041bc97207c03ce55b8d5025b83a945083363782cb88d478f363",
+      "test/presence-summaries.test.js": "c7a090d60ca79acfbee6382e13861141c8a2b7e71ee22ca901c69cd05f141f74",
+      "test/promise-path-segments.test.js": "adbe8597d27df14d78110dcd0526c22d986df6ab32c000cb0f97459636a596bf",
+      "test/promises.test.js": "c7a520e345ac880a2756e178da2098a0e75f116c2b4c56f6163092dfe0215aa3",
+      "test/public-exports.test.js": "60b9bccefdef0b620a78e84c195c5911f8695e16ce33f995fb37da871749ef8a",
+      "test/publication-failure-boundaries.test.js": "57d8bd950fd0bd7093d6d37be422abbc6d133355b9096118f9b4fd8d181f64bb",
+      "test/publication-failures.test.js": "d06bc2ff74936b09bad15d95fa238838b243c0c24bc48da9217c37de616f33e3",
+      "test/publication-trace.test.js": "e1ac88d9d6d12f7dc074f742485bbd43e12866b02fef800d3ee46a9847bc4f70",
+      "test/query-failures.test.js": "d8f9ae489aa4ec74751971e30a002372977982112add622f91a7254104dfbbfd",
+      "test/query-frontier-work.test.js": "5cdb232e1c68b58ee9966e24957a4ba8bba28babff54b6749c327478c52bac22",
+      "test/receiving-contracts.test.js": "8b667e08856c2e89b026298965e4180225d05b0233427d7feaf8ad90021732f5",
+      "test/receiving-invocation-differential.test.js": "a16c06f1abe79dab00945fd113b2408cbb33a7f85f0e8d166faa4f9f39128fd6",
+      "test/receiving-order.test.js": "3bfc8d51141551c7d5558d1901a8706c56ef6e971ee56fec77771e5aa72d8919",
+      "test/receiving-paths.test.js": "d4350fec76c04f6bd2d14fab6b8ae8316d0db6b2e6d381f673d6d90a55cea7dc",
+      "test/refcounts.test.js": "ea9ceb5d23c74b841477862cf508cd61df32f2de080cbed32c8e011b1c361ccd",
+      "test/reflection-boundaries.test.js": "ce4ce5684cc8488e01997f051633b64b0af31cf7415b6a91ce9fa3805500722e",
+      "test/repair-call-recovery.test.js": "22d9774c963b693857226958881cceb2854377d21773c70690586df2768d7ccb",
+      "test/representation-identity.test.js": "3920ff8d12218092520987324186e14e501fdb8bef0719ef9064a8c09553564c",
+      "test/run.test.js": "70482d47a9150001a4156fa3cac7f4782eb06506ec3baee4d95c9585644fa3c6",
+      "test/runtime-boundaries.test.js": "61912d11ca8570d467403667f5100267144ca1b1f322d0c65cf67889eab29063",
+      "test/runtime-loaders.test.js": "8eddfaad73d16b6b80011a7ef5fe08d7babaaf22fe4249fb9391faf71f3d8ee8",
+      "test/runtime-transform.js": "3d6fc2cc5583b8b0c218384143f3b267bf00d5f78d3f46931de62429f0947259",
+      "test/safeguard-evidence.test.js": "2f2990e73ac76f051056e9573b7353b2827df4465c4fe90c1f197181a5426bdb",
+      "test/safeguards/evidence.mjs": "f68e4a45dc61547a707eeae1647721f62afbd34aa17f376987128126e63e962d",
+      "test/safeguards/fault-hook.mjs": "ddd75d7b19b8f548317e26c4748592927dfb7dd32c05bd30d92317b900939ad5",
+      "test/safeguards/registry.mjs": "855a88ea53dc22aaa3bbfebc16b85ed352cf2803209b0617775505fd0efa459a",
+      "test/safeguards/run.mjs": "17c194cde265bad2fff53353edc8bc5b374ed2515fa46aa8abd277b1306a410e",
+      "test/scope-recovery.test.js": "ea1287b8aa5210bb3dd099aea0ed405a31bd154f88b641592976c64e47e923d1",
+      "test/snapshot-failure-boundaries.test.js": "2e0be3ff838a8a3b40ffc2e8b55a00f78009d943358cb14623d8ec57200f6e91",
+      "test/snapshot-identity.test.js": "2da26c08ff547e73fcc5091d697fa9e65d464267621f67bd4398b5ad53f8ba56",
+      "test/status-repair.test.js": "93d7dc6e6a92b60548360200074a30333536f71f76c687a9c56496bf8eadacf2",
+      "test/storage-settlement.test.js": "fafe03521ad9895e39afa3f1ea429adb9499914eb3574cf2444b15bd539fda44",
+      "test/stress.test.js": "bc11e10d8d72c55f6e75c7da1396f719c69b8e2cbabd44699d5f02ed080a8682",
+      "test/string-native-equivalence.test.js": "782b8fe8a5dc0743cb7d30dcaa7b4265198712fcc494c4377756ad1826c86889",
+      "test/support.js": "4e89d88bd0aafba5315d0ace30343604e7146c544d5ecd25d858bc6df6dd7d4e",
+      "test/supported-thenables.test.js": "1d703afad5019c1758ad607ec5f3d0420b924e703ff35ae122b8fc21262d8fdc",
+      "test/then-probe-boundaries.test.js": "5817ee9d12e1574c5d12e221c3167e3dcd69bc6df6e455bd6f9d93d4fff05418",
+      "test/trace-runtime.js": "a7b5dfdaad8838d31712fe6946d043e22ab472acabcd3356c37ad138aac0b5fd",
+      "test/trace-state.js": "49989f55d7229db405a7dd1c21880521b108abe98a299d9810a6cba5f19616f0",
+      "test/verify-parents.js": "2f6dfb11b59d75557d7a9d63e82fbeede8dac2ea976af28c317050718ac49f25",
+      "test/verify-refcounts.js": "fddd7398372b75c0d40e29e28922527b77a99501ef7e7e3e248a525cb03a528c",
+      "test/verify-storage.js": "1d22bbf8d3960efa2821b8b10c733f6bcb53a2e7b10dba744f79d3a19f3a72f3",
+      "test/verify-storage.test.js": "df9fd1e85599c342d3ddd1da22d8203fc49b89b1fbb069b5f72d95b45c2869cc",
+      "test/write-based-identity.test.js": "27bebaf43b1e44bdc2cec7ad876f715fe2d609021540a220e11094cca2ee4673"
+    }
+  },
+  "contractFiles": {
+    "AGENTS.md": "16591517eae05523fee091543f4681d1066b50e493f28f5724afe47139927720",
+    "docs/data-limitations.md": "23682b94d62dfcf3fa9788cd9f14cb37812b014bce66490912f18e1a8f4e8668",
+    "docs/error-handling.md": "3090a45ec3367c42c8adb70a9e09427123988713308fc9f47fb0a1b8cd711f41"
+  },
+  "checks": [
+    {
+      "name": "final3-publication-0",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "0/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7900,
+          "modeledFailures": 1317,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "4946f893e809165657f6dfeca63db65e5d156c14dbf35b51d937118582e20e17",
+      "code": 0,
+      "start": "2026-11-07T00:54:12.185Z",
+      "end": "2026-11-07T01:06:58.184Z"
+    },
+    {
+      "name": "final3-publication-1",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "1/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7896,
+          "modeledFailures": 1311,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "9d8c2591726b3325e89fb20ef01cccbfdc444e5e8cd76e780ddc82f801b07e8e",
+      "code": 0,
+      "start": "2026-11-07T00:54:12.226Z",
+      "end": "2026-11-07T01:06:59.403Z"
+    },
+    {
+      "name": "final3-publication-2",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "2/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7893,
+          "modeledFailures": 1304,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "08aba268cbb69cbccc85e373f57f4aab101bd41d3070ab2f4878572446306dde",
+      "code": 0,
+      "start": "2026-11-07T00:54:12.248Z",
+      "end": "2026-11-07T01:06:56.657Z"
+    },
+    {
+      "name": "final3-publication-3",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "3/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7890,
+          "modeledFailures": 1302,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "67fd3f06be8f66948ba5d6821f1c0276a75451d2acd931f977f1479b09049b69",
+      "code": 0,
+      "start": "2026-11-07T00:54:12.274Z",
+      "end": "2026-11-07T01:06:58.227Z"
+    },
+    {
+      "name": "final3-publication-4",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "4/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7891,
+          "modeledFailures": 1316,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "f5775f85944d56da35b59b8da0452307ebe2e8a8359d8e64434582d96b70094c",
+      "code": 0,
+      "start": "2026-11-07T01:06:56.660Z",
+      "end": "2026-11-07T05:50:53.863Z"
+    },
+    {
+      "name": "final3-publication-5",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "5/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7898,
+          "modeledFailures": 1315,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "af23c7edcbae153d1a8d8d9db34c26745a45b57a4a1fca180288900437227708",
+      "code": 0,
+      "start": "2026-11-07T01:06:58.185Z",
+      "end": "2026-11-07T05:50:58.084Z"
+    },
+    {
+      "name": "final3-publication-6",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "6/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7900,
+          "modeledFailures": 1308,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "8ad0098c7fc627d406b542ea245fd91ffef3b6e490458252ebfbc101e0fb1b4a",
+      "code": 0,
+      "start": "2026-11-07T01:06:58.229Z",
+      "end": "2026-11-07T05:50:56.823Z"
+    },
+    {
+      "name": "final3-publication-7",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/publication-pairs.js",
+        "7/8"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "pairs": 12103,
+          "runs": 36309,
+          "modeled": 7900,
+          "modeledFailures": 1317,
+          "errorKinds": 6,
+          "returnedIdentities": 2,
+          "coverage": 252
+        }
+      ],
+      "logSha256": "4946f893e809165657f6dfeca63db65e5d156c14dbf35b51d937118582e20e17",
+      "code": 0,
+      "start": "2026-11-07T01:06:59.405Z",
+      "end": "2026-11-07T05:50:57.126Z"
+    },
+    {
+      "name": "final3-conflict-0",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "0/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11705,
+          "runs": 35115,
+          "paired": 11705,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "8e902c74e65d02f811455519ecb4d8f1f0c8b946f37e8f50927ef46dc973d396",
+      "code": 0,
+      "start": "2026-11-07T05:50:53.866Z",
+      "end": "2026-11-07T05:52:20.837Z"
+    },
+    {
+      "name": "final3-conflict-1",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "1/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11705,
+          "runs": 35115,
+          "paired": 11705,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "fd3253e1b72857aa396483ceed9f54e4b0179859287f099b909ac32a46ff0ef4",
+      "code": 0,
+      "start": "2026-11-07T05:50:56.824Z",
+      "end": "2026-11-07T05:52:25.388Z"
+    },
+    {
+      "name": "final3-conflict-2",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "2/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11705,
+          "runs": 35115,
+          "paired": 11705,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "8e902c74e65d02f811455519ecb4d8f1f0c8b946f37e8f50927ef46dc973d396",
+      "code": 0,
+      "start": "2026-11-07T05:50:57.126Z",
+      "end": "2026-11-07T05:52:23.399Z"
+    },
+    {
+      "name": "final3-conflict-3",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "3/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11705,
+          "runs": 35115,
+          "paired": 11705,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "fd3253e1b72857aa396483ceed9f54e4b0179859287f099b909ac32a46ff0ef4",
+      "code": 0,
+      "start": "2026-11-07T05:50:58.084Z",
+      "end": "2026-11-07T05:52:24.548Z"
+    },
+    {
+      "name": "final3-conflict-4",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "4/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11704,
+          "runs": 35112,
+          "paired": 11704,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "c4277da0c65c54cd28c4f267a58215a91cae03c37c6b0a9c6faebda0b870924c",
+      "code": 0,
+      "start": "2026-11-07T05:52:20.838Z",
+      "end": "2026-11-07T05:53:33.764Z"
+    },
+    {
+      "name": "final3-conflict-5",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "5/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11704,
+          "runs": 35112,
+          "paired": 11704,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "79ed87e38ad7f711acbd6eab46c2429507dc9f7f9561fbac1692ed4d2d678291",
+      "code": 0,
+      "start": "2026-11-07T05:52:23.400Z",
+      "end": "2026-11-07T05:53:37.323Z"
+    },
+    {
+      "name": "final3-conflict-6",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "6/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11704,
+          "runs": 35112,
+          "paired": 11704,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "c4277da0c65c54cd28c4f267a58215a91cae03c37c6b0a9c6faebda0b870924c",
+      "code": 0,
+      "start": "2026-11-07T05:52:24.549Z",
+      "end": "2026-11-07T05:53:37.041Z"
+    },
+    {
+      "name": "final3-conflict-7",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/fixtures/conflict-matrix.js"
+      ],
+      "env": {
+        "CASCADA_CONFLICT_MATRIX": "full",
+        "CASCADA_CONFLICT_PART": "7/8"
+      },
+      "summary": [
+        {
+          "mode": "full",
+          "cases": 11704,
+          "runs": 35112,
+          "paired": 11704,
+          "triples": 2601,
+          "absentTriples": 2601,
+          "dimensions": 13
+        }
+      ],
+      "logSha256": "79ed87e38ad7f711acbd6eab46c2429507dc9f7f9561fbac1692ed4d2d678291",
+      "code": 0,
+      "start": "2026-11-07T05:52:25.389Z",
+      "end": "2026-11-07T05:53:39.670Z"
+    },
+    {
+      "name": "final3-nested-sequences",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/nested-sequences.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 9600,
+          "runs": 28800,
+          "coverage": 47,
+          "attempted": 9600,
+          "passed": 9600,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "5230510acf87abd6983b29d82beb87108cb8b1e978449ee26c4d71af3b093ee7",
+      "code": 0,
+      "start": "2026-11-07T05:53:33.765Z",
+      "end": "2026-11-07T05:57:29.624Z"
+    },
+    {
+      "name": "final3-array-sequences",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/array-sequences.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 9600,
+          "runs": 28800,
+          "coverage": 124,
+          "attempted": 9600,
+          "passed": 9600,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "b2c2f29dfbfcb138226910adcc5fbe3d45f05f76223de99763b6023cc7dfc49d",
+      "code": 0,
+      "start": "2026-11-07T05:53:37.042Z",
+      "end": "2026-11-07T08:01:09.169Z"
+    },
+    {
+      "name": "final3-boundary-histories",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/boundary-histories.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 51200,
+          "coverage": 128,
+          "retirementPrograms": 128,
+          "retirementCoverage": 128,
+          "attempted": 12928,
+          "passed": 12928,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "174e4aa4aefd8ee2131ddd4f297f0dd66dc1927198690bddee239375ce809c2a",
+      "code": 0,
+      "start": "2026-11-07T05:53:37.323Z",
+      "end": "2026-11-07T05:55:24.296Z"
+    },
+    {
+      "name": "final3-external-sequences",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/external-sequences.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 9600,
+          "runs": 28800,
+          "coverage": 196,
+          "attempted": 9600,
+          "passed": 9600,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "28e8556fe8da7bdd71b754939846499ab98491ccbe5b656841c944bbaa938b2c",
+      "code": 0,
+      "start": "2026-11-07T05:53:39.671Z",
+      "end": "2026-11-07T05:56:11.648Z"
+    },
+    {
+      "name": "final3-preparation-sequences",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/preparation-sequences.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 12928,
+          "runs": 38784,
+          "jointPrograms": 128,
+          "seededPrograms": 12800,
+          "lifetimePrograms": 1600,
+          "lifetimeRuns": 4800,
+          "jointCoverage": 128,
+          "coverage": 24,
+          "attempted": 14528,
+          "passed": 14528,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "8c7908fd25831d91253e0ea94e5482ef51a9e50fe2d01e00d6bc7161c1b09e1e",
+      "code": 0,
+      "start": "2026-11-07T05:55:24.297Z",
+      "end": "2026-11-07T05:56:27.183Z"
+    },
+    {
+      "name": "final3-placement-sequences",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/placement-sequences.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "cases": 6400,
+          "distinctTraces": 6400,
+          "attempted": 6400,
+          "passed": 6400,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "fe1ed29ef5a97b233cc2ce78e97551f87733df96bd756bc0eb9759baf0b34c84",
+      "code": 0,
+      "start": "2026-11-07T05:56:11.650Z",
+      "end": "2026-11-07T05:56:34.228Z"
+    },
+    {
+      "name": "final3-receiving-invocation-differential",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/receiving-invocation-differential.mjs"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 1600,
+          "histories": 152000,
+          "jointHistories": 153600,
+          "jointCoverage": 1696,
+          "coverage": 240,
+          "controls": 4,
+          "attempted": 1600,
+          "passed": 1600,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "51c83e39cd94ffb3c35d2701274c5ebd1e7f3b71be7a7a13a02f7c7045c8c431",
+      "code": 0,
+      "start": "2026-11-07T05:56:27.184Z",
+      "end": "2026-11-07T06:01:48.468Z"
+    },
+    {
+      "name": "final3-promise-key-differential",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "test/fixtures/promise-key-differential.js"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "programs": 9602,
+          "witnesses": 2,
+          "runs": 28806,
+          "coverage": 34,
+          "attempted": 9602,
+          "passed": 9602,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "logSha256": "320881983cf5288119c5616164046e64dbc873a9eb5f180b213bcfb133d1c8e6",
+      "code": 0,
+      "start": "2026-11-07T05:56:34.229Z",
+      "end": "2026-11-07T05:57:30.653Z"
+    },
+    {
+      "name": "final3-pending-histories",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "node_modules/mocha/bin/mocha.js",
+        "test/pending-boundary-histories.test.js",
+        "--reporter",
+        "json-stream"
+      ],
+      "env": {
+        "CASCADA_SEQUENCE_SEEDS": "1600"
+      },
+      "summary": [
+        {
+          "suites": 1,
+          "tests": 12800,
+          "passes": 12800,
+          "pending": 0,
+          "failures": 0,
+          "start": "2026-11-07T05:57:30.202Z",
+          "end": "2026-11-07T05:58:20.033Z",
+          "duration": 49831
+        }
+      ],
+      "logSha256": "f927b0fb9a9cda0be8daa119ff96bedc4bb12c66ebdba35f79777a6564c6dbe6",
+      "code": 0,
+      "start": "2026-11-07T05:57:29.625Z",
+      "end": "2026-11-07T05:58:20.115Z"
+    },
+    {
+      "name": "final3-normal",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "node_modules/mocha/bin/mocha.js",
+        "test/**/*.test.js",
+        "--reporter",
+        "json-stream"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "suites": 161,
+          "tests": 6264,
+          "passes": 6264,
+          "pending": 0,
+          "failures": 0,
+          "start": "2026-11-07T05:57:31.821Z",
+          "end": "2026-11-07T06:01:25.264Z",
+          "duration": 233443
+        }
+      ],
+      "logSha256": "da24d13be33e19afabc62fb3d1a9a69c907358c505635b371a08fc5e4224a78e",
+      "code": 0,
+      "start": "2026-11-07T05:57:30.654Z",
+      "end": "2026-11-07T06:01:25.317Z"
+    },
+    {
+      "name": "final4-traced",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "node_modules/mocha/bin/mocha.js",
+        "test/**/*.test.js",
+        "--reporter",
+        "json-stream"
+      ],
+      "env": {},
+      "summary": [
+        {
+          "suites": 161,
+          "tests": 6264,
+          "passes": 6264,
+          "pending": 0,
+          "failures": 0,
+          "start": "2026-11-07T08:14:50.072Z",
+          "end": "2026-11-07T08:20:16.665Z",
+          "duration": 326593
+        }
+      ],
+      "logSha256": "735bff987fca70e7a0e90effd74ceac11368a2867cf79ef4cbcb597f550e52cb",
+      "code": 0,
+      "start": "2026-11-07T08:14:50.072Z",
+      "end": "2026-11-07T08:20:16.665Z"
+    },
+    {
+      "name": "final3-safeguards",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/safeguards/run.mjs",
+        "--skip-baseline",
+        "--parallel=2",
+        "--report=C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-d01\\final3-safeguards.json"
+      ],
+      "env": {},
+      "summary": [],
+      "logSha256": "789f1ebe12ed38237deeb6a00a66f17b04b94324180a1472d47028242fbd39e6",
+      "code": 0,
+      "start": "2026-11-07T06:01:25.318Z",
+      "end": "2026-11-07T08:09:25.158Z"
+    },
+    {
+      "name": "coordinator-probe",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/coordinator-probe.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "6b7c85afa1b512cec49dfd9874d072a37940c51c6528944a8fd7c369fb020b0c"
+    },
+    {
+      "name": "copied-delivery-extra",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/copied-delivery-extra.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "b6129740f71650bfa4d97c635b567eaee1afa893259053c56efa2c712ea6e377"
+    },
+    {
+      "name": "copied-delivery-recovery",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/copied-delivery-recovery.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "a0380b9b0257aabcd48f34bdd55b474b49f6d8c6501b90db161f10c328542c9e"
+    },
+    {
+      "name": "deep-copy-history",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/deep-copy-history.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "e69b60982afda295d04e8c1de92cd181d48744262d89e80094cecbdb23267283"
+    },
+    {
+      "name": "delivery-lifetime-probe",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/delivery-lifetime-probe.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "f970df48f7eca6ee736a011160aeb830d3597f859dcbddd3af0ba9e7db5bf143"
+    },
+    {
+      "name": "delivery-presence",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/delivery-presence.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "a53b8ffa95e188072fe68a9539553bd17d11c6cbb214c76cc882465095f487dc"
+    },
+    {
+      "name": "delivery-recovery",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/delivery-recovery.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "1b5f53bdc4486f74d1c719b790e68a97a4dc72e19c02c8f1d801a560127e83cd"
+    },
+    {
+      "name": "independent-probe",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/independent-probe.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "9695c49e9f6bb262a8e6a3c844dcff0f33dc417c17a847697b2ee38292d0ec56"
+    },
+    {
+      "name": "lifetime-overflow",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/lifetime-overflow.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "308a085240552bcdb434aa83d915e2c763009354d16b762db8ef7232720ee711"
+    },
+    {
+      "name": "lifetime-preparation-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/lifetime-preparation-controls.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "ad5fc5716bee2356194451e4986d96fc001a17e3eb9be4eea7a96c5808664fa1"
+    },
+    {
+      "name": "lifetime-remaps",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/lifetime-remaps.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "547a3055d157d39dfdc3ba3c46fd33d216ec9167121f09c12746ddca1f5d74c4"
+    },
+    {
+      "name": "range-selected-retention",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/range-selected-retention.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "2a49beeebf9ae080b15b81b805a65d63cfe9a48275aeba0b8923b77fedffe524"
+    },
+    {
+      "name": "ready-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/ready-controls.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "f7f934f6e953384d2c43e1eefaf4e24085ae48efc4fa0e31bb43dbe36f65c4f4"
+    },
+    {
+      "name": "sibling-lifetime-probe",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/sibling-lifetime-probe.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "9e9b8c583188aed6c9173a42710c8b5e561955a1ee9daf9bdc6260d72bf03460"
+    },
+    {
+      "name": "work-histories",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/work-histories.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "976c4aff255dd79eb6bf4aba9947a685bac2a3f2af8d92e37ea2984987aaf5d8"
+    },
+    {
+      "name": "work-release",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--unhandled-rejections=strict",
+        "docs/phase5-probes/work-release.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "6ca204754cec483b1b46d27b9cc889bb3a022986b2872137c34158bab90fd191"
+    },
+    {
+      "name": "string-timeout-control",
+      "command": [
+        "node",
+        "--import",
+        "./test/trace-runtime.js",
+        "--unhandled-rejections=strict",
+        "node_modules/mocha/bin/mocha.js",
+        "test/string-native-equivalence.test.js",
+        "--grep",
+        "matches standard methods with promised receiver and arguments",
+        "--reporter",
+        "json-stream"
+      ],
+      "summary": [
+        {
+          "suites": 1,
+          "tests": 1,
+          "passes": 1,
+          "pending": 0,
+          "failures": 0,
+          "start": "2026-11-07T08:10:35.411Z",
+          "end": "2026-11-07T08:10:35.749Z",
+          "duration": 338
+        }
+      ],
+      "exitCode": 0,
+      "logSha256": "e1465f9dc25e5ad6db143c8a110bfa19ff65861d3060f58053bfc7b568db9cfe"
+    },
+    {
+      "name": "independent-layout-probe",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "test/experiments/array-layout-technical-probes.mjs"
+      ],
+      "exitCode": 0,
+      "logSha256": "1de3808e6a8f21480388e463802fad773b584f2c4a1a5b4c24fcff043fefcee5"
+    }
+  ],
+  "safeguards": {
+    "registered": 272,
+    "statusCounts": {
+      "witnessed": 272
+    },
+    "namedFailureTitles": 1067,
+    "fallbacks": 2,
+    "reportSha256": "7a447b3187145830b609b9466e0d263a3e45d4230cb6c6baba40e873088a6c82",
+    "abandonedQuickAttempts": [
+      "native-authority-skips-unchanged-prefix-scans",
+      "native-error-data-is-healthy"
+    ],
+    "incompleteAcceptedFaultedSuites": [
+      {
+        "id": "property-reception-prepares-managed-state",
+        "witnesses": 13,
+        "exitCode": 7
+      }
+    ]
+  },
+  "supersededChecks": [
+    {
+      "name": "final3-traced",
+      "exitCode": 1,
+      "summary": [
+        {
+          "suites": 161,
+          "tests": 6264,
+          "passes": 6263,
+          "pending": 0,
+          "failures": 1,
+          "start": "2026-11-07T05:58:21.235Z",
+          "end": "2026-11-07T06:07:20.762Z",
+          "duration": 539527
+        }
+      ],
+      "logSha256": "8c4f5ebb9d0f6aaefeac233b4a5756e38ff87afe6063e8546a0eca0a970b5ab3",
+      "reason": "One 2000 ms Mocha timeout in the promised-String comparison test while other checks were active; no assertion failure. The unchanged isolated control passed in 327 ms. The complete isolated traced rerun supersedes this run."
+    }
+  ],
+  "qualifications": [
+    "The original whole-project audit and docs/audit-verification.json remain historical evidence for their stated revision. This record covers the approved D01 follow-up.",
+    "All final checks used identical runtime source, fixtures and assertions from this manifest. Earlier runs were superseded after the copied-payload destination-order correction.",
+    "The historical Array-layout preservation adapter is retired; its remaining independent probes do not import the runtime and were executed after retirement.",
+    "Wall-clock gaps occurred during validation; recorded durations are not performance benchmarks.",
+    "Generated delivery differentials retain their documented independent-model limits; these counts do not prove all possible programs or settlement schedules."
+  ]
+}

@@ -135,7 +135,7 @@ function requireMeta(value, operationContext) {
 
 function requiresCopyOnWrite(value, operationContext) {
     const meta = metaOf(value, operationContext)
-    if (meta?.imported || meta?.readLeaseCount || meta?.preservationParents?.size) return true
+    if (meta?.imported || meta?.readLeaseCount) return true
     let count = 0
     visitParentPlacements(value, operationContext, () => ++count < 2)
     return count > 1

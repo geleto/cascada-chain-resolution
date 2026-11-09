@@ -69,7 +69,7 @@ describe("repair-and-call receiver recovery", () => {
     for (const delivery of deliveries) for (const method of ["fill", "copyWithin"]) {
         it(`protects the restored Array baseline: ${method}, ${delivery}`, async () => {
             const ctx = context(), receiver = [3, 2, 1], pending = input(delivery, receiver)
-            const chain = new r.Chain({ then: pending.value, sibling: 4 }, ctx)
+            const chain = new r.Chain(r.import({ then: pending.value, sibling: 4 }, ctx), ctx)
             r.assignPath(chain, ["then"], () => 0, ctx)
             if (delivery.endsWith("fulfilled")) { pending.resolve(); await flush() }
             const result = repairCall(chain, ["then"], method, ctx, method === "fill" ? [9, 0, 1] : [0, 1, 2])
@@ -86,7 +86,7 @@ describe("repair-and-call receiver recovery", () => {
         it(`retains the repaired baseline after call failure: ${delivery}, array=${array}`, async () => {
             const ctx = context(), cause = new Error("new call failure")
             const receiver = array ? [5, 4, 3, 2, 1] : { n: 1, fail() { this.n = 9; throw cause } }
-            const pending = input(delivery, receiver), chain = new r.Chain({ then: pending.value, sibling: 4 }, ctx)
+            const pending = input(delivery, receiver), chain = new r.Chain(r.import({ then: pending.value, sibling: 4 }, ctx), ctx)
             const guard = r.assignPath(chain, ["then"], () => 0, ctx)
             if (delivery.endsWith("fulfilled")) { pending.resolve(); await flush() }
             let comparisons = 0
@@ -121,7 +121,8 @@ describe("repair-and-call receiver recovery", () => {
             if (rejected) {
                 assert.equal(value.cause, cause)
                 assert.equal(r.lookupPath(chain, ["then"], ctx), value)
-                assert.equal(r.repairPath(chain, ["then"], ctx), value)
+                assert.equal(r.repairPath(chain, ["then"], ctx), undefined)
+                assert.equal(r.lookupPath(chain, ["then"], ctx), value)
             } else assert.equal(value, 7)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state)
@@ -129,7 +130,7 @@ describe("repair-and-call receiver recovery", () => {
     }
 
     for (const pending of [false, true]) for (const combined of [false, true]) {
-        it(`preserves a restored guard without another recovery layer: pending=${pending}, combined=${combined}`, async () => {
+        it(`clears repeated own failure once before invocation: pending=${pending}, combined=${combined}`, async () => {
             const ctx = context(), source = Promise.withResolvers()
             let calls = 0
             const receiver = { n: 1, m() { calls++; return ++this.n } }
@@ -143,16 +144,9 @@ describe("repair-and-call receiver recovery", () => {
             if (!combined) assert.equal(r.repairPath(chain, ["then"], ctx), undefined)
             const result = combined ? repairCall(chain, ["then"], "m", ctx) :
                 r.run(chain, ["then"], "m", [], ctx, { mutationScopeDepth: 1 })
-            // The available inner guard blocks immediately, even while its
-            // own saved value is pending. Only the outer repair has occurred.
-            assert.equal(result, inner)
-            assert.equal(r.lookupPath(chain, ["then"], ctx), inner)
-            assert.equal(calls, 0)
-            assert.equal(r.repairPath(chain, ["then"], ctx), undefined)
-            const restored = r.lookupPath(chain, ["then", "n"], ctx)
-            if (pending) { assert(restored instanceof Promise); source.resolve(receiver) }
-            assert.equal(await restored, 1)
-            assert.equal(r.run(chain, ["then"], "m", [], ctx, { mutationScopeDepth: 1 }), 2)
+            if (pending) { assert(result instanceof Promise); source.resolve(receiver) }
+            assert.equal(await result, 2)
+            assert.equal(r.lookupPath(chain, ["then", "n"], ctx), 2)
             assert.equal(calls, 1)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state)
@@ -249,10 +243,11 @@ describe("repair-and-call receiver recovery", () => {
             assert.deepEqual(new Set(after.errors ?? [after]), new Set(before.errors ?? [before]))
             assert(new Set(after.errors ?? [after]).has(native))
             assert.equal(r.lookupPath(chain, ["sibling"], ctx), 3)
-            // Explicit standalone repair remains valid, including through each
-            // saved guard; the rejected combined command removed no layer.
-            for (let i = 0; i < Math.max(guards, 1); i++) assert.equal(r.repairPath(chain, ["P"], ctx), undefined)
+            // Clearing the parent leaves the native child's own status intact.
+            assert.equal(r.repairPath(chain, ["P"], ctx), undefined)
             assert.equal(r.lookupPath(chain, ["P", "n"], ctx), 1)
+            assert.equal(r.getErrors(chain, [], ctx), native)
+            assert.equal(r.repairPath(chain, ["P", "api"], ctx), undefined)
             assert.equal(r.getErrors(chain, [], ctx), null)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state)

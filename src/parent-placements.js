@@ -1,4 +1,4 @@
-import { observePlacementCapture, refreshCopiedDelivery, retainCopiedDelivery, releaseCopiedDelivery, getOwnPlacementVersion } from "./property-versions.js"
+import { refreshCopiedDelivery, retainCopiedDelivery, releaseCopiedDelivery, getOwnPlacementVersion } from "./property-versions.js"
 import { reconsider } from "./ownership.js"
 import { retireRefIndex } from "./refcounts.js"
 import * as metadata from "./meta.js"
@@ -148,7 +148,6 @@ function recordLogicalPlacement(owner, key, before, after, operationContext, was
     if (meta.type !== metadata.TYPE.Array || wasOverlay) unlinkParent(before, owner, key, operationContext)
     const version = getOwnPlacementVersion(owner, key, operationContext)
     if (version && meta.relationshipsActive) activatePlacement(owner, key, version, operationContext)
-    else clearRecovery(owner, key, operationContext)
     if (!version) {
         meta.outgoingPlacements?.delete(key)
         if (meta.type !== metadata.TYPE.Array && !meta.backingOwners)
@@ -174,8 +173,6 @@ function destinationOf(owner, operationContext) {
 
 function activatePlacement(owner, key, placement, operationContext) {
     retainCopiedDelivery(placement, true)
-    clearRecovery(owner, key, operationContext)
-    if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)
     if (placement.present === false) return
     activateRelationships(placement.value, operationContext)
     linkParent(placement.value, owner, key, operationContext)
@@ -203,8 +200,6 @@ function retireRelationships(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
     meta.relationshipsActive = false
     meta.arrayRange?.lengthState?.release?.()
-    for (const release of meta.recoveryUses?.values() ?? []) release()
-    delete meta.recoveryUses
     if (meta.destination) meta.destination.owner = undefined
     if (meta.backingRecord) {
         meta.backingRecord.owners.delete(owner)
@@ -218,49 +213,10 @@ function retireRelationships(owner, operationContext) {
     retireRefIndex(owner, operationContext)
 }
 
-function clearRecovery(owner, key, operationContext) {
-    const meta = metadata.requireMeta(owner, operationContext)
-    meta.recoveryUses?.get(key)?.()
-    meta.recoveryUses?.delete(key)
-    if (!meta.recoveryUses?.size) delete meta.recoveryUses
-}
-
-function preserveRecovery(owner, key, placement, operationContext) {
-    const meta = metadata.requireMeta(owner, operationContext)
-    const children = new Set()
-    const detach = observePlacementCapture(placement, value => {
-        if (!owner || children.has(value)) return
-        const childMeta = metadata.metaOf(value, operationContext)
-        if (!metadata.isTraversableType(childMeta?.type)) return
-        children.add(value)
-        activateRelationships(value, operationContext)
-        const parents = childMeta.preservationParents ??= new Map()
-        let keys = parents.get(owner)
-        if (!keys) parents.set(owner, keys = new Set())
-        keys.add(key)
-    })
-    ;(meta.recoveryUses ??= new Map()).set(key, () => {
-        detach()
-        for (const child of children) {
-            const childMeta = metadata.requireMeta(child, operationContext)
-            const parents = childMeta.preservationParents
-            const keys = parents.get(owner)
-            keys.delete(key)
-            if (!keys.size) parents.delete(owner)
-            if (!parents.size) delete childMeta.preservationParents
-            reconsider(child, operationContext)
-        }
-        children.clear()
-        owner = operationContext = undefined
-    })
-}
-
 function visitRetentionParents(value, operationContext, visit) {
     const meta = metadata.metaOf(value, operationContext)
     if (meta?.backingOwners) for (const owner of meta.backingOwners)
         if (visit(owner) === false) return false
-    if (meta?.preservationParents) for (const parent of meta.preservationParents.keys())
-        if (visit(parent) === false) return false
     const incoming = meta?.incomingParents
     if (incoming instanceof Map) {
         for (const owner of incoming.keys()) if (visit(owner) === false) return false

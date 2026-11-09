@@ -204,7 +204,9 @@ class MetadataSelection {
         this.publication = next
     }
     finish(success, value = empty) {
-        this.publication?.publish(success ? value : this.publication.before)
+        if (this.publication) this.publication.publish(success
+            ? pair(field(value, LEFT), field(this.publication.before, RIGHT))
+            : this.publication.before)
         this.node = this.publication = undefined
     }
 }
@@ -282,16 +284,17 @@ class MetadataCapture {
         // Keep poison for repeated preflight and pending own states for later use.
         this.ancestors = this.ancestors.filter(own => resolved(own) !== empty)
     }
-    blockers(node, includeSelected = true, subtree = true) {
+    blockers(node, includeOwn = true, subtree = true) {
         const found = new Set()
-        return steps.continueGraphTransition(this.collect(node, error => found.add(error), includeSelected, subtree),
+        return steps.continueGraphTransition(this.collect(node, error => found.add(error), includeOwn, subtree),
             this.owner.operationContext, () => found.size ? errors.combineErrors(found) : null, undefined, this.owner)
     }
-    collect(node, found, includeSelected = true, subtree = true) {
+    collect(node, found, includeOwn = true, subtree = true) {
         if (!node) return
         this.advance(node)
         const { owner } = this
-        let state = !includeSelected ? empty : subtree ? this.state : field(this.state, LEFT)
+        let state = subtree ? (includeOwn ? this.state : field(this.state, RIGHT)) :
+            includeOwn ? field(this.state, LEFT) : empty
         let ancestors = [...this.ancestors]
         const scan = (index, own = empty) => {
             if (own.kind !== ERROR && index < ancestors.length)

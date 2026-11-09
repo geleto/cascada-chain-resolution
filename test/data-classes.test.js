@@ -1,3 +1,4 @@
+import { logicalProperty } from "./support.js"
 import * as runtime from "../src/index.js"
 import { Chain, assignPath, import as importValue, lookupPath, managedStateClass, Execution } from "../src/index.js"
 import { buildRefIndex } from "../src/refcounts.js"
@@ -82,7 +83,7 @@ describe("managed class copy-on-write", () => {
         const child = importValue(new Child(), { ...testContext, errorContext: "external child" })
         const childChain = new Chain(child, testContext)
         assignPath(childChain, ["value"], 2, testContext)
-        expect(childChain._state.value instanceof Error).to.be(true)
+        expect(readPath(childChain, [], testContext) instanceof Error).to.be(true)
         expect(child.value).to.be(1)
     })
 
@@ -450,7 +451,7 @@ describe("managed class copy-on-write", () => {
         const chain = new Chain(source, testContext)
 
         assignPath(chain, ["value"], 2, testContext)
-        const failure = chain._state.value
+        const failure = readPath(chain, [], testContext)
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
@@ -476,8 +477,8 @@ describe("managed class copy-on-write", () => {
         const copy = chain._state.value
 
         expect(copy).not.to.be(root)
-        expect(copy.branch instanceof Error).to.be(true)
-        expect(copy.branch.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
+        expect(logicalProperty(copy, "branch", testContext) instanceof Error).to.be(true)
+        expect(logicalProperty(copy, "branch", testContext).kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(copy.sibling).to.be(true)
         expect(source.value).to.be(1)
         verifyRefCounts(testContext, root, copy)
@@ -501,7 +502,7 @@ describe("managed class copy-on-write", () => {
         const source = new External()
         pending.resolve(source)
         await flushMicrotasks()
-        const failure = chain._state.value.branch
+        const failure = readPath(chain, ["branch"], testContext)
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
@@ -545,7 +546,7 @@ describe("managed class copy-on-write", () => {
         lookupPath(chain, [], testContext)
 
         assignPath(chain, ["value"], 2, testContext)
-        const failure = chain._state.value
+        const failure = readPath(chain, [], testContext)
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)

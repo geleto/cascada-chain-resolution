@@ -1,3 +1,4 @@
+import { logicalProperty } from "./support.js"
 import { logicalVersionEntries } from "./verify-parents.js"
 import { poison } from "./support.js"
 import {
@@ -318,8 +319,8 @@ describe("graph presence summaries", () => {
         assignPath(assignedChain, ["missing", "value"], 1, testContext)
         deletePath(deletedChain, ["missing", "value"], testContext)
 
-        expect(assigned.missing instanceof Error).to.be(true)
-        expect(deleted.missing instanceof Error).to.be(true)
+        expect(logicalProperty(assigned, "missing", testContext) instanceof Error).to.be(true)
+        expect(logicalProperty(deleted, "missing", testContext) instanceof Error).to.be(true)
         expectCounts(testContext, assigned, 0, 1)
         expectCounts(testContext, deleted, 0, 1)
 

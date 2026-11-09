@@ -84,12 +84,12 @@ class PathOperation extends OperationOwner {
         const boundary = this.route.externalBoundary
         const depth = boundary ? boundary[externalTree.TREE_NODE].depth - this.route.origin : Infinity
         if (this.mutation && this.route.externalScope) {
-            // Finish managed selection and recovery before starting native work.
+            // Finish managed selection and status clearing before native work.
             // Native availability and reservations cannot extend its publication.
             const selected = walkMutationPath(
                 chain._state, this, target => {
                     // The fixed native binding can itself have managed placement
-                    // recovery. The declared repair scope selects that placement;
+                    // status. The declared repair scope selects that placement;
                     // a deeper receiver does not turn it into a strict ancestor.
                     if (this.repair && depth === this.scopeDepth) {
                         return this.repairPlacement(target)
@@ -114,7 +114,7 @@ class PathOperation extends OperationOwner {
 
     selectRoute(index, consumeSuffix = false) {
         if (index === this.route.path.length) return consumeSuffix && this.repair
-            ? this.metadata?.blockers(this.metadataNode(), false) : undefined
+            ? this.metadata?.blockers(this.metadataNode(), false, false) : undefined
         if (!consumeSuffix && (!this.route.nodes[index] || this.routeFailure)) return
         const select = () => consumeSegment(this, index, key => errors.isPoisonError(key) ? key :
             this.selectRoute(index + 1, consumeSuffix))
@@ -161,6 +161,13 @@ class PathOperation extends OperationOwner {
                         const access = this.externalAccess = new ExternalAccess(identity, start, boundary, this)
                         if (this.repair) {
                             this.commitRepairMetadata()
+                            // The call consumes descendants after clearing only
+                            // this scope's own status in its captured view.
+                            return steps.continueGraphTransition(this.metadata?.blockers(scope, false), operationContext,
+                                blocker => {
+                                    this.metadata?.close()
+                                    return blocker ? { result: blocker } : action(access)
+                                }, undefined, this)
                         }
                         // Blockers and publishers retain their selected states.
                         // Native work no longer needs the issuance snapshot.
@@ -171,9 +178,9 @@ class PathOperation extends OperationOwner {
             }, undefined, this)
         }
         // An ordinary mutation consumes its whole declared scope; repair-and-
-        // call ignores the subtree it can clear, but still checks ancestors.
+        // call checks strict ancestors before repair and children after it.
         return this.mutation ? steps.continueGraphTransition(
-            this.metadata?.blockers(scope, !this.repair), operationContext, select, undefined, this) : select()
+            this.metadata?.blockers(scope, !this.repair, !this.repair), operationContext, select, undefined, this) : select()
     }
 
     commitRepairMetadata() {
@@ -185,10 +192,10 @@ class PathOperation extends OperationOwner {
         return transformProperty(target, this.operationContext, (value, state) => {
             // Key validation can retain this callback in an unformatted Error stack.
             value = undefined
-            return steps.continueGraphTransition(this.metadata?.blockers(this.metadataNode(), false), this.operationContext, blocker => {
-                // Native repair validates its fixed route before restoration.
+            return steps.continueGraphTransition(this.metadata?.blockers(this.metadataNode(), false, false), this.operationContext, blocker => {
+                // Native repair validates its fixed route before clearing status.
                 // Keep that wait inside the placement transition so later work
-                // cannot pass it or replace the baseline selected for recovery.
+                // cannot pass it or replace the selected current data.
                 const selection = blocker ?? (this.metadataOnly ? undefined :
                     steps.continueGraphTransition(this.selectRoute(this.scopeDepth), this.operationContext,
                         invalid => invalid ?? (this.routeFailure ? this.metadata?.blockers(this.metadataNode(), true, false) : undefined),
@@ -352,10 +359,10 @@ function walkObservationPath(
     try {
         return errors.catchExternalThrow(() => {
             placement = properties.readLanguagePlacement(chain._state, "value", operationContext)
-            return versions.resolvePlacement(placement, operationContext, ready => {
+            return versions.resolveVisiblePlacement(placement, operationContext, ready => {
                 try {
-                    return walkObservationValue(ready.value, operation, onResolved,
-                        onUserCodeFailure, reflectionKind, options, ready.present)
+                    return walkObservationValue(versions.placementValue(ready), operation, onResolved,
+                        onUserCodeFailure, reflectionKind, options, versions.placementPresent(ready))
                 } finally { ready = undefined }
             })
         }, operationContext, reflectionKind, onUserCodeFailure)
@@ -423,8 +430,8 @@ function walkObservationValue(
         }
         if (properties.classifyLanguageProperty(parent, key, operationContext) === properties.ARRAY_LENGTH)
             return ArrayView.resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
-        const { value, present, sourceVersion: version } =
-            properties.readLanguagePlacement(parent, key, operationContext)
+        const placement = properties.readLanguagePlacement(parent, key, operationContext)
+        const value = versions.placementValue(placement), present = versions.placementPresent(placement), version = placement.sourceVersion
         if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present)
         return versions.observePromiseVersion(
             value, version, operationContext,

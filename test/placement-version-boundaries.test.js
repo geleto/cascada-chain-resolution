@@ -10,6 +10,31 @@ import { fixture } from "./trace-state.js"
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
 describe("placement versions across representation boundaries", () => {
+    for (const delivery of ["native", "ordered"]) for (const valueFirst of [false, true])
+    it(`keeps record order when pending replacement follows entry: ${delivery}, valueFirst=${valueFirst}`, async () => {
+        const ctx = context()
+        const signal = () => delivery === "native" ? Promise.withResolvers() : new OrderedThenable()
+        const gate = signal(), replacement = signal()
+        const chain = new runtime.Chain({ c: { y: { z: 1 }, sibling: 2 } }, ctx)
+        const before = new runtime.Chain(runtime.lookupPath(chain, [], ctx), ctx)
+        const entered = runtime.enter(chain, ["c", "y"], ctx, true, inside =>
+            (gate.promise ?? gate).then(() => runtime.deletePath(inside, ["absent"], ctx)))
+        const during = new runtime.Chain(runtime.lookupPath(chain, [], ctx), ctx)
+        runtime.assignPath(chain, ["c", "y"], replacement.promise ?? replacement, ctx, 0)
+        const after = new runtime.Chain(runtime.lookupPath(chain, [], ctx), ctx)
+        const output = runtime.export(after, [], ctx)
+        const settle = (source, value) => { source.resolve(value); source.flush?.() }
+        if (valueFirst) { settle(replacement, 1); settle(gate) }
+        else { settle(gate); settle(replacement, 1) }
+        await entered
+        const result = await output
+        assert.deepEqual(Object.keys(result.c), ["y", "sibling"])
+        assert.deepEqual(result.c, { y: 1, sibling: 2 })
+        for (const held of [before, during])
+            assert.deepEqual(await runtime.export(held, [], ctx), { c: { y: { z: 1 }, sibling: 2 } })
+        verifyRefCounts(ctx, chain._state, before._state, during._state, after._state)
+    })
+
     for (const nested of [false, true]) for (const detached of [false, true]) {
         it(`notifies an independent capture of later pending recovery, nested=${nested}, detached=${detached}`, async () => {
             const ctx = context(), pending = new OrderedThenable(), hold = Promise.withResolvers()
@@ -125,7 +150,7 @@ describe("placement versions across representation boundaries", () => {
         fixture(installPlacementVersion, owner, "5", version, ctx)
         const poison = runtime.createPoisonError(new Error("publication failed"), ctx,
             runtime.ERROR_KIND.PropertyMutationFailed)
-        commitPlacementVersion(owner, "5", version, { value: poison, present: true, recovery: absent }, ctx, false)
+        commitPlacementVersion(owner, "5", version, { ...absent, ownFailure: poison }, ctx, false)
         assert.equal(owner.length, 3)
         assert.equal(runtime.lookupPath(chain, ["length"], ctx), 6)
         assert.equal(runtime.getErrors(chain, [], ctx), poison)

@@ -3,7 +3,7 @@ import { logicalVersionEntries } from "./verify-parents.js"
 // Test-only storage oracle. Physical storage is a cache beneath installed
 // placement versions, and a settled absent version may retire only when that
 // fallback is absent too. Check every storage fact an installed version
-// records, including inside retained recovery baselines, so a later retirement
+// records, including current data behind path status, so a later retirement
 // cannot expose stale data. Valid between transitions, not only at quiescence.
 import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
@@ -23,7 +23,7 @@ function verifyStorage(operationContext, ...roots) {
                 languageProperties.getLanguagePlacementDescriptor(node, key, operationContext)) {
                 fatal("Absent storage fact hides a physical placement", operationContext)
             }
-            visit(version.recovery?.value)
+            visit(version.value)
         }
         for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
             const child = languageProperties.readLanguageProperty(node, key, operationContext)

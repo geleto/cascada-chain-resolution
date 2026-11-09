@@ -1,5 +1,6 @@
 import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as metadata from "./meta.js"
+import { placementPresent } from "./property-versions.js"
 
 // Allocate physical shape only. The caller owns admission, placement copying,
 // and transfer of captured length or record order.
@@ -37,7 +38,7 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     const order = array ? undefined : recordOrder(owner, operationContext)
     // -1 keeps physical relative order; Infinity denotes absence. Nonnegative
     // positions order creations by issuance, independently of storage writes.
-    const token = order ? { position: placement.position ?? (placement.present ? -1 : Infinity) } : undefined
+    const token = order ? { position: placement.position ?? (placementPresent(placement) ? -1 : Infinity) } : undefined
     // All commands inside this entry precede later sibling operations, even
     // when those siblings finish first. No-op/replacement keeps the old position.
     const creationPosition = order ? order.clock.next++ : undefined
@@ -45,7 +46,7 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     if (order) order.positions.set(key, token)
     return {
         prepare(placement) {
-            const present = placement.present !== false
+            const present = placementPresent(placement)
             if (token) placement.position = present ? placement.position < Infinity ? placement.position : creationPosition : Infinity
             return () => {
                 if (token) token.position = placement.position
@@ -66,14 +67,14 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
 function preparePlacementStructure(owner, key, placement, structure, operationContext, before) {
     if (placement.pendingPresence) return () => {}
     if (structure) return structure.prepare(placement)
-    const present = placement.present !== false
+    const present = placementPresent(placement)
     const meta = metadata.requireMeta(owner, operationContext)
     const array = isLogicalArray(owner, operationContext)
-    const wasPresent = before.present && !before.sourceVersion?.pendingPresence
+    const wasPresent = placementPresent(before) && !before.sourceVersion?.pendingPresence
     if (placement.position === undefined && wasPresent)
         placement.position = before.position
     const commitEntry = meta.entryGate?.structure.prepare(placement)
-    const order = !array && (meta.entryGate || placement.position >= 0 && placement.position < Infinity)
+    const order = !array && (meta.entryGate || placement.ownFailure && !wasPresent || placement.position >= 0 && placement.position < Infinity)
         ? recordOrder(owner, operationContext) : meta.recordOrder
     const created = present && !wasPresent
     if (order) placement.position = present ? placement.position < Infinity ? placement.position : order.clock.next++ : Infinity

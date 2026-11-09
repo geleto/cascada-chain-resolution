@@ -88,7 +88,7 @@ function prepareInput(
                     }
                     const version = propertyVersions.getPlacementVersion(owner, key, operationContext)
                     if (version) {
-                        if (version.discoveryBlocked || version.present === false || version.pendingPresence ||
+                        if (version.discoveryBlocked || version.ownFailure || version.present === false || version.pendingPresence ||
                             errorUtils.isPoisonError(version.value) ||
                             languageValues.isPending(version.value, operationContext)) return undefined
                         return { enumerable: true, value: version.value }
@@ -111,7 +111,7 @@ function prepareInput(
         for (const { container } of staged.values()) if (container) {
             container.discard()
             if (container.state === CONSTRUCTION_STATE.Discarded) for (const staged of container.placements.values()) {
-                if (staged.version) staged.version.value = staged.version.recovery = undefined
+                if (staged.version) staged.version.value = staged.version.ownFailure = undefined
                 staged.placement = staged.inspectionFailures = undefined
             }
             container.placements = undefined

@@ -1,7 +1,7 @@
 import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { capturePlacement, getPlacementVersion, ownPlacementVersionEntries } from "./property-versions.js"
+import { capturePlacement, getPlacementVersion, ownPlacementVersionEntries, placementValue, placementPresent } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 import { continueGraphTransition } from "./internal-step.js"
 
@@ -180,7 +180,7 @@ function writeLanguageProperty(parent, key, value, operationContext, descriptor)
 }
 
 function readLanguageProperty(parent, key, operationContext) {
-    return readLanguagePlacement(parent, key, operationContext).value
+    return placementValue(readLanguagePlacement(parent, key, operationContext))
 }
 
 // Reception owns preparation. Reading only captures the current placement;
@@ -205,7 +205,7 @@ function hasLanguageProperty(parent, key, operationContext) {
     const version = getPlacementVersion(parent, key, operationContext)
     // An undecided placement is a candidate, even without physical storage.
     // Its consumer resolves presence through the captured transition.
-    if (version) return version.present !== false
+    if (version) return placementPresent(version)
     const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
     return descriptor !== undefined
 }

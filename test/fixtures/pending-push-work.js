@@ -13,8 +13,8 @@ const substitutions = new Map([
     ['property-versions.js', [
         ['placements.set(key, version)', 'globalThis.__pendingPushCounts().parentRecords++; $&'],
         ['function createVersionFromPlacement(placement) {', '$&\n    globalThis.__pendingPushCounts().versions++;'],
-        ['const captured = capturePlacementFromVersion(version)', 'globalThis.__pendingPushCounts().copiedEntries++; $&'],
-        ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation) {', '$&\n    const measured = globalThis.__pendingPushCounts(); measured.captures++; measured.liveCaptures++; let measuredClosed = false;'],
+        ['const captured = capturePlacementFromVersion(version)\n        copyPlacement(captured, destination', 'globalThis.__pendingPushCounts().copiedEntries++; $&'],
+        ['function continueCapturedPromiseVersion(promise, promiseVersion, operationContext, onValue, operation, project) {', '$&\n    const measured = globalThis.__pendingPushCounts(); measured.captures++; measured.liveCaptures++; let measuredClosed = false;'],
         ['const complete = () => {\n        unregister?.()', 'const complete = () => {\n        if (!measuredClosed) { measuredClosed = true; measured.liveCaptures-- }\n        unregister?.()'],
         ['subscribed.add(version)', '$&; globalThis.__pendingPushCounts().captureMemberships++'],
         ['version.captures.delete(visit)', '$&; globalThis.__pendingPushCounts().captureMemberships--'],
@@ -87,7 +87,6 @@ function snapshot(chain, ctx) {
         const incoming = state.incomingParents
         maintainedEntries += incoming instanceof Map
             ? [...incoming.values()].reduce((sum, keys) => sum + 1 + keys.size, 0) : Number(Boolean(incoming))
-        for (const keys of state.preservationParents?.values() ?? []) maintainedEntries += 1 + keys.size
     }
     return { ...counts, backingSlots: backing.length,
         maintainedEntries,
@@ -149,9 +148,9 @@ for (const size of sizes) {
             assert.equal(failure.cause, cause)
             assert.equal(failure.errorContext, ctx.errorContext)
             assert.equal(failure.kind, route === 'assign' ? r.ERROR_KIND.AssignmentValueFailed : r.ERROR_KIND.OperationInputFailed)
-            // Input rejection has no rollback baseline. Explicit repair must
+            // Input rejection is data, not path status. Explicit repair must
             // preserve it; final assignment can then replace the failed slot.
-            assert.equal(r.repairPath(chain, [String(index + 1)], ctx), failure)
+            assert.equal(r.repairPath(chain, [String(index + 1)], ctx), undefined)
             assert.equal(r.lookupPath(chain, [String(index + 1)], ctx), failure)
             // Final assignment replaces a failed payload without consuming it.
             r.assignPath(chain, [String(index + 1)], index + 1, ctx)

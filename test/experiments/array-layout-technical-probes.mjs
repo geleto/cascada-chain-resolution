@@ -2,12 +2,6 @@
 // Design probes, not a production Array evaluator or a replacement for integration tests.
 // Native Arrays are the successful-layout oracle; failed controls keep their domains.
 import assert from 'node:assert/strict'
-import { Execution } from '../../src/index.js'
-import * as metadata from '../../src/meta.js'
-import { initializePlacements, initializeHolder, activateRelationships, addParent,
-    getParentPlacements } from '../../src/parent-placements.js'
-import { runGraphTransition, releasePin, reconsider } from '../../src/ownership.js'
-
 const READY = 0, PENDING = 1, FAILED = 2
 const SPAN = 0, DROP = 1, INSERT = 2
 const ready = value => ({ state: READY, value })
@@ -424,54 +418,8 @@ report.selection = { checks: selectionChecks, schedules: 3, finalNotificationsPe
     assert.equal(g.roots[1].state, ERROR) // Failure notification without a narrower [0,1] domain.
 }
 
-// 4. Exercise the real retirement and COW machinery with an experiment-only adapter
-// for its existing preservation-parent protocol. This is not production layout support.
-// The adapter intentionally covers ready captured children only, not pending adoption,
-// forward-state restoration, counter summaries, or source-range projection.
-function preserve(owner, child, token, context, metrics) {
-    activateRelationships(child, context)
-    const childMeta = metadata.requireMeta(child, context)
-    const parents = childMeta.preservationParents ??= new Map()
-    let keys = parents.get(owner)
-    if (!keys) parents.set(owner, keys = new Set())
-    keys.add(token)
-    const ownerMeta = metadata.requireMeta(owner, context)
-    const releases = ownerMeta.recoveryUses ??= new Map()
-    releases.set(token, () => {
-        keys.delete(token)
-        if (!keys.size) parents.delete(owner)
-        if (!parents.size) delete childMeta.preservationParents
-        metrics.released++
-        reconsider(child, context)
-    })
-}
-for (const separatelyHeld of [false, true]) {
-    const context = { execution: new Execution(), errorContext: {} }, metrics = { released: 0 }
-    const array = [], child = { back: array }, root = { value: array }, token = {}
-    runGraphTransition(context, () => {
-        metadata.getOrCreateMeta(array, context, metadata.TYPE.Array, Array.prototype)
-        metadata.getOrCreateMeta(child, context, metadata.TYPE.Record, Object.prototype)
-        initializePlacements(array, context)
-        initializePlacements(child, context)
-        initializeHolder(root, context)
-        addParent(array, root, 'value', context)
-        preserve(array, child, token, context, metrics)
-        if (separatelyHeld) metadata.incrementReadLease(child, context)
-    })
-    assert(metadata.requiresCopyOnWrite(child, context))
-    assert.equal(getParentPlacements(child, context).length, 0) // No guessed Array index.
-    assert(metadata.requireMeta(child, context).relationshipsActive)
-    runGraphTransition(context, () => releasePin(root, context))
-    assert.equal(metadata.requireMeta(child, context).relationshipsActive, separatelyHeld)
-    assert.equal(metadata.requireMeta(array, context).relationshipsActive, separatelyHeld)
-    if (separatelyHeld)
-        runGraphTransition(context, () => metadata.decrementReadLease(child, context))
-    assert.equal(metadata.requireMeta(child, context).relationshipsActive, false)
-    assert.equal(metadata.requireMeta(array, context).relationshipsActive, false)
-    assert.equal(metrics.released, 1)
-    assert.equal(metadata.requireMeta(child, context).preservationParents, undefined)
-}
-report.retirement = { realRuntime: true, guessedParentKeys: 0, unrootedCyclesRetired: 2,
-    caveat: 'ready-child preservation adapter; not complete layout integration' }
+// The former runtime preservation adapter depended on the removed repair-only
+// parent index. Layout-input retention remains future integration work; these
+// independent layout probes make no current runtime-retention claim.
 
 console.log(JSON.stringify(report, null, 2))

@@ -57,6 +57,15 @@ describe("versioned external metadata", () => {
         const received = await result
         await entry
         assert.equal(await before, old ?? null, "The earlier metadata view keeps its original poison")
+        if (previous === "child-poison") {
+            assert.equal(received, old)
+            assert.equal(await after, old)
+            assert.equal(await read, old)
+            assert.equal(calls, 0)
+            assert.equal(reads, 0)
+            assert.equal(await r.getErrors(chain, ["api"], ctx), old)
+            return
+        }
         if (outcome === "success") {
             assert.equal(received, 1)
             assert.equal(await after, null)
@@ -79,18 +88,20 @@ describe("versioned external metadata", () => {
             "test/fixtures/path-selection-work.mjs"], { encoding: "utf8", timeout: 25000 })
         assert.equal(result.status, 0, result.stdout + result.stderr)
     })
-    it("captures a pending failure before a covering reset without holding later native siblings", async () => {
+    it("preserves a pending descendant failure across parent repair without holding native siblings", async () => {
         const { ctx, chain, api, calls } = fixture(), gate = Promise.withResolvers()
         api.db.fail = () => gate.promise
         const mutation = mutate(chain, ctx, ["api", "db"])
         const earlier = r.getErrors(chain, ["api"], ctx)
         assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
-        assert.equal(r.getErrors(chain, ["api"], ctx), null)
+        const after = r.getErrors(chain, ["api"], ctx)
+        assert(after instanceof Promise)
         assert.equal(r.run(chain, ["api", "other"], "read", [], ctx, {}), 2)
         assert.deepEqual(calls, ["other"])
         gate.reject(new Error("late"))
         assert.equal(await earlier, await mutation)
-        assert.equal(r.getErrors(chain, ["api"], ctx), null)
+        assert.equal(await after, await mutation)
+        assert.equal(r.getErrors(chain, ["api"], ctx), await mutation)
     })
 
     for (const mutation of [false, true]) it(`retains selected projections after a covering reset, mutation=${mutation}`, async () => {
@@ -120,17 +131,19 @@ describe("versioned external metadata", () => {
             new Set(selected === "db" ? [newFailure] : [before, newFailure]))
     })
 
-    it("a covering reset bypasses an unresolved selection while earlier snapshots retain it", async () => {
+    it("parent repair preserves an unresolved descendant selection", async () => {
         const { ctx, chain } = fixture(), key = Promise.withResolvers()
         const old = mutate(chain, ctx, ["api", "db"])
         const repair = r.repairPath(chain, ["api", key.promise], ctx)
         const captured = r.getErrors(chain, ["api"], ctx)
         assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
-        assert.equal(r.getErrors(chain, ["api"], ctx), null)
+        const after = r.getErrors(chain, ["api"], ctx)
+        assert(after instanceof Promise)
         key.resolve("other")
         await repair
         assert.equal(await captured, old)
-        assert.equal(r.getErrors(chain, ["api"], ctx), null)
+        assert.equal(await after, old)
+        assert.equal(r.getErrors(chain, ["api"], ctx), old)
     })
 
     for (const selected of ["db", "unregistered"])
@@ -261,7 +274,7 @@ describe("versioned external metadata", () => {
         } finally { suffix.resolve("unused"); await entered }
     })
 
-    it("publishes entry metadata without extending native coverage for overwritten repairs", async () => {
+    it("preserves entered descendant selection across parent repair", async () => {
         const { ctx, chain } = fixture(), key = Promise.withResolvers()
         const old = mutate(chain, ctx, ["api", "db"])
         let repair
@@ -275,13 +288,17 @@ describe("versioned external metadata", () => {
         await turn()
         assert.equal(ran, false, "The earlier reader retains the pending metadata publication")
         assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
-        assert.equal(r.getErrors(chain, ["api"], ctx), null)
-        assert.equal(r.run(chain, ["api", "other"], "read", [], ctx, {}), 2)
+        const after = r.getErrors(chain, ["api"], ctx)
+        const later = r.run(chain, ["api", "other"], "read", [], ctx, {})
+        assert(after instanceof Promise)
+        assert(later instanceof Promise)
         await turn()
         assert.equal(ran, false, "Reset must not revise the earlier reader's capture")
         key.resolve("other")
         await repair
         assert.equal(await earlier, old)
+        assert.equal(await after, old)
+        assert.equal(await later, 2)
         assert.equal(await native, 2)
     })
 

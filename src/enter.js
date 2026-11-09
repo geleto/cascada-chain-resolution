@@ -24,7 +24,7 @@ function captureReference(chain, route, mutable, operationContext) {
     return capture(chain._state, "value", versions.capturePlacement(chain._state, "value", operationContext), 0)
 
     function capture(parent, key, placement, depth) {
-        let value = placement.value
+        let value = versions.placementValue(placement)
         if (metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External) {
             const scope = route.externalScope
             if (scope) {

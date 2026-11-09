@@ -176,12 +176,12 @@ future work is listed separately below.
       - Synchronous external-action re-entry exclusion
     - Managed scope poison
       - Ordered baseline retention and failed-working-state discard
-      - Blocked-operation propagation without replacing recovery state
+      - Blocked-operation propagation without changing data or own status
       - Ordinary Error data versus repairable placement poison
       - Receiver publication failure and independent result Error preservation
     - Repair
-      - Managed baseline restoration and failed-publication preservation
-      - Ordered external subtree clearing without native rollback
+      - Managed own-status clearing and failed-publication preservation
+      - Ordered external own-status clearing with descendants preserved
       - Ancestor poison, readonly restrictions, and failure-preserving managed/metadata commit
       - Repair-only neither consumes the retained payload nor waits for overwritten external poison
       - Repair-and-call preflights structural scope before clearing, then consumes the restored receiver
@@ -324,7 +324,7 @@ future work is listed separately below.
       - Persistent sparse metadata versions separate from host-effect reservations
       - Lazy selected-component futures, bounded forwarding, and source-free history release
       - Issuance-time snapshots preserve earlier pending outcomes across later resets
-      - Covering subtree reset overwrites pending poison without waiting for the overwritten native outcome
+      - Selected own-status clearing overwrites its pending outcome while preserving descendant futures
       - Computed-path selection narrows metadata capture without quadratic failed-selection history
       - Settled-empty collapse and reuse without repeated descendant scans
       - Ancestor blockers with healthy sibling availability
@@ -478,7 +478,7 @@ mechanism rather than reasons to retain parallel engines.
   - Preserve synchronous delivery, bounded deep histories, historical snapshots, and immediate last-use release; no scheduler or extra microtasks.
 - S6 — Ownership projections and resource lifetimes from canonical facts (C02, C05, C06, C08, C11, C14)
   - S6.1 — Consolidate maintenance of graph projections
-    - Map incoming placements, backing occurrences, counter edges, recovery preservation, and publication destinations back to the logical fact each represents.
+    - Map incoming placements, backing occurrences, counter edges, flagged data, and publication destinations back to the logical fact each represents.
     - Test one edge/placement transition as their maintenance source, with projections only where a distinct query or measured work bound requires them.
     - Deletion target: duplicate edge-update protocols and duplicated retained facts. Distinct topology and counter semantics alone do not prove today's separate maintenance paths are minimal.
     - Preserve cycles, multiplicity, optional index construction, inactive-region restoration, and no active-graph rescans.
@@ -489,7 +489,7 @@ mechanism rather than reasons to retain parallel engines.
     - Deletion target: duplicated ownership fields and cleanup paths; do not merge lifetimes merely to reduce the number of release functions, or introduce a cancellation system.
 - S7 — Explicit semantic cutovers and contract decisions (cross-cutting)
   - S7.1 — Execute the selected status-only repair cutover (F04)
-    - Deletion target: repair-only predecessor storage, restoration traversal, recovery-only preservation links, and range-specific baseline construction. Ordinary retained snapshots and native receiver isolation remain.
+    - D01 removes repair-only predecessors and preservation links. Operation-local baselines, including controlled Array range captures, remain necessary for current mutation atomicity; streaming changes to that contract remain separate. Ordinary retained snapshots and native receiver isolation remain.
   - S7.2 — Evaluate registration-before-first-use as a narrower host contract
     - Deletion target: retained noncanonical identity sets, registration revisions, and post-wait revalidation. Keep canonical authority and duplicate-registration rejection.
     - This deliberately removes supported late-registration behavior; do not label its current checks misuse defenses.

@@ -1,3 +1,4 @@
+import { logicalProperty } from "./support.js"
 import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
 import * as arrayViews from "../src/array-view.js"
@@ -287,7 +288,7 @@ describe("path assignment", () => {
         expect(assigned).to.be(undefined)
         expect(assignedChain._state.value.hidden).to.be(2)
         expect(nestedAssigned instanceof Error).to.be(true)
-        expect(nestedChain._state.value.hidden).to.be(nestedAssigned)
+        expect(readPath(nestedChain, ["hidden"], testContext)).to.be(nestedAssigned)
         expect(deleted).to.be(undefined)
         expect(deletedChain._state.value).to.be(root)
         expect(root.hidden).to.be(hidden)
@@ -305,7 +306,7 @@ describe("path assignment", () => {
         expect(arrayAssigned.message).to.be(
             "Arrays support only indexes and length",
         )
-        expect(arrayChain._state.value).to.be(arrayAssigned)
+        expect(readPath(arrayChain, [], testContext)).to.be(arrayAssigned)
         expect(array.hidden).to.be(1)
     })
 
@@ -394,7 +395,7 @@ describe("path assignment", () => {
         const deleted = deletePath(chain, ["length"], { ...testContext, errorContext: "test deletion" })
 
         expect(deleted instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(deleted)
+        expect(readPath(chain, [], testContext)).to.be(deleted)
         expect(root).to.eql([1, 2, 3])
     })
 
@@ -549,7 +550,7 @@ describe("path assignment", () => {
 
         expect(failure).to.be(undefined)
         expect(chain._state.value).to.be(root)
-        expect(root.values instanceof Error).to.be(true)
+        expect(logicalProperty(root, "values", testContext) instanceof Error).to.be(true)
         const observed = lookupPath(chain, ["values", "length", "x"], testContext)
         expect(observed instanceof Error).to.be(true)
         expect(observed.message).to.be(
@@ -569,7 +570,7 @@ describe("path assignment", () => {
 
         const error = assignPath(chain, ["length"], 1.5, { ...testContext, errorContext: "test assignment" })
         expect(error instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(error)
+        expect(readPath(chain, [], testContext)).to.be(error)
         expect(root.length).to.be(1)
     })
 
@@ -755,7 +756,7 @@ describe("path assignment", () => {
         const result = assignPath(chain, ["length"], length.promise, { ...testContext, errorContext: "test assignment" })
 
         expect(result instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         length.resolve(1)
     })
 
@@ -808,12 +809,12 @@ describe("path assignment", () => {
         expect(lookupPath(chain, ["length"], testContext)).to.be(3)
         const assigned = assignPath(chain, ["length"], 1, { ...testContext, errorContext: "test assignment" })
         expect(assigned instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(assigned)
+        expect(readPath(chain, [], testContext)).to.be(assigned)
 
         const deletedChain = new Chain("abc", testContext)
         const deleted = deletePath(deletedChain, ["length"], { ...testContext, errorContext: "test deletion" })
         expect(deleted instanceof Error).to.be(true)
-        expect(deletedChain._state.value).to.be(deleted)
+        expect(readPath(deletedChain, [], testContext)).to.be(deleted)
     })
 
     it("can shadow inherited properties", () => {
@@ -1034,8 +1035,8 @@ describe("path assignment", () => {
 
             expect(assigned instanceof Error).to.be(true)
             expect(deleted instanceof Error).to.be(true)
-            expect(assignedChain._state.value).to.be(assigned)
-            expect(deletedChain._state.value).to.be(deleted)
+            expect(readPath(assignedChain, [], testContext)).to.be(assigned)
+            expect(readPath(deletedChain, [], testContext)).to.be(deleted)
         }
 
         const hostArray = []
@@ -1043,7 +1044,7 @@ describe("path assignment", () => {
         const hostChain = new Chain(hostArray, testContext)
         const hostFailure = assignPath(hostChain, ["name"], "changed", { ...testContext, errorContext: "test assignment" })
         expect(hostFailure instanceof Error).to.be(true)
-        expect(hostChain._state.value).to.be(hostFailure)
+        expect(readPath(hostChain, [], testContext)).to.be(hostFailure)
         expect(hostArray.name).to.be("host-only")
 
         const imported = importValue([], { ...testContext, errorContext: "indexed growth" })
@@ -1106,13 +1107,13 @@ describe("path assignment", () => {
         assignPath(rootChain, ["nothing", "value"], 3, { ...testContext, errorContext: "test assignment" })
         assignPath(rootChain, ["unset", "value"], 4, { ...testContext, errorContext: "test assignment" })
 
-        for (const value of [root.new, root.old, root.nothing, root.unset]) {
+        for (const value of ["new", "old", "nothing", "unset"].map(key => logicalProperty(root, key, testContext))) {
             expect(value instanceof Error).to.be(true)
             expect(value.message).to.be(
                 "Cannot access property through missing or primitive value",
             )
         }
-        expect(missingResult).to.be(root.new)
+        expect(missingResult).to.be(logicalProperty(root, "new", testContext))
     })
 
     it("copies a shared branch before installing a path Error", () => {
@@ -1126,8 +1127,8 @@ describe("path assignment", () => {
         expect(next).not.to.be(root)
         expect(root).to.eql({ keep: true })
         expect(next.keep).to.be(true)
-        expect(next.missing instanceof Error).to.be(true)
-        expect(next.missing.message).to.be(
+        expect(logicalProperty(next, "missing", testContext) instanceof Error).to.be(true)
+        expect(logicalProperty(next, "missing", testContext).message).to.be(
             "Cannot access property through missing or primitive value",
         )
     })
@@ -1145,8 +1146,8 @@ describe("path assignment", () => {
         assignPath(stringChain, ["value"], 1, { ...testContext, errorContext: "test assignment" })
 
         for (const chain of [nullChain, undefinedChain, numberChain, stringChain]) {
-            expect(chain._state.value instanceof Error).to.be(true)
-            expect(chain._state.value.message).to.be(
+            expect(readPath(chain, [], testContext) instanceof Error).to.be(true)
+            expect(readPath(chain, [], testContext).message).to.be(
                 "Cannot access property through missing or primitive value",
             )
         }
@@ -1306,9 +1307,9 @@ describe("deletePath", () => {
             const chain = new Chain(value, testContext)
             const result = deletePath(chain, ["value"], { ...testContext, errorContext: "test deletion" })
             expect(result instanceof Error).to.be(true)
-            expect(chain._state.value).to.be(result)
-            expect(chain._state.value instanceof Error).to.be(true)
-            expect(chain._state.value.message).to.be(
+            expect(readPath(chain, [], testContext)).to.be(result)
+            expect(readPath(chain, [], testContext) instanceof Error).to.be(true)
+            expect(readPath(chain, [], testContext).message).to.be(
                 "Cannot access property through missing or primitive value",
             )
         }
@@ -1426,7 +1427,7 @@ describe("deletePath", () => {
         const result = deletePath(chain, ["length"], { ...testContext, errorContext: "test deletion" })
 
         expect(result instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         expect(exportValue(source, [], testContext)).to.eql([1, 2])
     })
 
@@ -1445,7 +1446,7 @@ describe("deletePath", () => {
             receiver.resolve(value)
             await flushMicrotasks()
 
-            expect(root.value instanceof Error).to.be(true)
+            expect(logicalProperty(root, "value", testContext) instanceof Error).to.be(true)
             expect(value.length).to.be(length)
         }
     })
@@ -1583,7 +1584,7 @@ describe("deletePath", () => {
         deferredBranch.resolve(7)
         await flushMicrotasks()
 
-        for (const value of [root.branch, pendingRoot.branch]) {
+        for (const value of [root, pendingRoot].map(value => logicalProperty(value, "branch", testContext))) {
             expect(value instanceof Error).to.be(true)
             expect(value.message).to.be(
                 "Cannot access property through missing or primitive value",

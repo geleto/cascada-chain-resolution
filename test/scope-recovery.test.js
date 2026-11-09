@@ -21,7 +21,7 @@ describe("broader native binding repair", () => {
     for (const write of ["assign", "delete"]) for (const entry of ["direct", "root", "api"])
     it(`restores the declared binding scope before calling its child: ${write}/${entry}`, async () => {
         const { ctx, chain, events } = fixture()
-        mutate(chain, ["api", "config"], "fail", ctx)
+        const child = mutate(chain, ["api", "config"], "fail", ctx)
         const guard = write === "assign" ? r.assignPath(chain, ["api"], 1, ctx) : r.deletePath(chain, ["api"], ctx)
         const retained = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
         const invoke = (owner, path) => r.run(owner, path, "work", [], ctx,
@@ -32,9 +32,9 @@ describe("broader native binding repair", () => {
             result = invoke(inside, entry === "root" ? ["api", "db"] : ["db"])
             return result
         })
-        assert.equal(await result, undefined)
-        assert.deepEqual(events, ["db"])
-        assert.equal(r.getErrors(chain, [], ctx), null)
+        assert.equal(await result, child)
+        assert.deepEqual(events, [])
+        assert.equal(r.getErrors(chain, [], ctx), child)
         assert.equal(r.lookupPath(retained, ["api"], ctx), guard, "Recovery must preserve another owner's guard")
         assert.equal(ctx.execution.fatalError, null)
         verifyRefCounts(ctx, chain._state, retained._state)
@@ -311,17 +311,18 @@ describe("hierarchical scopes and placement recovery", () => {
     for (const conflictDuringArguments of [false, true]) {
         it(`keeps canonical repair valid after a rejected descendant registration, deferred=${conflictDuringArguments}`, async () => {
             const { api, ctx, chain, events } = fixture(), hold = Promise.withResolvers()
-            mutate(chain, ["api", "config"], "fail", ctx)
+            const child = mutate(chain, ["api", "config"], "fail", ctx)
             const compete = () => new r.ContextChain({ db: api.db }, ctx, { db: {} })
             if (!conflictDuringArguments) compete()
             const reset = r.run(chain, ["api"], "reset", conflictDuringArguments ? [hold.promise] : [], ctx,
                 { mutationScopeDepth: 1, repair: true })
             if (conflictDuringArguments) compete()
             hold.resolve()
-            assert.equal(await reset, undefined)
-            assert.deepEqual(events, ["reset"])
-            assert.equal(r.getErrors(chain, ["api"], ctx), null)
-            assert.equal(r.getErrors(chain, ["api", "config"], ctx), null)
+            assert.equal(await reset, child)
+            assert.deepEqual(events, [])
+            assert.equal(r.getErrors(chain, ["api"], ctx), child)
+            r.repairPath(chain, ["api", "config"], ctx)
+            assert.equal(r.run(chain, ["api"], "reset", [], ctx, { mutationScopeDepth: 1, repair: true }), undefined)
             mutate(chain, ["api", "config"], "work", ctx)
             assert.deepEqual(events, ["reset", "config"])
             assert.equal(ctx.execution.fatalError, null)
@@ -490,7 +491,7 @@ describe("hierarchical scopes and placement recovery", () => {
     })
 
     for (const pending of [false, true]) {
-        it(`preserves the original poison when restoration storage fails, pending=${pending}`, async () => {
+        it(`clears status without restoring physical storage, pending=${pending}`, async () => {
             const ctx = context(), hold = Promise.withResolvers()
             const cause = new Error("restore refused")
             let refuse = false
@@ -508,10 +509,8 @@ describe("hierarchical scopes and placement recovery", () => {
             const repair = r.repairPath(chain, ["item"], ctx)
             hold.resolve()
             await entry
-            assert.equal((await repair).cause, cause)
-            assert.equal(await r.lookupPath(chain, ["item"], ctx), poison)
+            assert.equal(await repair, undefined)
             refuse = false
-            await r.repairPath(chain, ["item"], ctx)
             assert.equal(await r.lookupPath(chain, ["item", "value"], ctx), 1)
         })
     }
@@ -616,7 +615,9 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.deepEqual(new Set(mutate(chain, ["api"], "reset", ctx).errors), new Set(collected.errors))
         assert.deepEqual(events, ["config"])
         assert.equal(r.repairPath(chain, ["api"], ctx), undefined)
-        assert.equal(r.getErrors(chain, [], ctx), null)
+        assert.deepEqual(new Set(r.getErrors(chain, [], ctx).errors), new Set([db, config]))
+        r.repairPath(chain, ["api", "db"], ctx)
+        r.repairPath(chain, ["api", "config"], ctx)
         mutate(chain, ["api"], "reset", ctx)
         assert.deepEqual(events, ["config", "reset"])
     })
@@ -864,6 +865,8 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(r.lookupPath(outer, ["chain", "group"], ctx), old)
         assert.deepEqual(new Set(r.getErrors(chain, ["group"], ctx).errors), new Set([old, child]))
         assert.equal(r.repairPath(chain, ["group"], ctx), undefined)
+        assert.equal(r.getErrors(chain, [], ctx), child)
+        r.repairPath(chain, ["group", "api"], ctx)
         assert.equal(r.getErrors(chain, [], ctx), null)
     })
 
@@ -899,7 +902,8 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(r.getErrors(chain, ["api"], ctx), old)
         r.repairPath(chain, ["api"], ctx)
         assert.equal(r.getErrors(chain, ["api"], ctx), null)
-        assert.equal(r.repairPath(rejected, [], ctx), conflict)
+        assert.equal(r.repairPath(rejected, [], ctx), undefined)
+        assert.equal(r.getErrors(rejected, [], ctx), conflict)
     })
 
     it("keeps pending sibling frontier storage bounded while unrelated work finishes", () => {

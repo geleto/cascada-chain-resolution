@@ -1,5 +1,7 @@
 # Repair own-path poison without rollback
 
+**D01 implementation:** the current runtime uses exact-path status clearing, with failed managed native work still discarded before adoption. See [the implementation and evidence](docs/audit-report.md#d01---exact-path-status-repair-implemented). The streaming modes and positional policies below remain future work.
+
 Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes sequential-stream positional flags and failed mutating sort's Array-path status in every mode, but excludes ordinary complete-mode Array Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
 
 ## 1. Contract

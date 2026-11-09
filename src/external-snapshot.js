@@ -170,7 +170,8 @@ function captureSnapshotPlacement(owner, key, operationContext, type = metadata.
     const placement = capturePlacement(owner, key, operationContext)
     return placement.sourceVersion?.pendingPresence ? { present: true, value: errors.validationError(
         "External snapshots require settled property presence", operationContext,
-        errors.ERROR_KIND.InvalidExternalSnapshot) } : placement
+        errors.ERROR_KIND.InvalidExternalSnapshot) } : { ...placement,
+            value: placement.ownFailure ?? placement.value, present: Boolean(placement.ownFailure) || placement.present }
 }
 
 export { captureSnapshotPlacement, captureExternalValue, assembleExternalSnapshot, snapshotExternalValue }

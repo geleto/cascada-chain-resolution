@@ -5,7 +5,7 @@ import * as steps from "./internal-step.js"
 import * as values from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as properties from "./language-properties.js"
-import { observePromiseVersion } from "./property-versions.js"
+import { observePromiseVersion, placementValue, placementPresent } from "./property-versions.js"
 import { captureContainerStructure, defineCopyProperty, orderRecordKeys } from "./placement-structure.js"
 
 // Capture records contain edges, shape and admitted facts, never source containers.
@@ -83,10 +83,11 @@ class ManagedCapture {
     consume(placement, visit) {
         const { owner } = this
         const { operationContext } = owner
-        return values.isPending(placement.value, operationContext)
+        const value = placementValue(placement)
+        return values.isPending(value, operationContext)
             ? observePromiseVersion(placement.value, placement.sourceVersion, operationContext,
-                (value, version) => visit(value, version.present !== false), owner)
-            : visit(placement.value)
+                (value, version) => visit(value, placementPresent(version)), owner)
+            : visit(value)
     }
 
     walk(value, receive) {
@@ -149,7 +150,7 @@ class ManagedCapture {
             const waits = []
             for (const key of keys) {
                 const placement = this.inspect(() => this.placement(value, key, facts))
-                if (placement.present !== true) { visit(undefined, key, false); continue }
+                if (!placementPresent(placement)) { visit(undefined, key, false); continue }
                 const readiness = this.consume(placement, (child, present) => visit(child, key, present))
                 if (values.isPending(readiness, operationContext)) waits.push(readiness)
             }

@@ -89,7 +89,7 @@ describe("Chain root state", () => {
         const outcome = assignPath(chain, ["key"], 1, testContext)
         expect(outcome).to.be(failure)
         expect(outcome.kind).to.be(runtime.ERROR_KIND.ChainValueFailed)
-        expect(chain._state.value).to.be(outcome)
+        expect(readPath(chain, [], testContext)).to.be(outcome)
     })
 
     it("handles number and string roots across every operation", () => {
@@ -127,11 +127,11 @@ describe("Chain root state", () => {
 
             const assignedChild = new Chain(primitive, testContext)
             assignPath(assignedChild, ["child"], 1, testContext)
-            expect(assignedChild._state.value instanceof Error).to.be(true)
+            expect(readPath(assignedChild, [], testContext) instanceof Error).to.be(true)
 
             const deletedChild = new Chain(primitive, testContext)
             deletePath(deletedChild, ["child"], testContext)
-            expect(deletedChild._state.value instanceof Error).to.be(true)
+            expect(readPath(deletedChild, [], testContext) instanceof Error).to.be(true)
         }
     })
 

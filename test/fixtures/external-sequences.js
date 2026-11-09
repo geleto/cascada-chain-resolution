@@ -129,17 +129,14 @@ class Model {
         if (kind === "repair" || command.repair) {
             if (command.repair) command.repairState = state.guard !== null ? "managed-poison" :
                 state.own[scope] !== null ? "own-poison" : scope === "api" && this.subtree(state).length ? "child-poison" : "healthy"
-            // Root repair restores the root placement and clears covered external poison; it
-            // leaves other managed placements and other managed guards unchanged.
-            if (scope === "root") {
-                for (const name of ["api", ...CHILDREN]) state.own[name] = null
-                return "u"
-            }
+            // Root repair changes only root status; resource statuses live at
+            // their selected canonical paths and require their own repair.
+            if (scope === "root") return "u"
             if (scope !== "api" && state.guard !== null) return this.errors([state.guard])
             const blocker = scope === "api" ? null : state.own.api
             if (scope === "api") state.guard = null
             if (blocker !== null) return this.errors([blocker])
-            for (const name of scope === "api" ? ["api", ...CHILDREN] : [scope]) state.own[name] = null
+            state.own[scope] = null
             if (kind === "repair") return "u"
         }
         if (kind === "errors") {

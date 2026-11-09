@@ -220,7 +220,7 @@ describe("supported thenables", () => {
         const chain = new runtime.Chain({}, ctx)
         const failure = runtime.assignPath(chain, ["then"], ready(() => {}), ctx)
         assert.equal(failure.kind, errors.ERROR_KIND.PropertyValidation)
-        assert.equal(chain._state.value.then, failure)
+        assert.equal(runtime.lookupPath(chain, ["then"], ctx), failure)
         const storedError = errors.validationError("stored", ctx, errors.ERROR_KIND.PropertyValidation)
         assert.equal(runtime.assignPath(chain, ["then"], ready(storedError), ctx), undefined)
         assert.equal(chain._state.value.then, storedError)

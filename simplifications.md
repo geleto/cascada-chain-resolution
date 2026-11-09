@@ -1,17 +1,19 @@
 # Simplification review
 
-Reviewed 2026-11-05. Current behavior remains governed by
-[data limitations](docs/data-limitations.md). This first pass inspected the runtime
-and made local reductions, which were reviewed and tested. It did not adequately
-challenge the existing architecture and does not establish that substantial
-simplifications are exhausted. The refreshed
-[coverage and simplification search tree](docs/coverage-tree.md#simplification-search-tree)
-defines the still-open structural investigation across module boundaries.
+**Status, 2026-11-09: no simplification awaits a user decision.** This file records
+implemented changes, rejected or reverted alternatives, and possible future
+investigations. Separate future plans are not unfinished audit decisions.
+
+Retained design comparisons from 2026-11-05/06. The
+[audit report](docs/audit-report.md) owns current decision status, coverage and
+verification; [data limitations](docs/data-limitations.md) owns runtime contracts.
+These evaluated alternatives do not establish architectural minimality. The
+[search tree](docs/coverage-tree.md#simplification-search-tree) tracks further work.
 
 ## Structural review — 2026-11-05
 
-The follow-up starts from the existing dirty tree and preserves the initial
-changes below. C01–C15 are current responsibilities; F01–F05 remain future work.
+This follow-up preserved the existing local simplifications. C01–C15 are current
+responsibilities; F01–F05 remain future work.
 The findings here concern implementations, not changes to those contracts.
 
 ### Capture construction (S1.1; C02, C03, C06, C11, C14)
@@ -51,7 +53,7 @@ authoritative placement alongside the independent result and publication fact.
 A failed operation and successful assignment of poison are different outcomes.
 The previous optional-placement convention encoded that difference implicitly.
 A transient failure fact now identifies producer failure; normalization consumes
-it while attaching recovery. Blocked native operations remain result-only and
+it while publishing own failure status (now using D01 placement metadata). Blocked native operations remain result-only and
 do not invent a receiver publication. Publication releases its protection before
 an independent pending result, and the final coordinator drops the completed
 placement outcome before waiting for that result.
@@ -97,7 +99,7 @@ These findings reject particular alternatives, not entire search branches.
 
 | Search | Smaller model examined | Evidence and remaining boundary |
 | --- | --- | --- |
-| S1.2: logical producers | Use the source version directly for every copied/backing destination. | Backing producers already use ordinary placement-version publication; their extra object projects physical indexes through live owner ranges. Copied delivery captures one completion independently of later source-version writes. Direct sharing would expose later value, presence or recovery to earlier copies. An immutable-version redesign must replace gate and mutation-version authority together; no complete protocol deletion was established here. |
+| S1.2: logical producers | Use the source version directly for every copied/backing destination. | Backing producers already use ordinary placement-version publication; their extra object projects physical indexes through live owner ranges. Copied delivery captures one completion independently of later source-version writes. Direct sharing would expose later value, presence or own failure status to earlier copies. An immutable-version redesign must replace gate and mutation-version authority together; no complete protocol deletion was established here. |
 | S1.3 / S4.3: consumer capture | Use one captured graph/demand traversal for remaps, searches, join, sort and flat. | All already reach the same guarded placement-subscription core. Eager complete capture inspects unused failing search positions and object interiors that conversion does not consume. Serial capture delays `includes` behind an earlier unknown comparison. Lazy presence, depth-limited flattening and complete Error collection would remain policies in a larger dispatcher. |
 | S2.2: placement commit | Replace storage/structure/edge/counter callbacks with one transition record. | `preparePropertyCommit` already derives these updates from one before capture, reusing the required storage descriptor. Detached versions retain structural authority but no live topology authority. Optional cache writes and required writes already use the same commit with different failure contracts. Packaging the callbacks added retained source state without deleting a transition. |
 | S3.2: route facts | Derive scope, provenance and metadata selection only from the final selected node. | The fixed issuance scope establishes ordering before keys settle; normalized keys cannot recover original dynamic provenance. Consumed depth and canonical nodes already live on one route. Earlier metadata views cannot be recaptured from current state after a wait. |
@@ -113,45 +115,18 @@ checks protect supported behavior. Source rewriting tests remain strict about
 their own instrumentation inputs; these are verification controls, not added
 runtime interface defenses.
 
-The first structural pass stopped too early. Its rejected alternatives did not
-justify concluding that substantial current-semantic improvements required a new
-producer/layout design or contract decision. The broader pass below supersedes
-that conclusion; the earlier prototype results remain evidence only about the
-specific alternatives tried.
-
 ### Structural verification
 
-Focused publication-traced batches passed for capture, snapshot identity,
-mutation/repair, publication failure and the shared instrumentation fixtures.
-Fourteen affected capture/mutation/disposal safeguards detect violations,
-including the new prototype-release fault. All 278 source edits in the 261-entry
-safeguard registry match the final source. Independent review caught the snapshot
-reader's prototype retention; five permanent GC cases now cover fresh/prebuilt
-key and descriptor failures plus a healthy retention control.
-Broad verification:
-
-- Final normal suite: **6,187 passing**.
-- All nine required enlarged checks passed with publication tracing and
-  `CASCADA_SEQUENCE_SEEDS=1600`: preparation/lifecycle, placement, Array, nested,
-  external, boundary, pending-boundary, receiving/invocation and Promise-key
-  histories. Completed reports contain no failed or skipped cases. This includes
-  12,800 pending-boundary tests and 305,600 receiving/joint histories.
-- Final publication-traced suite: **6,187 passing**.
-- Full publication-traced conflict matrix: **93,636 cases / 280,908 executions**,
-  covering all 2,601 command triples and all three harness modes.
-- Markdown relative-file links and `git diff --check` pass.
-
-The normal suite was rerun after removing the obsolete capture module. Enlarged
-semantic runs were retained across that code-only move; the final instrumentation
-and fault checks target the new module locations. Interrupted development runs
-are not counted as passing verification. No full publication-pair product is
-claimed; its bounded default sample runs in both full suites, alongside the
-independent generated models.
+Historical final normal/traced suites each passed **6,187 tests**. All nine
+generated families at 1,600 seeds and the full traced conflict matrix passed;
+the full publication-pair product was not run in this pass. Fourteen affected
+safeguards had semantic witnesses; five GC cases cover the corrected snapshot
+prototype retention. These are outcomes for that batch, not fresh current-source
+acceptance. Later verification is consolidated in the audit report.
 
 ## Implementation-wide review — 2026-11-06
 
-This pass reopened the review after the first structural pass covered too few
-actual implementation paths. It followed issuance, admission, selection,
+This pass followed issuance, admission, selection,
 construction, publication, observation and release across all 43 runtime modules.
 The earlier capture/outcome changes remain; this pass additionally removes the
 following state and protocols without changing supported behavior.
@@ -174,18 +149,17 @@ when combining physical candidates and overlays.
 
 This removes the duplicated version store, its mirroring initialization walk,
 and the consistency obligation between stores. Live publication and reactivation
-share `activatePlacement`, including copied-delivery and recovery retention.
-Optional counter edges, incoming occurrences and hidden recovery parents remain
-separate projections: each answers a different bounded query, not another copy
-of the same forward version table. The pending-append fixture counts the one
-maintained store once and still independently counts parent links, owner visits,
+share `activatePlacement`, including copied delivery. Optional counters and
+incoming occurrences answer different bounded queries; neither duplicates the
+forward version table. D01 subsequently removed hidden recovery parents and uses
+ordinary relationships for data retained under failure status. The pending-append
+fixture counts the one maintained store once and independently counts parent links, owner visits,
 subscriptions and captured memberships.
 
 The prototype exposed an implicit-presence gate update; existing structural and
 Array histories detected it. Version creation and updates now canonicalize
-presence to a Boolean. Independent review also preserved recovery cleanup after
-copied-delivery activation, since activation can synchronously publish a completed
-delivery. Parent/storage verification still reconstructs expected data from
+presence to a Boolean. Copied-delivery activation can synchronously publish a
+completed delivery; independent parent/storage checks cover that transition. Parent/storage verification still reconstructs expected data from
 independent descriptors and bounds. No production test adapter was introduced.
 
 ### One staged identity record per import segment (S1, S6, S8)
@@ -262,205 +236,41 @@ lives in the storage oracle, rather than remaining a runtime export.
 
 These findings justify the retained changes and reject the specific alternatives
 listed. They do not prove architectural minimality. Further work should propose
-and test a smaller invariant against these concrete flows; contract decisions
-below remain distinct from current-semantic implementation improvements.
+and test a smaller invariant against these concrete flows. The resolved follow-up
+decisions below are separate from these implementation improvements.
 
 ### Verification for the broader batch
 
-Focused admission, Array, metadata, parent/retirement and publication tests pass,
-including the prototype's initially failing structural histories. Final normal
-and publication-traced suites each pass **6,189 tests**. The first traced run
-hit Mocha's two-second timeout in the portable VM-loading test under concurrent
-verification load; its isolated rerun passed. The complete traced rerun used the
-same 30-second Mocha allowance as the safeguard runner, without changing test
-assertions or the fixtures' own subprocess deadlines.
+Historical normal/traced suites each passed **6,189 tests**, along with all nine
+1,600-seed generated families and the full traced conflict matrix. The publication
+matrix ran only its bounded suite sample. The first traced run hit a two-second
+VM-loading timeout; the complete rerun used the safeguard runner's 30-second
+allowance without changing assertions or child deadlines. Changed safeguards
+produced their intended witnesses. These results precede the whole-project audit;
+its report and manifests contain the later complete verification.
 
-All nine enlarged checks passed with publication tracing and
-`CASCADA_SEQUENCE_SEEDS=1600`: preparation/lifecycle, placement, Array, nested,
-external, boundary, pending-boundary, receiving/invocation and Promise-key.
-There were no failed or skipped generated cases. Reports include:
+## Resolved follow-up decisions
 
-- Preparation/lifecycle: 14,528 programs and 43,584 harness runs.
-- Placement: 6,400 cases.
-- Array, nested and external: 9,600 programs and 28,800 runs each.
-- Boundary: 51,200 active replays plus 128 retirement programs.
-- Pending boundary: 12,800 passing tests.
-- Receiving/invocation: 305,600 receiving and joint key/data histories.
-- Promise keys: 9,602 programs and 28,806 runs.
+The [audit report](docs/audit-report.md) is the single decision record:
 
-The full traced conflict matrix passed **93,636 cases / 280,908 executions**,
-covering all 2,601 command triples and all three harness modes. Both complete
-suites also include the bounded publication-pair sample; no separate full
-publication-pair product is claimed.
+- [D01](docs/audit-report.md#d01---exact-path-status-repair-implemented): exact-own
+  status repair is implemented. The [repair plan](repair-simplification-plan.md)
+  retains the future streaming and positional policies.
+- [D02](docs/audit-report.md#d02---context-import-already-registers-the-compilers-external-resource-tree):
+  context import already registers external resources. Retain checks for access
+  that began before context initialization.
+- [D03](docs/audit-report.md#d03---imported-managed-originals-are-protected-owned-storage-remains-writable):
+  imported originals are protected; retain physical writes to runtime-owned storage.
+- [D04](docs/audit-report.md#d04---query-completion-simplified-producer-redesign-remains-unproven):
+  query completion remains simplified. Two producer experiments were reverted:
+  one kept the same bookkeeping with extra callbacks; the other violated pending
+  history bounds. There is no pending implementation task for these candidates.
 
-Changed admission, Array, placement/recovery and metadata safeguard faults all
-produce their intended witnesses. All **279 source edits in 263 safeguard
-entries** match current code. The final suites include the retained GC and work
-controls, including the new metadata callback/diagnostic-stack cases. All 751
-checked relative Markdown links resolve, and `git diff --check` passes.
+The selected [persistent Array layout](array-layout-approaches.md) remains future
+work with its own streaming and failure-policy obligations. Its net simplification
+must be demonstrated by replacing the existing paths and meeting their work bounds.
 
-Final logs are in `%TEMP%/cascada-wide-verification`. Earlier verification sections
-are historical. No supported contract was changed, and the original dirty work
-was preserved. Independent review found no further material concern in the
-combined representation or completion paths; this is a completed structural
-review, not a proof that every possible future architecture is minimal.
-
-## Decisions for later review
-
-### 1. Prioritize the existing status-only repair revision
-
-The largest identified structural reduction is already specified in
-[repair-simplification-plan.md](repair-simplification-plan.md), alongside
-[the Chain modes plan](poison-policy-plan.md). It is not a new proposal or a
-description of production behavior.
-
-Today, failed managed mutations preserve a predecessor for repair. Recovery
-storage consequently participates in placement capture, preservation parents,
-COW, retirement, and publication. External repair also resets a covered subtree.
-The planned model keeps current data plus an own-path failure status; repair
-clears that status. This can remove repair-only predecessor storage and the
-associated retention and restoration paths, and replace subtree resets with
-exact-own status updates.
-
-**Decision:** make this planned semantic cutover the next implementation task,
-or retain today's rollback-style repair for now. It must land with the relevant
-production contract and failure-policy updates. Removing recovery storage alone
-would break supported repair. Native receiver isolation, immutable captures,
-imported protection, and copies required by pending publication remain necessary.
-
-### 2. Consider requiring external registration before first use
-
-`ExternalAccess` retains external path identities and rechecks them after waits
-when the execution's registration revision changes. `path-operation.js` carries
-that obligation across managed snapshot paths. These checks implement the
-documented late first-registration exception: a previously unregistered root,
-intermediate identity, or receiver may become registered elsewhere while access
-is suspended.
-
-If host/compiler integration instead guarantees registration before a resource's
-first use, the runtime can remove `authorityIdentities`, `authorityRevision`,
-`_externalRegistrationRevision`, and the retained-prefix revalidation path.
-Canonical authority, duplicate-registration validation, external reservations,
-and capability-escape checks still remain.
-
-**Decision:** is late registration after first use an application requirement?
-If it is, keep the current revision-gated mechanism. If not, narrow the host
-contract explicitly and remove this machinery without introducing another
-enforcement registry. These are supported-behavior checks today, not misplaced
-defenses against forged interfaces.
-
-### 3. Establish which historical design material must remain active
-
-The repository contains current contracts, selected future plans, superseded
-alternatives, phase reports, and manual probes. That makes architectural status
-harder to determine than the source alone. The README still described implemented
-identity work as planned; that stale paragraph has been removed.
-
-**Decision:** identify which historical reports/probes remain required review
-evidence. Then archive superseded material behind a short history index, preserving
-links from active contracts and tests. Keep the selected root plans visible and
-clearly separate from current behavior. Do not delete executable witnesses or
-promote planned behavior into the production contract during that cleanup.
-
-The already selected [persistent Array layout](array-layout-approaches.md) is
-another major architectural workstream. Its net simplification is unproven: it
-also introduces streaming and failure-policy responsibilities. It should not be
-sold as a line-count reduction until its implementation replaces the old paths
-and meets the documented work bounds.
-
-### 4. Canonical logical storage instead of managed physical writes (S7.3)
-
-The current placement commit reconciles physical storage with authoritative
-versions, including required writes, optional Promise-cache synchronization,
-Array backing projections and stale-storage masking. Making all managed writes
-logical-only could remove required-storage preflight/write branches and much
-storage/overlay reconciliation; import and native assembly would become the
-remaining physical boundaries.
-
-That is a contract change. A supported managed Proxy can reject an element write
-without changing its storage; today's requested mutation then fails and retains
-its repair baseline. Eliminating that host write would make the same operation
-succeed. Optional cache refusal already has the narrower, nonpoisoning behavior
-and cannot justify changing required writes.
-
-Alternatives are to retain required physical writes, explicitly make managed
-storage an immutable import representation, or preserve a compatibility write
-path. The last alternative keeps the complexity this proposal aims to remove.
-Recommendation: defer this cutover until its observable storage/failure contract
-is chosen explicitly, and evaluate it together with the Array layout and repair
-revisions. No current-semantic deletion of required write behavior is authorized.
-
-## Initial local-pass changes (historical)
-
-- **Array length:** derive whether a history node is a question from its existing
-  delivery callback; remove the redundant `question` flag and its duplicate
-  callback check.
-- **Array operations:** specialize the single-use generic sparse-remap helper
-  directly in `reverse`; put search-bound normalization beside the branches that
-  consume it, removing unreachable cases and two helpers.
-- **Array construction:** remove duplicate backing-owner registration already
-  performed by the backing constructor, plus an unused import.
-- **Copied delivery:** store versions directly in the delivery membership set,
-  removing the separate member record's backlink to its version.
-- **Counter retirement:** let `refcounts.js` own projection cleanup and reuse its
-  backing-membership release function. Parent retirement no longer knows the
-  counter index's internal fields. Update the three affected fault-injection
-  entries to follow the moved mechanism.
-- **Snapshot capture:** use the existing snapshot-placement reader for full-graph
-  property capture, removing a second pending-presence validation path.
-- **Managed invocation:** select the invocation function once and share argument
-  forwarding between observation and mutation.
-- **README:** remove stale migration status and distinguish native Error data
-  from recoverable poison.
-
-Each retained edit removes duplicated state, a needless abstraction, or knowledge
-at the wrong module boundary. No public API or architecture contract was changed.
-
-## Requirements retained, implementations still open to review
-
-- Complete incoming placements describe topology; counter parents describe an
-  acyclic projection; preservation parents keep hidden repair baselines alive.
-  Their facts must remain distinguishable; shared maintenance is still a search
-  candidate, not ruled out by that distinction.
-- External reservations order host effects. Metadata versions preserve historical
-  poison queries and allow repair to overwrite pending outcomes. A replacement
-  must express both obligations without unnecessary duplication or serialization.
-- Observation and mutation traversal differ in COW, poison placement, rollback,
-  and publication. This does not rule out a shared captured-location protocol
-  with operation-specific effects; it rules out merely hiding the current walkers
-  behind flags and callbacks.
-- `includes` can finish on any proved match; ordered searches must establish the
-  winning index. Different result reducers may still share capture and demand
-  machinery.
-- Physical Array backing, logical producers, and captured length questions differ
-  when writeback fails or structural publication remains pending.
-- Source-clearing assignments and distinct release/close points protect collection
-  through pending callbacks and unformatted Error stacks. They are not cosmetic.
-- Nested fatal guards prevent internal defects from entering language recovery.
-  Execution binding and closed-entry checks protect supported isolation and
-  authority. No substantial unsupported-misuse defense was found to remove.
-
-Changing recovery-parent key sets into counts was considered and rejected: it
-would exchange bookkeeping forms without a clearer invariant. Sharing metadata
-ancestor capture between entry and ordinary operations was likewise rejected:
-the small reduction would couple entry setup to operation ownership.
-
-## Initial local-pass verification (historical)
-
-Focused test batches cover the changed mechanisms, including publication
-instrumentation, ownership and retention, Array behavior, snapshots, and
-invocation failures. Final results:
-
-- Full suite: **6,182 passing**; final full suite with publication tracing:
-  **6,182 passing**.
-- All nine required enlarged checks passed with `CASCADA_SEQUENCE_SEEDS=1600`
-  and publication tracing: preparation/lifecycle, placement, Array, nested,
-  external, boundary, pending-boundary, receiving/invocation, and Promise-key
-  histories. No generated cases failed or were skipped.
-- All three counter-retirement fault injections still detect removed cleanup.
-  All 102 safeguard edits targeting changed modules match current source.
-- `git diff --check` passed.
-
-For subsequent review work, batch related simplifications before testing and
-reserve the full validation pass for the completed batch. Assess each edit for
-clarity as it is made; do not rerun tests for every small cleanup.
+Source-clearing, separate last-use points, counter projections, effect reservations,
+historical metadata, and distinct search-completion rules retain their documented
+duties. New proposals must simplify the mechanisms that meet those duties;
+shared syntax alone does not establish a simpler design.

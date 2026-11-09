@@ -1,3 +1,4 @@
+import { readPath } from "./support.js"
 import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
 import * as arrayViews from "../src/array-view.js"
@@ -570,7 +571,7 @@ describe("ArrayView", () => {
         const result = run(chain, [], "push", [3], testContext, { repair: false, mutationScopeDepth: 0 })
 
         expect(errorCause(result)).to.be(failure)
-        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [], testContext)).to.be(result)
         expect([...logicalArrayValues(view, testContext)]).to.eql([1, 2])
         expect(exportValue(source, [], testContext)).to.eql([1])
     })

@@ -98,7 +98,8 @@ describe("external binding commit", () => {
             assert.equal(failure.errorContext, secondContext.errorContext)
             assert.equal(runtime.getErrors(first, [], ctx), null)
             assert.equal(runtime.lookupPath(first, ["identity", "value"], ctx), 7)
-            assert.equal(runtime.repairPath(second, [], ctx), failure)
+            assert.equal(runtime.repairPath(second, [], ctx), undefined)
+            assert.equal(runtime.getErrors(second, [], ctx), failure)
         })
     }
 

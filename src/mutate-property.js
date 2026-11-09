@@ -47,7 +47,7 @@ function assignManagedPath(
                     return propertyVersions.resolvePlacementTransition(
                         propertyVersions.capturePlacement(target.parent, target.key, operationContext),
                         operationContext, before => {
-                            const position = before.present ? before.position : Infinity
+                            const position = propertyVersions.placementPresent(before) ? before.position : Infinity
                             return internalSteps.continueGraphTransition(prepareAssignment(placement, target.key, operationContext),
                                 operationContext, resolved => {
                                     if (errorUtils.isPoisonError(resolved)) return resolved
@@ -163,7 +163,7 @@ function deleteManagedPath(
                 // the preceding transition left anything for this delete to write.
                 const presence = propertyVersions.resolvePlacementTransition(
                     propertyVersions.capturePlacement(target.parent, target.key, operationContext),
-                    operationContext, placement => placement.present)
+                    operationContext, placement => propertyVersions.placementPresent(placement))
                 propertyVersions.deleteProperty(target.parent, target.key, operationContext)
                 if (languageValues.isPending(presence, operationContext)) target.publication.addPending(presence)
                 else target.publication.record(presence)

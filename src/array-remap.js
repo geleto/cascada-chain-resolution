@@ -148,7 +148,7 @@ function resolveDenseRemapPresence(remap, operation) {
         const placement = remap[key]
         if (!propertyVersions.isPropertyPlacement(placement)) continue
         const pending = internalSteps.continueGraphTransition(placement.resolvePresence(), operation.operationContext, () => {
-            if (placement.present === false) remap[key] = undefined
+            if (!propertyVersions.placementPresent(placement)) remap[key] = undefined
         }, undefined, operation)
         if (languageValues.isPending(pending, operation.operationContext)) waits.push(pending)
     }

@@ -64,7 +64,7 @@ for (const selection of ["unregistered", "invalid-prefix", "child", "invalid-suf
         const poison = await native ?? null
         assert.equal(await earlier, poison, "Earlier captures preserve the exact native Error")
         checkHistory(source)
-        assert.equal(r.getErrors(source, ["api"], ctx), failed ? poison : null)
+        assert.equal(r.getErrors(source, ["api"], ctx), failed || selection === "unregistered" ? poison : null)
         assert(counts.visits > count && counts.allocations > count, "Work hooks must execute")
         if (previous) for (const metric of ["visits", "allocations", "forwards"])
             assert(counts[metric] < previous[metric] * 5,

@@ -6,6 +6,7 @@ import { markPromiseHandled } from "./thenable-subscription.js"
 import * as steps from "./internal-step.js"
 import * as values from "./language-values.js"
 import * as errors from "./error.js"
+import { placementPresent } from "./property-versions.js"
 
 const UNREAD = 0, PRESENCE_PENDING = 1, PRESENCE_READY = 2, VALUE_PENDING = 3, VALUE_READY = 4, VALUE_CLOSED = 5
 
@@ -180,7 +181,7 @@ class FlatCapture {
                 this.follow(result, placement => {
                     if (errors.isPoisonError(placement)) this.fail(record, placement)
                     else {
-                        record.present = placement.present !== false
+                        record.present = placementPresent(placement)
                         if (record.state === PRESENCE_PENDING) record.state = PRESENCE_READY
                         if (this.root.depth <= 1) record.input = undefined
                     }

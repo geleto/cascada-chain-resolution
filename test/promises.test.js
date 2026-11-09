@@ -1,3 +1,4 @@
+import { logicalProperty } from "./support.js"
 import { getPromiseVersion } from "./verify-storage.js"
 import { poison } from "./support.js"
 import {
@@ -249,6 +250,7 @@ describe("Promise versions and lookupPath", () => {
         const detachedChain = new Chain(detachedRoot, testContext)
         assignPath(detachedChain, ["value"], detachedPending.promise, testContext)
         const detachedVersion = metaOf(detachedRoot, testContext).outgoingPlacements.get("value")
+        const captured = lookupPath(detachedChain, ["value"], testContext)
         assignPath(detachedChain, ["value"], "replacement", testContext)
 
         expect(getPromiseVersion(detachedRoot, "value", testContext)).to.be(undefined)
@@ -258,6 +260,7 @@ describe("Promise versions and lookupPath", () => {
         await flushMicrotasks()
 
         expect(getPromiseVersion(detachedRoot, "value", testContext)).to.be(undefined)
+        expect(await captured).to.be("detached")
         expect(detachedVersion.value).to.be("detached")
         expect(detachedRoot.value).to.be("replacement")
     })
@@ -840,7 +843,7 @@ describe("Promise versions and lookupPath", () => {
         deferredBranch.reject("fork boom")
         await flushMicrotasks()
 
-        expect(root.branch instanceof Error).to.be(true)
+        expect(logicalProperty(root, "branch", testContext) instanceof Error).to.be(true)
         const rootError = readPath(new Chain(root, testContext), ["branch"], testContext)
         expect(rootError instanceof Error).to.be(true)
         expect(rootError.message).to.be("fork boom")
@@ -940,8 +943,8 @@ describe("Promise versions and lookupPath", () => {
         deferredBranch.reject("nope")
         await flushMicrotasks()
 
-        expect(root.branch instanceof Error).to.be(true)
-        expect(root.branch.message).to.be("nope")
+        expect(logicalProperty(root, "branch", testContext) instanceof Error).to.be(true)
+        expect(logicalProperty(root, "branch", testContext).message).to.be("nope")
     })
 
     it("turns a promised primitive intermediate into Error", async () => {
@@ -953,8 +956,8 @@ describe("Promise versions and lookupPath", () => {
         deferredBranch.resolve(7)
         await flushMicrotasks()
 
-        expect(root.branch instanceof Error).to.be(true)
-        expect(root.branch.message).to.be(
+        expect(logicalProperty(root, "branch", testContext) instanceof Error).to.be(true)
+        expect(logicalProperty(root, "branch", testContext).message).to.be(
             "Cannot access property through missing or primitive value",
         )
     })
@@ -968,8 +971,8 @@ describe("Promise versions and lookupPath", () => {
         deferredBranch.resolve(null)
         await flushMicrotasks()
 
-        expect(root.branch instanceof Error).to.be(true)
-        expect(root.branch.message).to.be(
+        expect(logicalProperty(root, "branch", testContext) instanceof Error).to.be(true)
+        expect(logicalProperty(root, "branch", testContext).message).to.be(
             "Cannot access property through missing or primitive value",
         )
     })

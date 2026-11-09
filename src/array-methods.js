@@ -553,7 +553,7 @@ function captureArrayWrites(work) {
         observe(placement) {
             if (!work.mutation || published === true) return
             const wait = internalSteps.continueGraphTransition(placement.resolvePresence(), operationContext,
-                () => placement.present !== false)
+                () => propertyVersions.placementPresent(placement))
             if (languageValues.isPending(wait, operationContext)) {
                 if (published === false) published = new IdentityPublication(operationContext)
                 published.addPending(wait)
@@ -857,7 +857,7 @@ function orderedIndexSearch(
                 )
                 if (!placement) continue
                 const comparison = internalSteps.continueGraphTransition(placement.resolveValue(captureIdentity),
-                    invocationWork.operationContext, identity => placement.present !== false &&
+                    invocationWork.operationContext, identity => propertyVersions.placementPresent(placement) &&
                         compareIdentities(identity, searchValue, invocationWork), undefined, invocationWork)
                 if (languageValues.isPending(comparison, invocationWork.operationContext)) {
                     // The final capture needs only its comparison. Unknown

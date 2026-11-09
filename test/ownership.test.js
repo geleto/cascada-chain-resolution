@@ -360,7 +360,6 @@ describe("bounded graph ownership", () => {
                 for (const holder of [root, original, survivor]) runtime.assignPath(holder, [], null, ctx)
                 await new Promise(setImmediate)
                 assert.equal(metaOf(child, ctx).readLeaseCount ?? 0, 0)
-                assert.equal(metaOf(child, ctx).preservationParents, undefined)
                 assert.equal(metaOf(child, ctx).relationshipsActive, false)
             })
         }
@@ -372,8 +371,8 @@ describe("bounded graph ownership", () => {
             const child = { k: 1 }, survivor = new runtime.Chain(child, ctx)
             const source = new runtime.Chain({ then: pending }, ctx)
             // Callable then is an invalid placement value. Failed replacement
-            // retains the old pending value without awaiting it; a second failure
-            // makes that recovery a nested obligation of the later capture.
+            // retains the current pending value without awaiting it; repeated
+            // failure still leaves only one own status for repair to clear.
             if (nested) assert(runtime.isPoisonError(runtime.assignPath(source, ["then"], () => {}, ctx)))
             const entry = runtime.enter(source, ["then"], ctx, true, entered => {
                 assert(runtime.isPoisonError(runtime.assignPath(entered, [], () => {}, ctx)))
@@ -403,14 +402,13 @@ describe("bounded graph ownership", () => {
                 runtime.assignPath(survivor, ["k"], 2, ctx)
                 assert.equal(survivor._state.value, child, "Detached captures leave no read protection")
             } else {
-                for (let i = 0; i < (nested ? 2 : 1); i++) await runtime.repairPath(source, ["then"], ctx)
+                await runtime.repairPath(source, ["then"], ctx)
                 assert.equal(await runtime.lookupPath(source, ["then", "k"], ctx), 1)
             }
             assert.equal(runtime.lookupPath(survivor, ["k"], ctx), 2)
             for (const holder of [source, survivor]) runtime.assignPath(holder, [], null, ctx)
             await new Promise(setImmediate)
             assert.equal(metaOf(child, ctx).readLeaseCount ?? 0, 0)
-            assert.equal(metaOf(child, ctx).preservationParents, undefined)
             assert.equal(metaOf(child, ctx).relationshipsActive, false)
             verifyRefCounts(ctx, source._state, original._state, survivor._state)
         })

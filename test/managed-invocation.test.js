@@ -1040,7 +1040,7 @@ describe("managed invocation", () => {
             { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(mutationFailure)).to.be(failure)
-        expect(chain._state.value).to.be(mutationFailure)
+        expect(readPath(chain, [], testContext)).to.be(mutationFailure)
         expect(source.changed).to.be(undefined)
         expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
@@ -1142,7 +1142,7 @@ describe("managed invocation", () => {
             { ...testContext, errorContext: "test run" },
             { repair: false, mutationScopeDepth: 0 },
         ) instanceof Error).to.be(true)
-        expect(invalidChain._state.value instanceof Error).to.be(true)
+        expect(readPath(invalidChain, [], testContext) instanceof Error).to.be(true)
 
         const valid = new Value()
         valid.value = 1
@@ -1311,7 +1311,7 @@ describe("managed invocation", () => {
         completion.reject(failure)
         const rejection = await result.catch(error => error)
         expect(errorCause(rejection)).to.be(failure)
-        expect(chain._state.value).to.be(rejection)
+        expect(readPath(chain, [], testContext)).to.be(rejection)
     })
 
     it("protects an observation receiver through direct rejection", async () => {
@@ -1409,7 +1409,7 @@ describe("managed invocation", () => {
         const failure = await result
 
         expect(failure instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(failure)
+        expect(readPath(chain, [], testContext)).to.be(failure)
     })
 
     for (const shape of ["root", "existing child", "new child", "stored Promise"]) {
@@ -1437,7 +1437,7 @@ describe("managed invocation", () => {
                 const failure = pending ? await result : result
                 expect(failure).to.be.a(runtime.PoisonError)
                 expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
-                expect(chain._state.value).to.be(failure)
+                expect(readPath(chain, [], testContext)).to.be(failure)
                 expect(calls).to.be(0)
                 expect(execution.fatalError).to.be(null)
             })
@@ -1458,7 +1458,7 @@ describe("managed invocation", () => {
         expect(failure).to.be.a(runtime.CompoundPoisonError)
         expect(failure.errors.some(error => error.cause === cause)).to.be(true)
         expect(failure.errors.some(error => error.kind === runtime.ERROR_KIND.InvalidManagedReceiver)).to.be(true)
-        expect(chain._state.value).to.be(failure)
+        expect(readPath(chain, [], testContext)).to.be(failure)
     })
 
     it("preserves non-callable then placements through mutation and export", async () => {
@@ -1489,7 +1489,7 @@ describe("managed invocation", () => {
         } }, { ...testContext, errorContext: "test Chain initialization" })
         const failure = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
-        expect(chain._state.value).to.be(failure)
+        expect(readPath(chain, [], testContext)).to.be(failure)
         expect(reads).to.be(1)
         expect(calls).to.be(0)
     })
@@ -1541,7 +1541,7 @@ describe("managed invocation", () => {
             { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(validationFailure)).to.be(failure)
-        expect(chain._state.value).to.be(validationFailure)
+        expect(readPath(chain, [], testContext)).to.be(validationFailure)
     })
 
     it("poisons a mutation when the mutator throws", () => {
@@ -1566,7 +1566,7 @@ describe("managed invocation", () => {
             { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(mutationFailure)).to.be(failure)
-        expect(chain._state.value).to.be(mutationFailure)
+        expect(readPath(chain, [], testContext)).to.be(mutationFailure)
     })
 
     it("preserves logical identities and prototypes returned by an observation", () => {

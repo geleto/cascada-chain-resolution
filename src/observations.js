@@ -177,7 +177,7 @@ function collectFencedErrors(value, queryWork) {
                 key,
                 queryWork.operationContext,
             )
-            const child = placement.value
+            const child = propertyVersions.placementValue(placement)
 
             if (errorUtils.isPoisonError(child)) {
                 queryWork.found(child)

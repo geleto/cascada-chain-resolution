@@ -67,7 +67,8 @@ export const SAFEGUARDS = [
     {
         id: "native-binding-repair-preserves-causal-result",
         guards: "Failed binding restoration returns its causal result while preserving the old guarded placement.",
-        faults: [edit("src/path-operation.js", "                if (errors.isPoisonError(outcome.result)) return outcome.result\n")],
+        faults: [edit("src/path-operation.js", "if (errors.isPoisonError(outcome.result)) return outcome.result",
+            "if (errors.isPoisonError(outcome.result)) return versions.placementValue(outcome.placement)")],
         witnesses: ["preserves both stores on binding repair preflight failure"],
     },
     {
@@ -79,7 +80,7 @@ export const SAFEGUARDS = [
     {
         id: "native-mutation-preflights-blockers-before-keys",
         guards: "Native mutation consumes its fixed metadata scope before receiver-key selection, preserving blocked Error identity and unused inputs.",
-        faults: [edit("src/path-operation.js", "this.metadata?.blockers(scope, !this.repair), operationContext, select", "undefined, operationContext, select")],
+        faults: [edit("src/path-operation.js", "this.metadata?.blockers(scope, !this.repair, !this.repair), operationContext, select", "undefined, operationContext, select")],
         witnesses: ["at native poison before an unused", "fixed mutation scope's Error collection"],
     },
     {
@@ -97,7 +98,7 @@ export const SAFEGUARDS = [
     {
         id: "pending-key-preserves-recovery-baseline",
         guards: "A new path failure preserves the selected placement's repair baseline across a key wait.",
-        faults: [edit("src/mutations.js", "            recovery = pathRecovery(next, recovery, captured)\n")],
+        faults: [edit("src/mutations.js", "            flagged = pathFailure(next, flagged, captured)\n")],
         witnesses: ["preserves a failed-key repair baseline: native", "keeps Promise-key outcomes invariant across delivery"],
     },
     {
@@ -128,14 +129,14 @@ export const SAFEGUARDS = [
     {
         id: "selection-gate-publishes-new-version",
         guards: "A selection gate publishes the selected placement without inheriting its own unfinished transition.",
-        faults: [edit("src/mutations.js", "value: next, recovery, sourceVersion: undefined", "value: next, recovery")],
+        faults: [edit("src/mutations.js", "value: next, sourceVersion: undefined", "value: next")],
         witnesses: ["matches a sequential model across seeded placement schedules"],
     },
     {
         id: "metadata-captures-issuance-view",
         guards: "Metadata consumers retain their issuance view across later reset and native publication.",
         faults: [edit("src/external-metadata.js", "this.state = this.store.current", "this.state = empty")],
-        witnesses: ["captures a pending failure before a covering reset"],
+        witnesses: ["preserves a pending descendant failure across parent repair"],
     },
     {
         id: "metadata-merges-weighted-representatives",
@@ -147,7 +148,7 @@ export const SAFEGUARDS = [
         id: "metadata-publishes-selected-components",
         guards: "Publishing a metadata version completes its already selected component futures.",
         faults: [edit("src/external-metadata.js", "if (from.b !== empty) merges.push([from.b, field(to, RIGHT)])", "")],
-        witnesses: ["captures a pending failure before a covering reset", "bounds pending selection work and releases completed history"],
+        witnesses: ["preserves a pending descendant failure across parent repair", "bounds pending selection work and releases completed history"],
     },
     {
         id: "failed-placement-capture-releases-owner",
@@ -300,15 +301,15 @@ export const SAFEGUARDS = [
     {
         id: "copy-keeps-discovery-availability",
         guards: "A ready placement copy cannot grant authority excluded by its original availability.",
-        faults: [edit("src/property-versions.js", "if (!writeBack || placement.recovery || placement.discoveryBlocked)",
-            "if (!writeBack || placement.recovery)")],
+        faults: [edit("src/property-versions.js", "if (!writeBack || placement.ownFailure || placement.discoveryBlocked)",
+            "if (!writeBack || placement.ownFailure)")],
         witnesses: ["preserves discovery availability through record-cow"],
     },
     {
         id: "publication-keeps-discovery-availability",
         guards: "Ready entry publication and remapping preserve the placement's discovery restriction.",
-        faults: [edit("src/property-versions.js", "if (!writeBack || placement.promiseBacked || placement.recovery || placement.discoveryBlocked ||",
-            "if (!writeBack || placement.promiseBacked || placement.recovery ||")],
+        faults: [edit("src/property-versions.js", "if (!writeBack || placement.promiseBacked || placement.ownFailure || placement.discoveryBlocked ||",
+            "if (!writeBack || placement.promiseBacked || placement.ownFailure ||")],
         witnesses: ["preserves discovery availability through record-entry"],
     },
     {
@@ -1129,8 +1130,8 @@ export const SAFEGUARDS = [
     {
         id: "existing-poison-blocks-publication",
         guards: "Consuming already-poisoned scope data publishes nothing.",
-        faults: [edit("src/mutations.js", "placement: baseline, result: baseline.value, published: false",
-            "placement: baseline, result: baseline.value, published: true")],
+        faults: [edit("src/mutations.js", "placement: baseline, result: baseline.ownFailure, published: false",
+            "placement: baseline, result: baseline.ownFailure, published: true")],
         witnesses: ["preserves identity when existing poison blocks"],
     },
     {
@@ -1321,15 +1322,7 @@ export const SAFEGUARDS = [
             "Array native equivalence matches shared-ancestor copy-on-write",
         ],
     },
-    {
-        id: "preservation-edges-retain",
-        guards: "An installed recovery baseline stays live while its owning placement is live.",
-        faults: [edit("src/parent-placements.js",
-            "    if (meta?.preservationParents) for (const parent of meta.preservationParents.keys())\n        if (visit(parent) === false) return false\n")],
-        witnesses: [
-            "sort mutation retains descriptor and value failures with ready inputs",
-        ],
-    },
+
     {
         id: "backing-owners-retain",
         guards: "Array backing storage stays live while a registered logical owner uses it.",
@@ -1515,11 +1508,10 @@ export const SAFEGUARDS = [
     },
     {
         id: "restored-blocker-preserves-recovery",
-        guards: "A call blocked by the restored guard preserves that guard's recovery instead of adding another layer.",
+        guards: "A call after repair still propagates ordinary Error data without creating path status.",
         faults: [edit("src/mutations.js", "                if (errorUtils.isPoisonError(baseline.value))\n" +
-            "                    return { placement: baseline, result: baseline.value, published: true }\n")],
-        witnesses: ["preserves a restored guard without another recovery layer: pending=false, combined=true",
-            "preserves a restored guard without another recovery layer: pending=true, combined=true"],
+            "                    return { placement: baseline, result: baseline.value, published: Boolean(originalPlacement.ownFailure) }\n")],
+        witnesses: ["repair-and-call without status preserves no-op identity: Error=true"],
     },
     {
         id: "repair-scope-preflight-preserves-state",
@@ -1528,43 +1520,63 @@ export const SAFEGUARDS = [
         witnesses: ["rejects an invalid repair scope before clearing either store: static, guards=1",
             "rejects an invalid repair scope before clearing either store: computed, guards=2"],
     },
+
+
+
+
+
+    // Own status and payload are independent versioned facts.
     {
-        id: "recovery-forces-copy",
-        guards: "A value retained as a recovery baseline is copied before another owner writes it.",
-        faults: [edit("src/meta.js", "if (meta?.imported || meta?.readLeaseCount || meta?.preservationParents?.size) return true",
-            "if (meta?.imported || meta?.readLeaseCount) return true")],
-        witnesses: [
-            "preserves a failed child's baseline through COW and entry publication",
-        ],
+        id: "capture-preserves-own-status",
+        guards: "Complete captures preserve own status independently of data.",
+        faults: [edit("src/property-versions.js", "ownFailure: version.ownFailure,", "ownFailure: undefined,")],
+        witnesses: ["clears repeated status once without consuming the payload"],
     },
     {
-        id: "recovery-installs-dependency",
-        guards: "Installed recovery becomes a preservation dependency of its owning placement.",
-        faults: [
-            edit("src/parent-placements.js", "    if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)\n"),
-        ],
-        witnesses: [
-            "bounded graph ownership restores recovery descendants before another owner can mutate them",
-            "preserves a failed child's baseline through COW and entry publication",
-        ],
+        id: "external-repair-preserves-children",
+        guards: "Repair clears only selected external own status.",
+        faults: [edit("src/external-metadata.js", "pair(field(value, LEFT), field(this.publication.before, RIGHT))", "value")],
+        witnesses: ["clears external own status without undoing effects or clearing descendants"],
     },
     {
-        id: "recovery-release-unregisters",
-        guards: "Repair, replacement, or owner retirement removes the baseline's preservation parent.",
-        faults: [edit("src/parent-placements.js",
-            "            keys.delete(key)\n            if (!keys.size) parents.delete(owner)\n            if (!parents.size) delete childMeta.preservationParents\n")],
-        witnesses: [
-            "bounded graph ownership preserves recovery introduced after a copied capture",
-        ],
+        id: "repair-clears-own-status",
+        guards: "Repair publishes cleared status over the same data.",
+        faults: [edit("src/mutations.js", "            baseline = { ...baseline, ownFailure: undefined }\n")],
+        witnesses: ["clears repeated status once without consuming the payload"],
     },
     {
-        id: "recovery-activates-baseline",
-        guards: "A preserved baseline delivered or restored while inactive regains its relationships.",
-        faults: [edit("src/parent-placements.js", "        children.add(value)\n        activateRelationships(value, operationContext)\n",
-            "        children.add(value)\n")],
-        witnesses: [
-            "bounded graph ownership restores recovery descendants before another owner can mutate them",
-        ],
+        id: "status-reuses-payload-delivery",
+        guards: "Repeated status changes retain bounded unfinished payload work.",
+        faults: [edit("src/property-versions.js", "if (placement.sourceVersion && !placement.pendingPresence && !placement.sourceVersion.transition &&",
+            "if (false && placement.sourceVersion && !placement.pendingPresence && !placement.sourceVersion.transition &&")],
+        witnesses: ["bounds repeated status changes over one unresolved payload"],
+    },
+    {
+        id: "copied-mutation-publishes-status",
+        guards: "A copied unfinished mutation publishes its resulting own status.",
+        faults: [edit("src/property-versions.js", "ownFailure: structure || promiseVersion.transition || promiseVersion.pendingPresence ?",
+            "ownFailure: structure || promiseVersion.pendingPresence ?")],
+        witnesses: ["preserves queued failure status through an Array copy"],
+    },
+    {
+        id: "status-creation-retains-record-order",
+        guards: "Creating metadata-only failure precedes later sibling creation.",
+        faults: [edit("src/placement-structure.js", "placement.ownFailure && !wasPresent || ")],
+        witnesses: ["orders an absent flagged record placement before a later sibling"],
+    },
+    {
+        id: "status-replacement-retains-record-order",
+        guards: "Replacing a flagged absent property preserves its visible insertion order under broader scopes.",
+        faults: [edit("src/mutate-property.js", "const position = propertyVersions.placementPresent(before) ? before.position : Infinity",
+            "const position = before.present ? before.position : Infinity")],
+        witnesses: ["keeps flagged property order when replaced: scope=0"],
+    },
+    {
+        id: "ready-copied-payload-keeps-destination-order",
+        guards: "Already-delivered copied payloads preserve the destination placement's established order.",
+        faults: [edit("src/property-versions.js", "position: placement.pendingPresence || source.transition ? delivery.placement.position : placement.position ?? delivery.placement.position",
+            "position: delivery.placement.position")],
+        witnesses: ["keeps record order when pending replacement follows entry: ordered"],
     },
 
     // --- Copy-on-write and Array storage --------------------------------------

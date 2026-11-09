@@ -671,7 +671,7 @@ The [propagation probes](docs/array-layout-implementation-findings.md#4-propagat
 
 These are choices within one architecture. A prototype must not preserve separate ready/pending semantic engines or alternate failure policies.
 
-The [implementation findings](docs/array-layout-implementation-findings.md) specify the chosen fact/content separation, sliced ownership, preservation-parent integration, publication baseline, and notification protocol. Their executable probes cover selected cases; the remaining integrated checks are explicit there.
+The [implementation findings](docs/array-layout-implementation-findings.md) specify the chosen fact/content separation, sliced ownership, remaining deferred-input ownership obligations, publication baseline, and notification protocol. Their executable probes cover selected cases; the remaining integrated checks are explicit there.
 
 #### Bounded dependency rules
 

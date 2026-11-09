@@ -287,8 +287,8 @@ function validateReceiver(receiver, operationContext) {
             for (const key of keys) {
                 // Validation must inspect leased data without consuming it.
                 const placement = inspect(() => propertyVersions.capturePlacement(value, key, operationContext))
-                if (placement.present !== true) continue
-                const child = placement.value
+                if (!propertyVersions.placementPresent(placement)) continue
+                const child = propertyVersions.placementValue(placement)
                 const failure = languageProperties.validatePropertyValue(key, child, operationContext,
                     errorUtils.ERROR_KIND.InvalidManagedReceiver)
                 if (failure) errors.add(failure)

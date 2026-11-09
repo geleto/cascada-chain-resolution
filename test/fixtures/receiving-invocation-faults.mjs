@@ -5,10 +5,13 @@ const receipt = name => `console.error("receiving differential fault executed: $
 export const receivingFaults = [
     { name: "joint-data", assertion: /joint earlier scalar excludes the later write/, edit: {
         file: "src/property-versions.js",
-        find: "        const value = promiseVersion.value",
-        replace: `        let value = promiseVersion.value
-        if (operationContext.errorContext === "joint selected" && typeof value === "number") {
-            ${receipt("joint-data")}; value++
+        find: "try { return consume(placementValue(version), version) }",
+        replace: `try {
+            let value = placementValue(version)
+            if (operationContext.errorContext === "joint selected" && typeof value === "number") {
+                ${receipt("joint-data")}; value++
+            }
+            return consume(value, version)
         }`,
     } },
     { name: "value", assertion: /\["(?:left|right)"\]\["k"\]: exact leaf/, edit: {

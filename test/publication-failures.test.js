@@ -232,7 +232,7 @@ describe("complete publication failures", () => {
                 } else assert(runtime.isPoisonError(work))
                 const result = await work
                 const graph = await runtime.lookupPath(chain, ["receiver"], ctx)
-                const expected = new Set(succeeds ? [publicationFailure] : [hostFailure, publicationFailure])
+                const expected = new Set(succeeds ? [publicationFailure] : [hostFailure])
                 assert.deepEqual(causes(result), expected)
                 assert.deepEqual(causes(graph), expected)
                 assert.equal(leaves(result).length, expected.size)
@@ -250,7 +250,7 @@ describe("complete publication failures", () => {
     }
 
     for (const pendingAncestor of [false, true]) {
-        it(`retains every failure through a ${pendingAncestor ? "pending" : "ready"} ancestor writeback`, async () => {
+        it(`publishes nested status without writing diagnostics through a ${pendingAncestor ? "pending" : "ready"} ancestor`, async () => {
             const ctx = context()
             const expected = ["host", "target publication", "ancestor publication"].map(message => new Error(message))
             const pending = Promise.withResolvers()
@@ -279,44 +279,16 @@ describe("complete publication failures", () => {
             const result = await work
             const graph = await runtime.lookupPath(chain, ["parent", "receiver"], ctx)
             // Ready and pending runtime-owned parents use the same storage path.
-            assert.deepEqual(causes(result), new Set(expected))
-            assert.deepEqual(causes(graph), new Set(expected))
-            assert.equal(leaves(result).length, expected.length)
-            assert.equal(targetFailed, true)
+            assert.deepEqual(causes(result), new Set([expected[0]]))
+            assert.deepEqual(causes(graph), new Set([expected[0]]))
+            assert.equal(leaves(result).length, 1)
+            assert.equal(targetFailed, false)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state)
         })
     }
 
-    it("retains selected failures when copying their containing node also fails", () => {
-        const ctx = context()
-        const expected = ["host", "publication", "copy"].map(message => new Error(message))
-        let copying = false
-        const source = new Proxy({ receiver: { fail() { throw expected[0] } } }, {
-            set(target, key, value, receiver) {
-                if (runtime.isPoisonError(value)) {
-                    copying = true
-                    throw expected[1]
-                }
-                return Reflect.set(target, key, value, receiver)
-            },
-            ownKeys(target) {
-                if (copying) {
-                    copying = false
-                    throw expected[2]
-                }
-                return Reflect.ownKeys(target)
-            },
-        })
-        const chain = new runtime.Chain(source, ctx)
-        const result = runtime.run(chain, ["receiver"], "fail", [], ctx, { mutationScopeDepth: 1 })
-        assert.deepEqual(causes(result), new Set(expected))
-        assert.deepEqual(causes(runtime.lookupPath(chain, [], ctx)), new Set(expected))
-        assert.equal(ctx.execution.fatalError, null)
-        verifyRefCounts(ctx, chain._state)
-    })
-
-    it("retains the required managed result when final publication fails", async () => {
+    it("reports a pending managed rejection without a data publication", async () => {
         const ctx = context()
         const hostFailure = new Error("later host rejection")
         const publicationFailure = new Error("final publication")
@@ -329,7 +301,7 @@ describe("complete publication failures", () => {
         assert(work instanceof Promise)
         assert(runtime.lookupPath(chain, ["receiver"], ctx) instanceof Promise)
         pending.reject(hostFailure)
-        assert.deepEqual(causes(await work), new Set([hostFailure, publicationFailure]))
+        assert.deepEqual(causes(await work), new Set([hostFailure]))
         assert.equal(metadata.hasReadLease(receiver, ctx), false)
         assert.equal(ctx.execution.fatalError, null)
         runtime.assignPath(chain, [], { healthy: 1 }, ctx)
