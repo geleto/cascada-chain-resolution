@@ -1016,7 +1016,7 @@ export const SAFEGUARDS = [
     {
         id: "flat-skips-silent-cycle-laps",
         guards: "Finite silent cycle skipping depends on its own empty exits, not unrelated graph size.",
-        faults: [edit("src/array-flat.js", "component.transient = 0", "component.transient = facts.size")],
+        faults: [edit("src/array-flat.js", "fact.transient = 0", "fact.transient = facts.size")],
         witnesses: ["bounds capture and expansion with normal control"],
     },
     {

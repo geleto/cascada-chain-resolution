@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
+import { assertGraph } from "../graph-oracle.js"
+import { createRandom } from "../native-equivalence-support.js"
 
 let cases = 0
 function flatten(array, depth) {
@@ -80,7 +82,37 @@ for (let seed = 0; seed < 48; seed++) {
     for (const depth of [0, 1, 2, 3, 5, 8]) {
         const expected = arrays[0].flat(depth)
         const { output } = flatten(arrays[0], depth)
-        assert.deepEqual(output, expected, `seed=${seed}, depth=${depth}`)
+        assert.doesNotThrow(() => assertGraph(output, expected), `seed=${seed}, depth=${depth}`)
     }
+}
+
+// Empty side branches disappear at different depths around the same cycle.
+// At enormous depths, remove whole laps and compare the final sixteen steps
+// with native flat; the consumed prefix must still select the correct ring.
+const empty = [[]]
+for (let i = 1; i <= 6; i++) empty.push([empty[i - 1], empty[i - 1]])
+const ring = Array.from({ length: 3 }, () => [])
+for (let i = 0; i < ring.length; i++) ring[i].push(empty[i + 1], ring[(i + 1) % 3], empty[6 - i])
+for (const prefix of [0, 2, 3]) for (const depth of [0, 1, 2, 5, 8, 16, 2 ** 54, Number.MAX_VALUE]) {
+    let source = ring[0]
+    for (let i = 0; i < prefix; i++) source = [source]
+    const expected = depth <= 16 ? source.flat(depth) :
+        ring[(depth % 3 - (prefix + 16) % 3 + 3) % 3].flat(16)
+    assert.doesNotThrow(() => assertGraph(flatten(source, depth).output, expected), `prefix=${prefix}, depth=${depth}`)
+}
+
+// General graphs mix shared empty branches, emitting cycles and branching
+// cycles. Native finite flattening checks both ordering and retained aliases.
+for (let seed = 0; seed < 32; seed++) {
+    const random = createRandom(0xf1a7 + seed)
+    const nodes = Array.from({ length: 6 }, () => [])
+    for (const node of nodes) for (let i = 0, length = Math.floor(random() * 4); i < length; i++) {
+        const choice = Math.floor(random() * 8)
+        if (choice < nodes.length) node.push(nodes[choice])
+        else if (choice === 6) node.push(seed)
+        else node.length++
+    }
+    for (const depth of [0, 1, 2, 4, 7]) assert.doesNotThrow(() =>
+        assertGraph(flatten(nodes[0], depth).output, nodes[0].flat(depth)), `mixed seed=${seed}, depth=${depth}`)
 }
 console.log(`${cases} finite flattening cases passed`)

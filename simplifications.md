@@ -1,6 +1,6 @@
 # Simplification review
 
-**Status, 2026-11-09: no simplification awaits a user decision.** This file records
+**Status, 2026-11-10: no simplification awaits a user decision.** This file records
 implemented changes, rejected or reverted alternatives, and possible future
 investigations. Separate future plans are not unfinished audit decisions.
 
@@ -9,6 +9,32 @@ Retained design comparisons from 2026-11-05/06. The
 verification; [data limitations](docs/data-limitations.md) owns runtime contracts.
 These evaluated alternatives do not establish architectural minimality. The
 [search tree](docs/coverage-tree.md#simplification-search-tree) tracks further work.
+
+## Finite-depth Array flattening — 2026-11-10
+
+**Kept.** [Captured expansion](src/array-flat.js) shrank from 210 to 174 lines.
+Full strongly connected component analysis is unnecessary: a silent cycle has
+one nonempty continuation per node, with empty side branches. Following those
+successors identifies its period and the depth at which its side branches vanish.
+One recursive graph analysis supplies heights and nonempty-output facts, and
+also replaces the separate sink-pruning algorithm used by unlimited-cycle
+validation. Component records, low-link bookkeeping and component flags disappear.
+
+Nonnegative count arithmetic needs only its final cap: integer results below
+that cap remain exact, and rounding larger products cannot affect the answer.
+The separate multiplication guard is removed. Capped recurrence powering stays:
+ordinary recursion or memoization by depth still takes depth-sized work on a
+tiny emitting cycle whose output exceeds capacity. Rejecting or skipping every
+ancestor cycle changes valid finite-depth JavaScript results. The asynchronous
+capture retains its distinct depth-demand, pending-presence and release rules.
+
+The expanded permanent fixture checks 496 finite cases, including native
+comparisons with alias/cycle checks and uneven empty exits around silent cycles.
+All eleven work-counter rows match the previous implementation. Additional
+independent checks passed 18,432 finite-depth cases at capacity 31 and 2,048 cycle
+reachability cases; 256 enormous-depth comparisons matched the prior algorithm.
+Verification passed all 6,294 suite tests and 68 traced flat-focused tests;
+all ten flat safeguard removals produced their required failing witnesses.
 
 ## Structural review — 2026-11-05
 

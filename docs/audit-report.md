@@ -210,7 +210,7 @@ and independent silent cycles exposed related repeated work.
 The old recursive preparation/native flat path is removed. [FlatCapture](../src/array-flat-capture.js)
 captures each physical Array's placements once, discovers available siblings
 before joining pending input, and upgrades shared depth demand without cyclic
-Promise joins. [Flattening](../src/array-flat.js) uses captured SCC facts and
+Promise joins. [Flattening](../src/array-flat.js) uses captured per-node facts and
 capped nonnegative recurrence powering to decide output capacity. Ordered
 materialization skips empty subgraphs and silent cycle laps; symbolic consumed
 offsets preserve the original Number depth residue. Finite depth is not treated
@@ -230,6 +230,12 @@ oracles checked 5,600 cases at scaled capacity 31 and 4,259 full-capacity cases;
 counted as passes. Eleven work rows, inactive-instrumentation controls and all
 10 flat safeguards provide sensitivity evidence; details are in the original
 verification manifest.
+
+The [2026-11-10 simplification](../simplifications.md#finite-depth-array-flattening--2026-11-10)
+replaces full component analysis with single-successor cycle discovery and
+shares graph analysis with unlimited-cycle validation. It preserves finite-depth
+semantics and all eleven measured work rows; the permanent finite fixture now
+covers 496 cases. The original verification manifest remains historical evidence.
 
 ## Responsibility ledger
 

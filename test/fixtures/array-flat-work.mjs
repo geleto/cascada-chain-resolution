@@ -10,7 +10,8 @@ const verify = instrumentRuntime(new Map([
         ["function frame(node, remaining) {", "$& globalThis.__flatFrame();"],
         ["function acyclicCount(node, remaining) {", "$& globalThis.__flatFrame();"],
         ["function cyclicCount(exponent) {", "$& globalThis.__flatFrame();"],
-        ["function cappedProduct(left, right) {", "$& globalThis.__flatProduct();"],
+        ["coefficient * counts[column]", "(globalThis.__flatProduct(), $&)"],
+        ["left * right", "(globalThis.__flatProduct(), $&)"],
     ]],
     ["array-flat-capture.js", [["for (const record of node.parts) {", "$& globalThis.__flatPart();"]]],
 ]), process.env.CASCADA_WORK_NOOP_LOADER !== "1")
