@@ -42,7 +42,7 @@ describe("complete publication failures", () => {
     it("counts failed gated no-op publication as an identity write", async () => {
         const ctx = context(), hold = Promise.withResolvers(), cause = new Error("refused gate publication")
         let refuses = false
-        const chain = new runtime.Chain(new Proxy({ items: [] }, {
+        const chain = new runtime.Chain(new Proxy({ items: [0] }, {
             set(target, key, value, receiver) {
                 if (refuses) throw cause
                 return Reflect.set(target, key, value, receiver)
@@ -59,7 +59,7 @@ describe("complete publication failures", () => {
         assert.equal(compareIdentities(before, captureIdentity(chain._state.value, ctx), new OperationOwner(ctx)), false)
         refuses = false
         await runtime.repairPath(chain, ["items"], ctx)
-        assert.deepEqual(runtime.export(chain, ["items"], ctx), [])
+        assert.deepEqual(runtime.export(chain, ["items"], ctx), [0])
         verifyRefCounts(ctx, chain._state)
     })
 

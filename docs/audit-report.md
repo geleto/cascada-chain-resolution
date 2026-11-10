@@ -1,13 +1,13 @@
 # Whole-project audit and repair
 
-Completed 2026-11-06 at `ed1e3e1`; follow-ups verified through 2026-11-09.
-The current normal suite passes **6,294 tests**. D01 is implemented; D02 and
+Completed 2026-11-06 at `ed1e3e1`; follow-ups verified through 2026-11-10.
+The current normal and traced suites each pass **6,437 tests**. D01 is implemented; D02 and
 D03 confirm existing behavior. D04's producer experiments were tried and reverted.
 D05 is resolved by the decision to await upstream dependency fixes. No required
 audit work or user decisions remain.
 
 The responsibility ledger covers C01-C15, all 35 public exports and S1-S8.
-The inventory retains the original 350 files and seven follow-up additions.
+The inventory retains the original 350 files and eight follow-up additions.
 Current contracts remain in [data limitations](data-limitations.md); verification
 records below identify the revisions and limits behind each result.
 
@@ -156,6 +156,37 @@ No production code or tests from either trial are retained. The prior 6,294-test
 full-suite result remains applicable to the unchanged runtime; these focused
 trials are not a new full-audit acceptance.
 
+## Range preparation follow-up — 2026-11-10
+
+Controlled `fill` and `copyWithin` now use one captured range calculation for
+ready, pending and failed controls. Empty possible write ranges and coincident
+source/target ranges eliminate irrelevant controls. This implements the selected
+no-write self-copy revision, including singleton copies, without adding a layout
+or publication protocol. Individual argument reception uses the existing input
+holder; pending selection retains unread borrowed inputs.
+
+The [range cases](../test/array-range-preparation.test.js) add 143 tests, including
+an independent enumeration of normalized control completions on lengths 0–3.
+The enumeration makes 556 runtime checks with poison or unresolved controls;
+the remaining cases cover delivery order, shape, attribution, ownership and
+ordinary payload poison. Existing identity and native-equivalence witnesses
+now distinguish genuinely pending writes from newly determined no-ops. The
+gated-publication failure witness retains an actual pending range dependency.
+
+Both full suites pass 6,437 tests. All ten affected safeguard removals produce
+their expected witnesses. The extended preparation-output GC fixture covers
+16 completed-range/live-source cases while an unused control remains pending,
+at stack limits 10, 50 and 1,000 through the full suites. Other argument
+reductions and the persistent-layout/streaming cutovers remain future work.
+
+All nine generated families pass at 1,600 seeds with publication tracing,
+including 12,800 pending histories. All eight conflict partitions pass
+(93,636 cases / 280,908 runs), as do all eight publication-pair partitions
+(96,824 pairs / 290,472 deferred runs). The full pair run exposed the model's
+obsolete self-copy write rule. That test-only correction followed the full
+suites: its independent self-test now distinguishes normalized self-copy from
+real writes, and both focused model checks and the complete pair product pass.
+
 ## Baseline and evidence policy
 
 - Original baseline: clean `b4de642b672e4c1e10ca4589bb8d0b26344160ba`,
@@ -283,7 +314,8 @@ is qualified by the verification section.
 The controlled Array inventory includes all currently dispatched mutators,
 copying/structural methods, identity searches, join/toString, flat, default sort
 and toSorted, and scalar argument conversion. Callback iteration/stream modes,
-persistent-layout cutovers and status-only repair remain F01-F05 future work.
+persistent-layout cutovers and streaming integration remain F01-F05 future work;
+core status-only repair is implemented by D01.
 Their design probes were read and their consistency reviewed; passing a design
 prototype does not certify production implementation.
 
@@ -373,6 +405,7 @@ to the revisions above. Historical/future documents are not current contracts.
 | Follow-up addition | Responsibility / evidence |
 | --- | --- |
 | [docs/audit-d01-verification.json](audit-d01-verification.json) | C15 / D01 evidence integration |
+| [test/array-range-preparation.test.js](../test/array-range-preparation.test.js) | C05, C06, C12 / conditional range preparation and independent completion oracle |
 | [test/query-frontier-work.test.js](../test/query-frontier-work.test.js) | C02, C08 / D04 query completion |
 | [test/fixtures/query-frontier-work.mjs](../test/fixtures/query-frontier-work.mjs) | C02, C08 / D04 bounded retention and controls |
 | [test/status-repair.test.js](../test/status-repair.test.js) | C04-C07, C13 / D01 status semantics |

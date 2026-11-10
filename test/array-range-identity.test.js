@@ -5,7 +5,7 @@ import { verifyRefCounts } from './verify-refcounts.js'
 
 const cases = [
     ['fill', [9, 0, 1], true], ['fill', [1, 0, 1], true], ['fill', [9, 1, 1], false],
-    ['copyWithin', [1, 0, 1], true], ['copyWithin', [0, 0, 1], true], ['copyWithin', [0, 1, 1], false],
+    ['copyWithin', [1, 0, 1], true], ['copyWithin', [0, 0, 1], false], ['copyWithin', [0, 1, 1], false],
 ]
 describe('localized Array write identity', () => {
     for (const [method, args, writes] of cases) for (const view of [false, true])

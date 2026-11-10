@@ -45,6 +45,7 @@ function writesArray(array, method, args) {
     if (method === "sort") return Object.keys(array).length > 0
     if (method === "copyWithin") {
         const target = relative(args[0], array.length, 0), start = relative(args[1], array.length, 0)
+        if (target === start) return false
         const count = Math.min(relative(args[2], array.length, array.length) - start, array.length - target)
         for (let index = 0; index < count; index++)
             if (Object.hasOwn(array, start + index) || Object.hasOwn(array, target + index)) return true

@@ -802,6 +802,8 @@ function withDuplicatePromise(source) {
 }
 
 function argumentWillWait(scenario) {
+    if (scenario.method === "copyWithin" && scenario.source.length <= 1) return false
+    if (scenario.method === "fill" && scenario.source.length === 0) return false
     if (scenario.method === "fill") return scenario.args.length > 1
     return scenario.args.length > 0 &&
         ARGUMENT_WAIT_METHODS.has(scenario.method)

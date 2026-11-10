@@ -10,6 +10,33 @@ verification; [data limitations](docs/data-limitations.md) owns runtime contract
 These evaluated alternatives do not establish architectural minimality. The
 [search tree](docs/coverage-tree.md#simplification-search-tree) tracks further work.
 
+## Range preparation — 2026-11-10
+
+`fill` and `copyWithin` now share conditional preparation of their captured
+numeric range controls. Empty intervals and normalized self-copy can finish
+without unused controls, including poison or never-settling inputs. Failure
+remains conditional while another control can prove there are no writes.
+Successful fill retains its payload; failed or empty ranges release it.
+
+Argument reception now supports individual positions through the same input
+holder used by complete frontiers. Pending selection protects unread borrowed
+inputs. Range outputs consume normalized coordinates directly; the redundant
+normalization and unused native intrinsic entries are removed. No new layout,
+publication or identity protocol is introduced. Self-copy's selected no-write
+revision is documented in the current data and call contracts.
+
+Normal and traced suites each pass 6,437 tests, including 143 new range tests
+with an independent small-domain completion oracle. All ten affected safeguard
+removals have failing witnesses; GC controls check release while unused controls
+remain pending. The audit report records the verification scope.
+All nine generated families pass at 1,600 seeds, along with the full traced
+conflict and publication-pair matrices. The publication model and its self-test
+now use the selected self-copy no-write rule while retaining real-write checks.
+
+The remaining determined-shape reductions for searches, sorting, joining,
+`at`, `slice`, `flat` and splice families remain in the iteration plan. Persistent
+layouts, streaming modes and iteration are separate future implementation work.
+
 ## Finite-depth Array flattening — 2026-11-10
 
 **Kept.** [Captured expansion](src/array-flat.js) shrank from 210 to 174 lines.
@@ -39,7 +66,8 @@ all ten flat safeguard removals produced their required failing witnesses.
 ## Structural review — 2026-11-05
 
 This follow-up preserved the existing local simplifications. C01–C15 are current
-responsibilities; F01–F05 remain future work.
+responsibilities. F01–F03 and F05 remain future work; F04's core status-only
+repair is implemented, with streaming integration still planned.
 The findings here concern implementations, not changes to those contracts.
 
 ### Capture construction (S1.1; C02, C03, C06, C11, C14)

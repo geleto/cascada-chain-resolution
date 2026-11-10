@@ -83,17 +83,20 @@ class InvocationWork extends PathOperation {
         return exported
     }
 
-    prepareArgumentFrontier(count = this.args.length) {
-        const args = this.args
+    prepareArgument(index, args = this.args) {
+        if (index >= args.length) return undefined
+        const inputs = this.#inputs ??= []
+        if (!inputs[index]) {
+            const input = inputs[index] = new ArgumentInput(this.operationContext)
+            args[index] = input.prepare(args[index], this.operationContext)
+        }
+        return args[index]
+    }
+
+    prepareArgumentFrontier(count = this.args.length, args = this.args) {
         count = Math.min(count, args.length)
-        if (this.#inputs) {
-            for (const input of this.#inputs.splice(count)) input.close()
-            return
-        }
-        const inputs = this.#inputs = Array.from({ length: count }, () => new ArgumentInput(this.operationContext))
-        for (let index = 0; index < count; index++) {
-            args[index] = inputs[index].prepare(args[index], this.operationContext)
-        }
+        for (const input of this.#inputs?.splice(count) ?? []) input?.close()
+        for (let index = 0; index < count; index++) this.prepareArgument(index, args)
     }
 
     leaseArgumentsUntilReceiverReached() {
@@ -101,11 +104,11 @@ class InvocationWork extends PathOperation {
     }
 
     releaseArgumentLeases() {
-        for (const input of this.#inputs ?? []) input.release()
+        for (const input of this.#inputs ?? []) input?.release()
     }
 
     releaseArgument(index) {
-        this.#inputs[index]?.release()
+        this.#inputs?.[index]?.release()
     }
 
     preparationFailed() {
@@ -114,7 +117,7 @@ class InvocationWork extends PathOperation {
     }
 
     discardArgument(index) {
-        this.#inputs[index]?.close()
+        this.#inputs?.[index]?.close()
     }
 
     transferInputs = value => {
@@ -129,7 +132,7 @@ class InvocationWork extends PathOperation {
         this.preserveReceiverBaseline = undefined
         this.discardPreparedOutput?.()
         this.discardPreparedOutput = undefined
-        for (const input of this.#inputs ?? []) input.close()
+        for (const input of this.#inputs ?? []) input?.close()
         this.#inputs = undefined
         this.releaseReceiverLeases()
         this.#outputLeases.release()

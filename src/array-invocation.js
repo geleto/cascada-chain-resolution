@@ -83,6 +83,7 @@ function prepareArrayReceiver(methodDefinition, args, work) {
 }
 
 function prepareArrayMethodArguments(methodDefinition, invocationWork) {
+    if (methodDefinition.prepareArguments) return methodDefinition.prepareArguments(invocationWork)
     let { args } = invocationWork
     const inputs = methodDefinition.inputs ?? []
     // Capture the bound's shape dependency before any converted input can

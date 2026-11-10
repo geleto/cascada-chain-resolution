@@ -39,6 +39,22 @@ function arrayPreparation(method, ordered, mutation, failed, comparator = false)
     } }
 }
 
+async function completedRange(method, ordered, mutation, live) {
+    const ctx = { execution: new r.Execution(), errorContext: "completed range release" }
+    let payload = { payload: new Array(10000).fill(3) }
+    const weak = new WeakRef(payload), source = new r.Chain([payload], ctx)
+    const start = ordered ? new OrderedThenable() : Promise.withResolvers(), end = new OrderedThenable()
+    let result = r.run(source, [], method, method === "fill"
+        ? [payload, start.promise ?? start, end] : [start.promise ?? start, 0, end],
+        ctx, mutation ? { mutationScopeDepth: 0 } : {})
+    start.resolve(method === "fill" ? 1 : 0)
+    const output = new r.Chain(await result, ctx)
+    result = payload = undefined
+    r.assignPath(output, [], null, ctx)
+    if (!live) r.assignPath(source, [], null, ctx)
+    return { ctx, source, end, weak, live, name: `${method}/${ordered}/${mutation}/${live}` }
+}
+
 function pendingCall(mutation, retained, diagnostic = false) {
     const ctx = { execution: new r.Execution(), errorContext: "spent exported arguments" }
     const gate = Promise.withResolvers()
@@ -128,6 +144,10 @@ function comparatorLifetime(method, outcome, pendingPreparation) {
 }
 
 const arrays = [], calls = []
+const ranges = []
+for (const method of ["fill", "copyWithin"]) for (const ordered of [false, true])
+for (const mutation of [false, true]) for (const live of [false, true])
+    ranges.push(await completedRange(method, ordered, mutation, live))
 const comparators = []
 for (const method of ["sort", "toSorted"]) {
     for (const outcome of ["throw", "object", "promise", "healthy"])
@@ -147,6 +167,9 @@ for (const ordered of [false, true]) for (const failed of [false, true]) {
 for (const mutation of [false, true]) for (const retained of [false, true])
 for (const diagnostic of [false, true]) calls.push(pendingCall(mutation, retained, diagnostic))
 await collect()
+for (const state of ranges)
+    assert.equal(state.weak.deref() !== undefined, state.live,
+        `Unused range controls retain no completed output: ${state.name}`)
 for (const state of comparators) for (const weak of state.weak)
     assert.equal(weak.deref() !== undefined, state.retained, `Only unfinished successful sorting needs its comparator: ${state.name}`)
 for (const weak of comparison.weak) assert.equal(weak.deref(), undefined, "Comparator diagnostics release exported copies")

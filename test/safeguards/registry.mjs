@@ -227,7 +227,13 @@ export const SAFEGUARDS = [
         guards: "An in-place range write advances the receiver identity already captured by pending searches, even for an equal-value write.",
         faults: [edit("src/array-invocation.js",
             "        if (output === invocationWork.receiver && published === true) {\n            published = new IdentityPublication(operationContext)\n            published.record(true)\n        }\n")],
-        witnesses: ["publishes fill(9,0,1) identity to a pending includes", "publishes copyWithin(0,0,1) identity to a pending includes"],
+        witnesses: ["publishes fill(9,0,1) identity to a pending includes", "publishes copyWithin(1,0,1) identity to a pending includes"],
+    },
+    {
+        id: "array-range-protects-unread-inputs",
+        guards: "A pending range decision preserves borrowed managed payloads before later commands mutate their source.",
+        faults: [edit("src/array-methods.js", "    work.prepareArgumentFrontier(3, args)\n")],
+        witnesses: ["protects a borrowed fill payload while range selection waits"],
     },
     {
         id: "storage-commit-drops-descriptor-receiver",

@@ -268,7 +268,7 @@ future work is listed separately below.
       - Ordered strict-equality searches and early termination
       - Stable default-key sorting with holes and undefined
       - Synchronous comparators over one detached shared snapshot
-      - Search identity captured before later equal-value, self-copy, or effective range writes
+      - Search identity captured before later equal-value writes and nonwriting normalized self-copy
       - Promise-key prefix gates preserve earlier search identity and release unrelated siblings
       - Delayed search inputs retain the issued Array across later append, overwrite, deletion, splice, and resize
     - Length and structural ordering
@@ -400,9 +400,9 @@ Their design probes do not establish production implementation or acceptance.
   - Unordered occurrence discovery with separate position availability
   - Push-only entry authority, overlap, reserved contribution order, and private-prefix reads
   - Nested completion, capacity, and control-flow failure markers
-- F04 — Status-only repair
-  - Clear selected own status on current data without restoring a repair-only predecessor
-  - Exact-own external clearing while historical captures and descendant status remain unchanged
+- F04 — Status-only repair integration
+  - Core exact-own managed/external clearing is implemented by D01, preserving current data and historical captures
+  - Future streaming integration adds positional status and the mode-specific failure policies
   - Preserve native receiver isolation, imported protection, retained snapshots, and ordinary COW
 - F05 — Integration and replacement
   - Migrate controlled methods and indexed/length/path consumers through the same query boundary
@@ -419,8 +419,9 @@ follow the same fact from capture through publication, observation, and release.
 The implementation searches below are hypotheses, ordered by likely
 structural payoff. The review status table records implemented replacements and
 evaluated alternatives; unimplemented alternatives remain open hypotheses.
-The future contracts listed under F01–F05 remain selected; their implementation
-and simplification benefit still need evidence. The first review's small local
+The remaining future contracts under F01–F05 remain selected; core F04 repair
+is implemented. Further implementation and simplification benefit still need
+evidence. The first review's small local
 edits do not close these branches. Different lifetime, failure, or ordering
 requirements must remain expressible, but can be states or outcomes of one
 mechanism rather than reasons to retain parallel engines.
@@ -511,17 +512,17 @@ contains the state flows, deletion targets, counterexamples and verification.
 | Branch | Status and evidence |
 | --- | --- |
 | S1.1 | Kept: one real graph-construction walker with concrete managed/snapshot readers; duplicate snapshot construction removed. |
-| S1.2 | Open: backing producers already use ordinary placement-version publication. Collapsing copied delivery into mutable source versions loses historical delivery; a smaller source/destination model is unproven. |
+| S1.2 | D04's two producer trials are completed and reverted: one removed no bookkeeping and one exceeded pending-history bounds. A different smaller source/destination model remains an unproven hypothesis, not an unfinished trial. |
 | S1.3 / S4.3 | Evaluated, no replacement kept: eager shared graph capture would inspect unused search/flattening data; a demand dispatcher would keep the old reducers and add policies. |
 | S2.1 | Kept: one placement outcome and centralized nested-scope capture; poison assignment and mutation failure remain distinct. |
 | S2.2 | Kept: shared forward version state and one placement activation path. Storage, structure and optional counters already derive from one prepared commit; a larger transition record would only package those callbacks. |
 | S3.1 | Reverted prototype: merged native/managed observation progression added mode, terminal-authority and lifetime branches without a clearer path. Mutation reconstruction and non-consuming entry discovery remain explicit. |
 | S3.2 | Evaluated: consumed route already supplies normalized keys, depth and canonical nodes. Issuance scope and dynamic provenance cannot be recomputed from the final selected node. |
-| S4.1–S4.2 | Kept: direct range construction removes the range carrier; views/ranges/remaps share one output finalizer. Dense remap unification still loses selected-range work; persistent layouts remain future implementation work. |
+| S4.1–S4.2 | Kept: direct range construction removes the range carrier; views/ranges/remaps share one output finalizer. Conditional fill/copyWithin preparation now removes irrelevant control dependencies and duplicate normalization. Dense remap unification still loses selected-range work; persistent layouts remain future implementation work. |
 | S5 | Kept: metadata consumption transfers one final state/callback; removed recursive reconsumption and ancestor collection's separate completion/cleanup. Identity/metadata generic forwarding still retains different wake rules. |
 | S6.1 | Kept: one forward placement Map replaces mirrored version/ownership stores; initialization mirroring is removed and activation is shared. Counter projections remain because ordinary occurrence expansion scans unrelated Array owners. |
 | S6.2 | Kept: one staged identity record replaces paired import maps; optional method diagnostics have no carrier; reservations derive memberships from the retained route. Source, publication and output last-use points remain distinct. |
-| S7 | Needs contract decisions: status-only repair, registration-before-first-use and logical-only managed storage change supported behavior. No semantic cutover was made. |
+| S7 | Resolved: D01 implements exact-own status repair; D02 confirms initial resource registration while retaining late-initialization checks; D03 confirms imported-source protection and retains writes to owned storage. Streaming policies remain future work. |
 | S8 / C15 | Kept: one exact-source instrumentation and load-receipt protocol replaces twelve fixture loaders; independent counters and disabled controls remain. |
 
 The [implementation-wide review](../simplifications.md#implementation-wide-review--2026-11-06) records concrete coverage across all runtime responsibilities, retained replacements, disproving cases and the combined verification record. The first structural pass's assertion that larger changes needed a contract decision was withdrawn.

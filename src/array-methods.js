@@ -14,6 +14,7 @@ import { PlacementConstruction } from "./parent-placements.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { flattenCapturedArrays, cyclicFlatInputs } from "./array-flat.js"
 import { FlatCapture, findFlatAncestor } from "./array-flat-capture.js"
+import { releaseOnClose } from "./operation-lifecycle.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -28,9 +29,11 @@ const arraySort = Array.prototype.sort
 // leaseInputsThroughResult protects receiver placements and retained payloads
 // until a delayed observation has captured its output.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
-// inputs and restInput determine both the protected frontier and preparation.
-// Custom preparation receives those outcomes and consumes receiver shape before
-// snapshot identity assembly. Placement-consuming work belongs to invocation.
+// inputs and restInput declare unconditional conversion; prepareArguments owns
+// conditional consumption through the same argument holders. Pending selection
+// protects unread inputs. prepare transforms converted arguments and consumes
+// receiver shape before snapshot identity assembly. Placement-consuming work
+// belongs to invocation.
 // A remap producer can report a nonwriting or pending mutation through its third
 // argument. Otherwise publication is effective. Intrinsics require exact length
 // before invocation, including when a custom remap supplies their write rules.
@@ -45,14 +48,12 @@ const ARRAY_METHODS = {
         output: tryConcatArrayView,
     },
     copyWithin: {
-        inputs: [numericInput, numericInput, numericInput],
-        intrinsic: Array.prototype.copyWithin,
+        prepareArguments: prepareRangeArguments,
         output: copyWithin,
         methodResult: RETURN_RECEIVER,
     },
     fill: {
-        inputs: [PASS_AS_PAYLOAD, numericInput, numericInput],
-        intrinsic: Array.prototype.fill,
+        prepareArguments: prepareRangeArguments,
         output: fill,
         methodResult: RETURN_RECEIVER,
     },
@@ -496,17 +497,103 @@ function comparatorInput(value, invocationWork) {
     )
 }
 
+// Range controls can prove one another irrelevant. Keep their outcomes until
+// the interval is determined; a failed control is conditional while another
+// can still prove that no write is prescribed. Re-evaluation reads three
+// captured scalar facts, never the receiver or already converted arguments.
+function prepareRangeArguments(work) {
+    const { operationContext } = work
+    const filling = work.method === "fill"
+    const indexes = filling ? [1, 2] : [0, 1, 2]
+    let args = work.args, values = [], outcome, deferred, unregister
+    const finish = value => {
+        if (!deferred) outcome = value
+        for (let index = 0; index < args.length; index++)
+            if (!filling || index !== 0 || errorUtils.isPoisonError(value) || value[1] === value[2])
+                work.discardArgument(index)
+        args = values = undefined
+        unregister?.()
+        if (errorUtils.isPoisonError(value)) work.preparationFailed()
+        const resolve = deferred?.resolve
+        deferred = undefined
+        resolve?.(value)
+    }
+    const prepared = runArrayStep(work, () => resolveArrayLength(work, length => {
+        work.arrayLength = length
+
+        function evaluate() {
+            const start = values[1], end = values[2], target = values[0]
+            // A write needs a source start below end and a target below length.
+            // Unknown/failed controls retain their entire normalized domain.
+            // Empty domains or one identical possible source/target prescribe
+            // no writes, including singleton copies and [0, unknown, 1].
+            const firstSource = typeof start === "number" ? start : 0
+            const lastSource = Math.min(typeof start === "number" ? start : length,
+                (typeof end === "number" ? end : length) - 1)
+            const firstTarget = typeof target === "number" ? target : 0
+            const lastTarget = Math.min(typeof target === "number" ? target : length, length - 1)
+            if (firstSource > lastSource || !filling && (firstTarget > lastTarget ||
+                firstSource === lastSource && firstTarget === lastTarget && firstSource === firstTarget))
+                return finish([0, 0, 0])
+            if (!indexes.every(index => values[index] !== undefined)) return
+            const errors = indexes.map(index => values[index]).filter(errorUtils.isPoisonError)
+            if (errors.length) return finish(errorUtils.combineErrors(errors))
+            finish(filling ? [work.prepareArgument(0, args), start, end] : [target, start, end])
+        }
+
+        evaluate()
+        if (!args) return
+
+        // Available primitive controls can settle an empty interval before a
+        // Promise or structured conversion needs to be consumed at all.
+        const primitive = index => args[index] === null ||
+            typeof args[index] !== "object" && typeof args[index] !== "function"
+        const order = [...indexes.filter(primitive), ...indexes.filter(index => !primitive(index))]
+        for (const index of order) {
+            const converted = numericInput(work.prepareArgument(index, args), work)
+            args[index] = undefined
+            work.releaseArgument(index)
+            const wait = internalSteps.continueGraphTransition(converted, operationContext, value => {
+                if (!args) return
+                values[index] = errorUtils.isPoisonError(value) ? value :
+                    toRelativeIndex(value, length, index === 2 ? length : 0)
+                // A failed range can now only fail or select no writes. Its
+                // fill payload is unused in either outcome, even while waiting.
+                if (filling && errorUtils.isPoisonError(value)) {
+                    args[0] = undefined
+                    work.discardArgument(0)
+                }
+                evaluate()
+            }, undefined, work)
+            markPromiseHandled(wait, operationContext)
+            if (!args) break
+        }
+    }))
+    if (errorUtils.isPoisonError(prepared)) finish(prepared)
+    if (!args) {
+        const result = outcome
+        outcome = undefined
+        return result
+    }
+    // Unread inputs may borrow managed data that later issued work can change.
+    // Provisional reception protects that data without making it a dependency.
+    work.prepareArgumentFrontier(3, args)
+    deferred = Promise.withResolvers()
+    unregister = releaseOnClose(work, () => {
+        args = values = deferred = undefined
+    })
+    markPromiseHandled(prepared, operationContext)
+    return deferred.promise
+}
+
 function fill(args, work, reportWrites) {
-    const length = work.arrayLength
-    const start = toRelativeIndex(args[1], length, 0), end = toRelativeIndex(args[2], length, length)
+    const [, start, end] = args
     const writes = start < end
-    // An empty range cannot receive this payload, even in observation mode.
-    if (!writes) work.discardArgument(0)
     if (work.mutation) {
         reportWrites(writes)
         if (!writes) return
     }
-    let entries = new Array(Math.max(0, end - start)).fill(args[0])
+    let entries = new Array(end - start).fill(args[0])
     args = undefined
     try { return runArrayStep(work, () => arrayRemaps.createRangeOutput(start, entries, work)) }
     finally { entries = undefined }
@@ -522,16 +609,14 @@ function reverse(args, work, reportWrites) {
 
 function copyWithin(args, work, reportWrites) {
     const length = work.arrayLength
-    const target = toRelativeIndex(args[0], length, 0)
-    const start = toRelativeIndex(args[1], length, 0)
-    const end = toRelativeIndex(args[2], length, length)
+    const [target, start, end] = args
     const count = Math.min(end - start, length - target)
-    if (work.mutation && count <= 0) {
+    if (work.mutation && count === 0) {
         reportWrites(false)
         return
     }
     const writes = captureArrayWrites(work)
-    let entries = arrayRemaps.createRemap(work.receiver, work.operationContext, start, start + Math.max(0, count), undefined, writes.observe)
+    let entries = arrayRemaps.createRemap(work.receiver, work.operationContext, start, start + count, undefined, writes.observe)
     if (work.mutation && writes.outcome !== true) {
         for (let index = target; index < target + count && writes.outcome !== true; index++) {
             const placement = propertyVersions.getPropertyPlacement(work.receiver, String(index), work.operationContext)

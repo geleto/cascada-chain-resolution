@@ -92,7 +92,7 @@ const cases = [
         apply: call("reverse", []) },
     { name: "zero count copyWithin", initial: [1, 2], after: [1, 2], effective: false,
         apply: call("copyWithin", [0, 1, 1]) },
-    { name: "same positions copyWithin", initial: [1, 2], after: [1, 2], effective: true,
+    { name: "same positions copyWithin", initial: [1, 2], after: [1, 2], effective: false,
         apply: call("copyWithin", [0, 0]) },
     { name: "already sorted", initial: [1, 2], after: [1, 2], effective: true,
         apply: call("sort", []) },

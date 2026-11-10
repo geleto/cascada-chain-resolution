@@ -185,6 +185,9 @@ describe("invocation input ownership", () => {
             for (const delivery of ["value", "reflection failure", "rejection"]) {
                 const ctx = context(), receiver = Promise.withResolvers(), start = Promise.withResolvers()
                 const argument = ordered ? new ChainedThenable() : Promise.withResolvers()
+                // A ready empty range need never consume an observational
+                // payload. Its unused native rejection remains host-owned.
+                if (!ordered) argument.promise.catch(() => {})
                 let inspections = 0
                 const input = new Proxy({ k: 1 }, { ownKeys(target) {
                     inspections++

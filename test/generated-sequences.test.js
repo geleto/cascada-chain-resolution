@@ -50,8 +50,11 @@ describe("generated operation sequences", () => {
             { kind: "enter", path: ["b"], body: [] },
             { kind: "array", path: ["b"], method: "fill", args: [1, 1, 1], scope: 0 },
             { kind: "array", path: ["b"], method: "fill", args: [1, 0, 1], scope: 1 },
+            { kind: "array", path: ["b"], method: "copyWithin", args: [0, 0], scope: 1 },
+            { kind: "array", path: ["b"], method: "copyWithin", args: [0, -3], scope: 0 },
+            { kind: "array", path: ["b"], method: "copyWithin", args: [1, 0, 1], scope: 0 },
         ], [[]])
-        assert.deepEqual([...model.comparisons.values()], [false, true, false, true, true, true, false])
+        assert.deepEqual([...model.comparisons.values()], [false, true, false, true, true, true, false, true, true, false])
     })
 
     it("replays command pairs against ready publication outcomes", function () {
