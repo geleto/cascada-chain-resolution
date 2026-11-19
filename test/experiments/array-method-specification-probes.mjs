@@ -19,8 +19,9 @@ const range = (a, b) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) =>
 const sorted = s => [...s].sort((a, b) => a - b)
 const norm = (n, length) => n < 0 ? Math.max(length + n, 0) : Math.min(n, length)
 
-// For an in-range output i, copyWithin's write predicate simplifies to
-// t <= i && s+i-t < e. Length clipping adds no independent alternative.
+// For an in-range output i, copyWithin selects the copied-source branch when
+// t <= i && s+i-t < e. This tests sources, not prescribed writes or identity:
+// normalized t === s is a semantic no-op, and sparse/status effects are separate.
 function copySources(length, i, [t0,t1], [s0,s1], [e0,e1]) {
     const candidates = new Set()
     const tMax = Math.min(t1, i)
@@ -29,8 +30,8 @@ function copySources(length, i, [t0,t1], [s0,s1], [e0,e1]) {
         const last = Math.min(s1 + i - t0, e1 - 1, length - 1)
         for (const q of range(first, last)) candidates.add(q)
     }
-    const definitelyWritten = t1 <= i && s1 + i - t0 < e0
-    if (!definitelyWritten) candidates.add(i)
+    const alwaysUsesCopiedSelector = t1 <= i && s1 + i - t0 < e0
+    if (!alwaysUsesCopiedSelector) candidates.add(i)
     return candidates
 }
 let copyQueries = 0, sparseChecks = 0

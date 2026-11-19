@@ -4,6 +4,7 @@ Technical analysis for the two deferred tasks in [iterate-plan.md](../iterate-pl
 
 ## 1. Conclusions
 
+- Complete-mode consumption uses one [captured-Array validity gate](../poison-policy-plan.md#complete-access-gate) across observation, methods, mutation, iteration and export/native preparation. Its [complete-only tracking rule](../poison-policy-plan.md#tracking-complete-mode-validity) follows failure ownership and open/nested issuers rather than payload readiness or a zero pending-command count. No complete-mode poisoned-prefix allowance exists; ordinary pending/poisoned payloads remain independent.
 - Use one demand-driven selector evaluator over captured mappings. Method rules define shape, selection, effects, and failure; the tree indexes those facts. No general solver or second failure-only evaluator is needed.
 - A deterministic fallback must respect captured bounds and every established publication. Always appending an insertion with a failed position is wrong when tighter position bounds exist.
 - Receive each delivered item into its ordinary elem Chain inside `next()`. Return that Chain directly to Cascada's trusted consumer. This uses the existing ownership mechanism and avoids protecting a raw managed value through a protocol-record Promise.
@@ -19,6 +20,7 @@ Evaluate the question the consumer actually asks:
 
 | Question | Required answer |
 | --- | --- |
+| Array access validity | Complete consumption waits while earlier work could poison that captured Array; only streaming modes can use a certified poisoned-prefix allowance. |
 | Length or membership | Exact count, sound bounds, or the remaining structural dependency. |
 | Presence | Present, absent, or the selection that can still change it. A hole is not an unknown placement. |
 | Payload source | Captured source version, inserted payload, prescribed literal, or hole. A pending payload differs from pending source selection. |
@@ -53,9 +55,9 @@ These rules do not prove a total work bound for arbitrary nested selections. Use
 
 For each method family, define successful mapping, irrelevance reductions, failure fallback, and root-invalidity outcomes together. A publication proof covers every permitted outcome, including failure. Proving a fact across successful argument values alone is insufficient.
 
-Apply fallback at the failed operation's logical position, then compose later commands. Do not recompute failure from the later live Array, resurrect discarded payloads, or let settlement order choose the layout. Complete-mode root Error and genuine path blockers remain prerequisites; a later content simplification cannot silently repair them. Ordinary overwrites/removals can discard regional errors as specified.
+Apply fallback only after actual relevant failure, at that operation's logical position, then compose later commands. Pending controls retain their dependencies and cannot produce fallback, false exhaustion, or poison merely for being undecided. Do not recompute failure from the later live Array, resurrect discarded payloads, or let settlement order choose the layout. Genuine path blockers remain prerequisites; a later content simplification cannot silently repair them. Ordinary overwrites/removals can discard regional errors as specified.
 
-The three modes share successful mappings. They differ at the declared structural failure boundary: complete root Error, sequential positional status, or unordered survivor fallback. The [sort exception](array-method-specification.md#7-sort-and-tosorted) uses repairable own status for mutating preparation/comparison failure in every mode and ordinary root Error for copying failure. Payload rejection remains value poison in every mode.
+The three modes share successful mappings under [sequential equivalence](../iterate-plan.md#sequential-equivalence-is-the-publication-criterion). Complete-mode failed mutations retain unchanged data under repairable status; failed copies return root Error. Streaming modes retain sequential positional status or unordered survivor fallback. The [sort boundary](array-method-specification.md#7-sort-and-tosorted) follows complete-mode mutation failure and overrides streaming regional failure. Payload rejection remains value poison in every mode.
 
 Per-command effects and direct results remain separate. For example, a failed required splice deletion count can poison the removed-elements result while its streaming receiver has a usable prefix. Folding a mapping does not cancel prescribed writes or erase a call-result failure.
 
@@ -140,7 +142,7 @@ These rules use one interval selector for copying and overwriting. `copyWithin` 
 | `push`, `unshift`, `pop`, `shift`, `reverse`, `toReversed` | Join/trim/orientation over captured spans; preserve endpoint selectors, prescribed writes, holes, and direct results. Unknown length uses semantic count facts, not eager materialization. |
 | `fill`, `copyWithin` | Conditional destination selection, using the fill projections above. Overwritten values are unused; copy sources are pre-write captures. Self-copy is a structural no-op. Use the [coupled-coordinate specification](array-method-specification.md#6-fill-and-copywithin) and its sparse-placement witnesses. |
 | `splice`, `toSpliced`, `slice`, `with` | Normalized restriction and insertion; apply the bounded rules above where applicable. `with` validates replacement index before root handoff. Removed splice results and receiver successors have distinct failure boundaries. |
-| `concat`, `flat` | Ordered contributions and output-root validity/capacity. Use the [flattening/discovery rules](array-method-specification.md#8-flat); one marker cannot satisfy a success-only minimum. |
+| `concat`, `flat` | Ordered contributions, specified output-root validity, and mode-specific capacity. Use the [flattening/discovery rules](array-method-specification.md#8-flat); one marker cannot satisfy a success-only minimum. |
 | Searches, `join`, `toString` | Demand ordinary comparisons/conversions and captured eligible positions. Result order, no-match proofs, separator irrelevance, and Error collection remain method-specific. |
 | `sort`, `toSorted` | Comparison-free reductions first; otherwise retain an algorithm region. Use the [sorting specification](array-method-specification.md#7-sort-and-tosorted) for permutation failure, fixed partitions, comparator work, and retained payloads. |
 | Indexed/length writes, deletion, entry | Use the same captured shape/override boundary, preserving authority and whole-path invalidity. Open entry additionally needs reserved contribution order and closure. |
@@ -155,9 +157,11 @@ The public Chain constructor already receives ready or pending input, maintains 
 { done: false, value: elemChain }
 ```
 
-The source occurrence must first pass structural publication checks. Create the Chain from the captured payload version without awaiting its value. A structural lookup failure rejects the step; a rejection of the established payload becomes poison inside the elem Chain.
+The source occurrence must first pass structural publication checks. Create the Chain by transferring the captured placement without awaiting its value or extracting an inert external reference. A structural selection failure rejects the step; a rejection of the established payload becomes poison inside the elem Chain. Raw lookup's registration/authority checks are not the item-transfer boundary; apply the [inert item contract](../iterate-plan.md#item-boundaries).
 
 The trusted Cascada consumer binds that exact Chain. It does not import it as language data or wrap it in another Chain. `for await` awaits the step, not the holder's root. Cascada must recognize this managed-item transport; a generic value-stream adapter cannot assume the item is the underlying JavaScript value.
+
+For unordered delivery, this is a [trusted scheduling interface](../iterate-plan.md#unordered-pulls-are-a-scheduling-interface). The first available step need not be the logical first item. Application-visible selection, effects and early exit retain indexed branch order. Tuple validation and fixed-arity binding execute only inside an enabled body, under the [destructuring rule](../iterate-plan.md#destructuring-in-an-enabled-body).
 
 Use the ordinary loop binding's operation context and construction mode, supplied as compiler facts. Source mode selects enumeration behavior; it does not silently override the destination binding's mode or clear contained poison. Keep runtime/diagnostic context construction at its existing boundary.
 
@@ -174,10 +178,10 @@ There is at most one outstanding `next()` under the trusted consumer contract. G
 | Ordered structural failure | Reject that step with the existing poison and close future enumeration. Payload poison remains item data. |
 | `return()` with no pending step | Close future enumeration; release unread cursor state; return `done: true`. |
 | `return()` with a pending step | Close future enumeration and release cursor-only state immediately. The issued step retains exactly what it still needs and finishes with its original result/failure. |
-| Repeated close or `next()` after local termination | Return `done: true`; do not reopen the source. |
+| Repeated close or `next()` after local termination | Return `done: true`; do not reopen the source or reinterpret prior stop/failure as healthy empty input. |
 | Execution fatality | Reject outstanding public results through the common fatal boundary; subsequent entry observes the fatal. |
 
-`return()` does not mean that the previously issued request, body work, or shared production has finished. A required never-settling input can keep that one request pending. The caller remains responsible for receiving or discarding its result, including normal binding cleanup. This is consistent with the runtime's existing no-timeout/no-cancellation contract.
+`return()` does not mean that the previously issued request, body work, or shared production has finished. A required never-settling input can keep that one request pending. The caller remains responsible for receiving or discarding its result, including normal binding cleanup. This is consistent with the runtime's existing no-timeout/no-cancellation contract. Under [mode-specific validity and completion](../iterate-plan.md#mode-specific-validity-and-completion), complete establishes source validity before its first successful step. Cascada's logical break and function return use ordinary control channels and conditionals at every affected scope; neither is equivalent to this low-level cursor return. Preserve existing scope/loop dependencies when optimizing that lowering. Cursor closure itself adds no whole-producer wait to either stream.
 
 Cancelling the step to `done: true` would introduce an avoidable timing distinction: the all-ready execution had already returned an item, while delayed delivery would erase that same issued request. Preserving the request also avoids adding an abort event, request queue, or new cancellation owner.
 

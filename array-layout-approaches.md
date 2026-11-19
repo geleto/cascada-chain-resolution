@@ -6,7 +6,7 @@ Use **one queryable block layout integrated with the existing Array machinery**.
 
 Use **[Variant B: persistent sequence](docs/remap-structure-variant-B.md)** for retained block layouts: small flat leaves, a balanced tree of relative count measures when needed, exclusive-node reuse, and path copying for shared nodes. Variant A remains a comparison baseline, not a second implementation to deliver.
 
-The architecture and storage variant are selected; production implementation and work bounds are not yet validated. Balancing details, leaf capacity, cache policy, and materialization thresholds remain implementation choices. [iterate-plan.md](iterate-plan.md) owns the method contracts, iterator API, effect/failure rules, and rollout. [Data limitations](docs/data-limitations.md) remains authoritative for current production behavior. The [Chain modes and failure contract](poison-policy-plan.md) define complete, sequential-stream, and unordered-stream behavior, including fallback positions, missing-output markers, and [status-only repair](repair-simplification-plan.md). Actual path flags block access in every mode; unordered mode avoids creating flags solely for positional uncertainty. Structural streaming requires the corresponding failure rules, not merely a new storage format.
+The architecture and storage variant are selected; production implementation and work bounds are not yet validated. Balancing details, leaf capacity, cache policy, and materialization thresholds remain implementation choices. [iterate-plan.md](iterate-plan.md) owns the method contracts, iterator API, effect/failure rules, and rollout. [Data limitations](docs/data-limitations.md) remains authoritative for current production behavior. The [Chain modes and failure contract](poison-policy-plan.md) define complete, sequential-stream, and unordered-stream behavior, including fallback positions, missing-output markers, and [status-only repair](repair-simplification-plan.md). Ordinary path flags block access; only the streaming modes can use the explicit certified-prefix allowance. Complete consumption uses its strict captured-Array validity gate, and unordered mode avoids creating flags solely for positional uncertainty. Structural streaming requires the corresponding failure rules, not merely a new storage format.
 
 The design must preserve sequential equivalence, captured versions, ownership, and deterministic poisoning. The plan's supported dependency rules define which facts must be available and survive failure. Conservative internal bounds cannot override those rules. Representation choices change computation cost, not required dependencies, command effects, or poison presence.
 
@@ -170,7 +170,7 @@ The first three positions are available independently of `d`. The remainder reta
 | 1 | `[A, B, X, D]` |
 | 2 | `[A, B, X]` |
 
-If the count fails, the streaming fallback is `[A, B, X, Error, Error]`: C/D might have been deleted and cannot be recovered. The removed-elements call result is poison. Complete mode instead fails the whole Array before iteration begins. A/B/X can be published early only in a streaming mode and after ordinary publication prerequisites.
+While the count is pending, includes(D) waits because D survives for counts 0/1 and disappears for count 2; neither false nor Error is justified by that uncertainty. If the count actually fails, the streaming fallback is `[A, B, X, Error, Error]`: C/D might have been deleted and cannot be recovered. The removed-elements call result is poison. Complete mode instead flags unchanged [A,B,C,D]; repair clears that status. A/B/X can be published early only in a streaming mode and after ordinary publication prerequisites.
 
 If a later command assigns `a[1] = "Y"`, its successor uses the new point version. Count settlement or fallback must not restore `B` there. An earlier capture still sees `B`.
 
@@ -206,7 +206,9 @@ Retain [minimum, unknown] when no useful upper bound is available, subject to Ar
 
 ### 4.3 Ordered progress
 
-All publication examples assume target, authority, ordering, and validation prerequisites. Complete mode additionally waits for the captured Array's required structural outcome. Genuine path flags block access in every mode.
+All publication examples assume target, authority, ordering, and validation prerequisites. Complete mode keeps candidate mutation changes private until success and gates even unchanged regions while earlier work could still poison the captured Array. Lookup, methods, writes, iteration, result handoff and nested export/native consumption share that rule. Ordinary path flags block access; only the two streaming modes use the explicit [poisoned-Array/usable-prefix state](poison-policy-plan.md#poisoned-array-with-a-usable-prefix). Its allowance and boundary belong to the captured layout, not a mutable threshold on backing storage.
+
+The [complete-only validity tracking rule](poison-policy-plan.md#tracking-complete-mode-validity) derives safety from captured failure scopes, required fallible work and relevant issuer closure. Exact counts or a currently healthy prefix are insufficient; conversely, safe pending payloads or layout facts need not block validity. Keep those facts separate in the shared evaluator and apply each mode's publication rules.
 
 1. Capture the Array version through the common property boundary.
 2. Ask whether the next position exists and which final occurrence supplies it.
@@ -216,9 +218,9 @@ All publication examples assume target, authority, ordering, and validation prer
 
 Pending payloads in delivered elem Chains settle independently. Their settlement need not restart the cursor. Required errors and completion retain the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
 
-The [future unordered iterator](iterate-plan.md#future-out-of-order-element-delivery) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. Implement occurrence discovery in the unordered stage; ordinary payloads can already settle out of order.
+The [future unordered iterator](iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. Implement occurrence discovery in the unordered stage; ordinary payloads can already settle out of order.
 
-The following [bounded-window phase](iterate-plan.md#bounded-window-iteration) restricts demand to [f,r), where Cascada owns both boundaries and B bounds unfinished positions. Initially r=B; every newly completed admitted occurrence extends r once, including before its exact index settles. Advancing f across the proved completed prefix does not credit those completions again. Thus interior completions expand the window, and retiring them later shrinks its width. Before source/capacity clipping, (r-f) minus completed positions inside the window equals B.
+The following [bounded-window phase](iterate-plan.md#bounded-window-iteration) restricts demand to [f,r), where Cascada owns both boundaries and positive integer B bounds unfinished positions. Initially r=B, capped by capacity. Each newly finalized position extends r once: either its body completed or a proved structural skip retained its failure obligation. Pending indexes do not delay a credit backed by containment. Advancing f across the finalized prefix earns no second credit. Before source/capacity clipping, (r-f) minus finalized positions inside the window equals B. Kernel skip proofs must advance demand during a pending pull; they are not delivered iterations. Batch failed spans without per-slot bookkeeping, and never clip to a merely available prefix.
 
 A guaranteed, not-yet-delivered occurrence with possible final index range [lo,hi] is eligible when lo >= f and hi < r, without awaiting its exact index or payload. Intersecting ranges alone cannot establish admission. Include declared fallback in these bounds and preserve count correlations through composed mappings. Completed occurrences with unknown indexes remain excluded from delivery; their pending position resolution must not duplicate an earlier capacity credit.
 
@@ -249,7 +251,7 @@ a!.reverse()
 iterate a
 ```
 
-Length bounds progress through `[0, 2]`, `[1, 3]`, and `[1, 3]`. The appended value is last regardless of the deletion count. The negative-index read must return `"Z"` without waiting for that count; after reverse, position zero must likewise yield `"Z"`. While the count is pending, dependent length and positions remain unresolved. On failure, streaming modes apply their specified fallback to the earlier region; complete mode fails the Array. Fallback must preserve Z and every other fact already published.
+Length bounds progress through `[0, 2]`, `[1, 3]`, and `[1, 3]`. The appended value is last regardless of the deletion count. The negative-index read must return `"Z"` without waiting for that count; after reverse, position zero must likewise yield `"Z"`. While the count is pending, dependent length and positions remain unresolved. On failure, streaming modes apply their specified fallback to the earlier region; complete mode flags retained current data and blocks the dependent push/read/reverse. Streaming fallback must preserve Z and every other fact already published.
 
 The selector reduction is:
 
@@ -281,6 +283,14 @@ A declared push-only mode on an entered reference supplies the append guarantee.
 Compiler-generated failure publication remains permitted through the trusted boundary: it can publish a missing-output marker or a genuine path status as specified below. This is not an application mutation authorized by the push-only capability.
 
 The declaration supplies the mutation restriction without a whole-program effect proof. It does not itself establish target validity, capacity, failure coverage, or append order. Preserve ordinary unused-reference behavior: setup need not consume an unavailable target solely to validate a reference the body never uses.
+
+#### Contribution count bounds
+
+Carry a proved count bound on an ordered contribution when available, using the shared captured shape facts. This is trusted compiler/runtime information, not a new application limit or a promise that push-only authority itself supplies a bound. Without a tighter proof the contribution remains unbounded apart from global Array validity, and later capacity/index/window queries may have to wait. Do not reject or truncate otherwise valid appends to satisfy an invented bound.
+
+Derive simple bounds from declared command structure: count inserted values, not push sites; join sequential contributions; take a conservative branch maximum; compose known loop/call bounds. Unknown argument cardinality, recursion or unbounded iteration provides no tighter bound without another proof. Include all possible retained appends, nested contributions and required failure markers. A success-only bound is insufficient, and an unknown control may provide no positive lower bound. Reuse count dependencies rather than keep a separate append-history ledger or add defensive validation of compiler-owned facts.
+
+For [optional A] + [B], the first contribution has width [0,1] when its failure replacement is one marker and no partial append can precede that failure. B's possible index is then [0,1], and total width is at most two. This can prove capacity and permit B in a bound-two initial window without knowing the condition. If the earlier contribution can retain an append and then require another marker, its upper bound must include both. Pacing and effect ordering still use their ordinary proofs. These bounds never reserve an artificial last slot or reduce the Array's legal capacity.
 
 #### Overlapping references
 
@@ -327,11 +337,13 @@ Use the [common missing-output contract](poison-policy-plan.md#6-missing-output-
 | --- | --- |
 | A pushed payload rejects | Poison only its established value; preserve contribution count and iterator eligibility. |
 | An independent observation or callback result fails | Fail that result; do not automatically poison entered data. |
-| A condition or enumeration fails and required output may be missing | In streaming modes, retain issued work and add one structural Error element for the failed contribution. Complete mode fails the Array. |
+| A condition or enumeration fails and required output may be missing | In streaming modes, retain issued work and add one structural Error element for the failed contribution. Complete mode publishes own status over retained current data; it does not discard earlier successful appends. |
 | An actual scope/path or required publication prerequisite fails | Keep its specified failure scope and ordering. Genuine path poison blocks access in every mode. |
 | Fatal runtime failure | Keep the existing fatal contract. |
 
 Put the marker at the reserved contribution boundary, before later parent appends. With no tighter location facts, use the captured end; otherwise respect captured bounds and established positions. One failed contribution adds one marker, not one per hypothetical item. Positional uncertainty alone adds none: known inserted values remain represented.
+
+Keep source representation distinct from consumer-loop propagation. A capacity-safe missing contribution uses its marker, not an additional source-own flag. Reuse Cascada's declared loop poison targets and ordered command insertion, but adapt publication at the Phase 8/9 boundary: today's generic chain poison replaces the whole target value and does not implement retained Array data, regional markers or prefix allowance. Map the declared cause and target through the selected kernel failure policy; do not claim that the current ErrorCommand transport already preserves the new state. Existing break lowering is unaffected.
 
 The marker is ordinary Array storage with a structural failure role. Array methods move, overwrite, or remove it normally; iteration reports it as structural failure rather than a healthy occurrence. Do not add a zero-sized side channel or permanent error-history ledger. Preserve that role through capture and materialization without confusing ordinary payload Errors with markers.
 
@@ -341,11 +353,11 @@ Land capability enforcement and ordered compiler failure publication together. T
 
 #### Capacity and path status
 
-Every published insertion, including a possible marker, needs capacity at its logical position. A later push behind an unbounded earlier contribution may have to wait. A total upper bound can prove safety without exact counts; filtering a captured valid Array into an empty Array is bounded when the whole failure contract also fits that bound. Pre-existing output, multiple pushes per input, and independent failure markers require their own accounting.
+Every healthy published insertion needs a proved position below the successful Array limit; a streaming insertion beyond it becomes structural Error under the shared capacity rule. Include possible marker positions in the same count and publication proofs. A later push behind an unbounded earlier contribution may have to wait. A total upper bound can prove safety without exact counts; filtering a captured valid Array into an empty Array is bounded when the whole failure contract also fits that bound. Pre-existing output, multiple pushes per input, and independent failure markers require their own accounting.
 
-Complete mode waits for required structural completion. Streaming modes can publish independent occurrences only if no remaining prerequisite can invalidate those publications. An unrestricted entry, uncertain capacity, or potential genuine whole-path blocker can therefore prevent early access; a safe append bound alone is not universal permission.
+Complete mode waits for required Array/ancestor validity and the requested structural facts, rather than every payload or layout fact. Streaming modes can publish independent occurrences only if no remaining prerequisite can invalidate those publications under their selected failure/prefix rules. An unrestricted entry or an explicitly specified whole-path blocker without a usable-prefix guarantee can therefore prevent early access. Uncertain capacity gates only affected streaming occurrences; a safe append bound alone is not universal permission.
 
-For a required append beyond Array capacity, no legal extra slot exists. Use the specified whole-Array failure boundary: ordinary Error in complete mode, genuine affected-path status in streaming modes. Do not introduce a poisoned-size state or bypass that status. This exceptional case cannot retract an earlier publication; discharge the relevant validity prerequisites first.
+Apply capacity at each issued append incrementally. Streaming overflow creates a compressed poisoned tail, not an extra diagnostic marker or blocking root flag. The [capacity boundary](iterate-plan.md#capacity-by-mode) keeps complete output behind its validity gate while production could still poison it, then blocks ordinary access on failure. The two streaming modes retain unaffected occurrences and report their structural tail failure through ordinary iterator handling. Recording/querying poison needs no prefix traversal; explicit streaming iteration retains its ordinary cost. Earlier handed-off values and completed results cannot be retracted. Internal producer writes use their private predecessors and never wait on their own enclosing output.
 
 #### Integration order
 
@@ -388,6 +400,8 @@ destination → source
 - Start with resolved indexes/counts. Pending element values do not obstruct composition; unresolved coordinates can leave parts deferred.
 - Preserve dependencies needed to finish deferred regions. Earlier captures and required command work may still need intermediate mappings.
 - If operation mappings are retained as a sequence, they can be folded one by one. Flattened blocks instead describe pieces of one output, each read from its captured source.
+
+Composition must retain the [loss and causal Error spans introduced by each operation](iterate-plan.md#preserve-loss-at-each-operation). For oversized streaming layouts, inverse-looking edits such as two reversals or unshift followed by shift are not generally cancellable. Incorporate each operation's tail projection before composing its successor; never restore a discarded source through a fused selector. Preserve existing structural Error causes on unchanged or moved positions, and coalesce only compatible causal spans. These restrictions use the common layout facts and do not require an operation-history log.
 
 #### Shared conditions in nested selections
 
@@ -514,7 +528,7 @@ Keep effect decisions at the operation, independent of representation optimizati
 
 Identical captured selectors or a repeated-source block can prove data independent without reading payloads. Preserve those required relationships through composition, copying, materialization, and settlement; representation must not change which arguments introduce poison. Retain compact source facts rather than old containers or complete command history solely for this proof.
 
-Such a data proof does not erase prescribed writes. For example, sorting a known repetition of one captured payload needs no comparator to determine the mapping, but still performs its specified writes. Do not scan or await old values solely to discover equal contents; comparisons and value inspection required by the operation itself retain their ordinary dependencies.
+Such a data proof does not erase prescribed writes or required callbacks. Sorting two or more sortable occurrences still requires its ordinary comparison work, even when they share a payload selector or have equal values. Literal construction, repetition, copying, and materialization cannot select different callback failures. Do not scan or await old values solely to discover equal contents; comparisons and value inspection required by the operation itself retain their ordinary dependencies.
 
 ### 7.3 Poison, validation, and repair
 
@@ -522,7 +536,7 @@ Pending inputs remain pending. Analysis not yet performed is not failure. Apply 
 
 Use one [mode/failure contract](poison-policy-plan.md) throughout layout queries, composition, and ordinary consumers:
 
-- Complete mode exposes the Array only after its required structural outcome; structural failure normally produces ordinary root Error. The [mutating-sort exception](poison-policy-plan.md#sorting-requires-order) retains repairable Array-path status for required preparation/comparison failure in every mode.
+- Complete mode withholds candidate mutation changes until success and gates all ordinary consumption while earlier work could still poison that version. Failure marks retained current data and repair clears that status; there is no usable-prefix exception. Failed copies return result-root Error. The [sort boundary](poison-policy-plan.md#sorting-requires-order) follows this rule and overrides streaming regional failure.
 - Sequential mode publishes the structurally fixed prefix. Surviving occurrences with lost positions receive repairable flags at deterministic fallback positions.
 - Unordered mode preserves and can deliver guaranteed survivors despite positional failure; it adds no positional Error merely to report ordering that this mode does not require.
 - Potential deletion or overwrite produces permanent structural poison. Possibly missing output gets one real marker for that failed contribution. Ordinary payload poison affects only the value.
@@ -691,7 +705,7 @@ Use method-specific transfer rules over the common captured facts, with the spec
 6. Retained snapshots followed by writes, truncation, replacement, and retirement/re-entry. Include pending `a.length` captures before each push; retain only their needed shape facts and distinguish those from captures retaining layout storage.
 7. Many pending operations on a small Array, including operations later proved to have no effect.
 8. An indefinitely pending branch while unrelated work completes and releases sources. Include an iterator that has handed off a separately backed prefix, with its original Array replaced and no other prefix owner; unread tail state must not retain that spent prefix. Repeat with pending requested metadata and earlier snapshots that legitimately retain it.
-9. Concat accumulation: first use pending part roots, where classification/capacity can hold the result root; then use classified partial Arrays with safe length bounds and unresolved widths, so many regions coexist in a valid layout. Check independent progress, retained captures, and bounded propagation without treating unclassified parts as published regions.
+9. Concat accumulation: first use pending part roots, where the current classification contract can hold the result root; then use classified partial Arrays with safe length bounds and unresolved widths, so many regions coexist in a valid layout. Check independent progress, retained captures, and bounded propagation without treating unclassified parts as published regions.
 10. Return to compact storage after structural uncertainty resolves, including pending payloads and retained older versions. Alternate short uncertain edits with long append tails; reject policies that repeatedly flatten or rescan the accumulated Array merely to return to the compact path.
 
 Compare ready controls, varied settlement order, rejection, and synchronous delivery. Verify early accessibility with controlled or never-settling inputs rather than timing-based sleeps. Successful native operations can be an oracle for layout; revised dependency-based failure behavior needs its own semantic model.
@@ -718,6 +732,6 @@ Compare the new evaluator with the current implementation on ready inputs as wel
 
 After captured-layout and policy integration, test [push-only entries](#46-follow-up-open-append-regions-in-enter) with pending payloads, nested issuers, earlier unresolved branches, and later parent pushes. Cover inherited capability, forbidden descendant mutation, overlapping unrestricted references, private-prefix reads, final end detection, and closure.
 
-Distinguish payload poison, independent result failure, positional fallback, missing-output markers, and genuine scope flags. Verify marker position before later parent appends, one marker per failed contribution, ordinary removal/replacement, and no marker for a represented but misplaced value. Complete mode waits for structure; sequential mode issues only the fixed prefix; unordered delivery later discovers all guaranteed survivors.
+Distinguish payload poison, independent result failure, positional fallback, missing-output markers, and genuine scope flags. Verify marker position before later parent appends, one marker per failed contribution, ordinary removal/replacement, and no marker for a represented but misplaced value. Complete mode enforces its access gate on every consuming route, including unchanged-prefix reads, empty iteration, method results and nested export/native preparation; no payload scan or producer self-wait is added. Sequential mode issues only the fixed prefix; unordered delivery later discovers all guaranteed survivors.
 
 Exercise unknown exact length with safe total bounds, uncertain capacity, and failure fallbacks within those bounds. Query captured status independently of iterator consumption. Early consumer stop releases only its own uses and does not cancel shared production. Measure representation of later contributions behind earlier open regions separately from unavoidable capacity or authority waits.

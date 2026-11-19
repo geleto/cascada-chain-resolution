@@ -161,6 +161,8 @@ Whole-layout reversal changes the version's orientation, exchanging the roles of
 
 Interpret deferred selectors through that orientation without modifying shared source descriptors. Pending facts still describe the same captured source. Point overrides must participate in the reversal through the same capture/folding rules.
 
+An orientation change describes only the mapping. Apply and retain the common [lossy tail transition](../iterate-plan.md#preserve-loss-at-each-operation) at each semantic operation; cancelling inverse mappings must not recover discarded data or merge distinct Error causes. This contract is identical to Variant B's even though their storage-update costs differ.
+
 ## Queries and publication
 
 Queries evaluate shape, membership, selection, or values through the common logical-property boundary, including overrides.
@@ -189,7 +191,7 @@ With normalized counts `p1` in `[0, 2]` and `p2` in `[0, 1]`, `M` is always pres
 
 Ordered iteration issues the structurally published prefix: membership, intended position, and final payload source must be established. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
 
-A future iterator delivers guaranteed surviving occurrences before their numeric indexes are known, carrying index futures as specified in the [iteration plan](../iterate-plan.md#future-out-of-order-element-delivery). Numeric queries remain useful, but occurrence discovery and delivery require their own final-phase integration over the same layout.
+A future iterator delivers guaranteed surviving occurrences before their numeric indexes are known, carrying index futures as specified in the [iteration plan](../iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors). Numeric queries remain useful, but occurrence discovery and delivery require their own final-phase integration over the same layout.
 
 ## Captured versions
 
@@ -223,7 +225,7 @@ Use the shared [waiting-shape-query protocol](../array-layout-approaches.md#63-w
 
 ## Failure
 
-Apply the common [mode and fallback contract](../poison-policy-plan.md), including its [sort exception](../poison-policy-plan.md#sorting-requires-order). Complete mode waits for the required structural outcome and normally produces whole-Array Error on failure; mutating-sort preparation/comparison failure retains repairable own status in every mode. Streaming modes retain independent facts and use the specified fallback layout; the representation cannot choose extra poison or an empty extent merely to simplify storage.
+Apply the common [mode and fallback contract](../poison-policy-plan.md), including its [sort exception](../poison-policy-plan.md#sorting-requires-order). Complete-mode mutation failure flags retained current data; a failed copying call returns root Error. Streaming modes retain independent facts and use the specified fallback layout. This comparison design defines no separate failure policy: the representation cannot choose extra poison or an empty extent merely to simplify storage.
 
 Sequential mode flags surviving occurrences whose intended positions are lost. Unordered mode keeps those occurrences usable without positional flags or an extra marker. Potentially deleted or overwritten occurrences become permanent structural poison; possibly missing output gets one real Error marker per failed contribution. Ordinary payload rejection remains value poison only.
 

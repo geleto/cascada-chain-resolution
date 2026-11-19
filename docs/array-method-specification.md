@@ -6,26 +6,35 @@ This document specifies the method-level rules for [iterate-plan.md](../iterate-
 
 An operation captures its predecessor and inputs at issuance. It can have a receiver successor, a direct result, required effects, and retained result-data production. Evaluate their dependencies separately. A completed direct result must include every effect its contract promises complete; receiving a partial value does not complete unrelated producers or native effects.
 
+Every ordinary complete-mode consumption passes the shared [captured-Array access gate](../poison-policy-plan.md#complete-access-gate), including unchanged regions, observational and mutating receiver selection, writes, direct results, and nested export/native preparation. The gate certifies that earlier work cannot still poison the selected Array; it does not scan every payload. Queries, repair, whole-value replacement/deletion and unconsumed reference capture keep the exceptions stated there. Producer commands use their private predecessor, not their enclosing output future.
+
+Use the [complete-only validity tracking rule](../poison-policy-plan.md#tracking-complete-mode-validity) to distinguish failure ownership and relevant open issuers. Healthy argument delivery does not exclude validation, comparison or publication failure. Ordinary stored-payload rejection and independent result failure add no receiver-wide dependency by themselves. Validity can precede unrelated payload/layout completion; it does not waive the method's selection, mutation publication or result-completion requirements. The two streaming modes keep their separate publication rules.
+
 Do not replay an operation after settlement. Its deferred producer refines the same captured facts. Later operations compose with that successor, including its declared failure outcome, rather than with whichever physical data happens to be available.
 
 Without !, all nine mutation-capable Array methods return the transformed copy and preserve their source. With !, they publish receiver changes and return the JavaScript method result. This retains the existing uniform observation-copy contract; splice returns removed elements only in mutation mode.
 
 Copy-producing calls, including slice/concat/flat/toSorted/toSpliced/with, use the source Chain's mode for their result:
 
+Compiler-created expression holders preserve that mode under the [temporary-inheritance rule](../poison-policy-plan.md#expression-temporaries). An explicit receiving channel can choose its own policy; inserting an implementation temporary cannot.
+
 | Mode | Result handoff and later failure |
 | --- | --- |
-| Complete | Wait for required structural production; relevant structural failure returns ordinary root poison. Stored payloads can remain pending. |
+| Complete | Pass the source and result validity/access gates before healthy handoff; relevant structural failure returns ordinary root poison. Stored payloads can remain pending. |
 | Sequential stream | After root validity, return a partial copy. Later production publishes the specified regional Errors or positional flags in that captured copy. The root is not replaced retroactively. |
 | Unordered stream | After root validity, return a partial copy and preserve guaranteed survivors. A later ordering-only failure creates no positional Error or missing-output marker. |
 
 Sort and toSorted are exceptions to position-only recovery: explicitly requesting sort requires ordering, including in unordered mode. Required sorting success precedes result access; no healthy unsorted fallback escapes after comparator failure. A pending sort cannot hand off guaranteed survivors or its fixed undefined/hole suffix before a possible whole-result failure is excluded. Other methods retain their selected positional fallback. Required work still completes; no mode cancels already-required callbacks.
 
-Mutating calls have a separate receiver and direct result. Their receiver can publish permitted regions while the direct result retains its required control/effect dependencies and reports a failed required call. No payload-only wait is added. Root invalidity—failed target/category/authority, with index invalidity, capacity, or required unlimited-flat cycle validation—precedes any root handoff in every mode. These outcomes cannot be converted into a late flag on an already exposed copy.
+Mutating calls have a separate receiver and direct result. Streaming receivers can publish permitted regions while the direct result retains its required control/effect dependencies. Complete mode keeps candidate changes private until success and gates all receiver consumption while earlier work could still poison the Array, even an unchanged prefix. Failed mutation marks retained current data and repair clears that flag. An independent Error result or ordinary payload rejection is not failure of a successful mutation. No payload-only wait is added. Root invalidity—failed target/category/authority, with index invalidity, complete-mode capacity, or required unlimited-flat cycle validation—precedes root handoff. The [streaming capacity rule](../iterate-plan.md#streaming-capacity-revision) applies to finite copying operations and open producers alike; capacity alone does not gate a streaming copy root.
+
+For complete-mode reception of a streaming-produced oversized Array, distinguish existing-data access, genuine mutating no-ops and newly produced Arrays under the [cross-mode capacity rule](../iterate-plan.md#complete-mode-receiving-an-oversized-value). Non-growth alone does not establish validity. Splice's successor and removed result have separate counts; the [oversized removed-result decision](../iterate-plan.md#decision-oversized-removed-result-in-complete-mode) must be settled before that cutover. Streaming capacity always retains the per-operation loss and causal-span rules below the common boundary.
 
 ## 2. Closed fact and query vocabulary
 
 Use captured placement selectors, spans, joins, reversal, restriction, repetition/holes, conditional selection, and method-specific deferred regions. Keep the following facts separate:
 
+- captured Array access validity and any still-required whole-Array failure decision;
 - shape: exact count, conservative bounds, and the semantic count producer;
 - presence and source selection at a front/end-relative coordinate;
 - guaranteed occurrence membership, independent of numeric position;
@@ -35,7 +44,11 @@ Use captured placement selectors, spans, joins, reversal, restriction, repetitio
 
 The required reductions are exact arithmetic on ready controls, interval exclusion, identical captured selectors, identical normalized coordinates, shared internal guards, endpoint composition, clamped-affine count fusion, empty ranges, and each method's ordinary comparisons/short circuits. Reuse the [common rules](array-iteration-technical-analysis.md#3-small-common-reduction-rules). No combinations of hypothetical comparator outcomes, old-payload equality pass, cross-lookup provenance registry, or general constraint solver are required.
 
+Identical-selector and span-coalescing reductions are fact-specific. Equal payloads or the same Error object cannot merge different presence, own status or structural roles. A flagged hole and a healthy hole are not interchangeable, and a structural Error retains different iteration/search prerequisites from ordinary payload poison. Preserve the full facts needed by each consumer and keep prescribed writes separate.
+
 Every remaining question retains its actual pending prerequisites. On failure, apply the declared footprint after the required reductions; do not make poison unconditional while another fact can prove it irrelevant. More conservative progress is permitted outside those required reductions. Storage layout, settlement timing, and accidental discovery order never select a different rule.
+
+Every ready publication must agree with all successful completions still possible for the captured state. Pending controls are not Errors, holes, omitted output, or chosen fallback coordinates. Exact method results, sparse presence, occurrence multiplicity, aliases, and prescribed writes must match the all-ready sequential execution. Internal over-approximation can postpone a proof but cannot establish a false answer or a new failure. Repeated source provenance cannot remove callbacks or conversions that ordinary equal-valued inputs still require.
 
 ## 3. Unknown lengths and shared controls
 
@@ -51,7 +64,7 @@ The numeric result may be pending; the relationship is already known. Preserve o
 
 Two uses of the same internal captured normalized fact have one outcome. A split at S has counts S and L-S whose total is L. Splice's removed and retained suffix counts share one normalized deletion fact. Tree splitting, materialization, or balancing must not break those identities. Distinct argument positions are independent controls under the [API boundary](../iterate-plan.md#captured-control-identity-at-the-api-boundary), including when they receive the exact same Promise or Error. Successful normalized values can still be compared; self-copy follows proved numeric equality, not shared argument identity.
 
-If the source length is unresolved, keep named count operations and end-relative coordinates. Do not substitute a guessed L. Positive fixed bounds can often be discharged by membership questions; negative bounds retain their source-end relationship. For example, in-range output i of `copyWithin(t,s,e)` with nonnegative ready arguments uses q=s+i-t and writes exactly when t<=i, q<L, and q<e. It does not need exact L when those predicates are established.
+If the source length is unresolved, keep named count operations and end-relative coordinates. Do not substitute a guessed L. Positive fixed bounds can often be discharged by membership questions; negative bounds retain their source-end relationship. For example, in-range output i of copyWithin(t,s,e) uses q=s+i-t and selects that copied source when t<=i and q<e. Prescribed writes additionally require normalized t!=s and the sparse/status rules below. Exact L is unnecessary when the required predicates are established.
 
 ### Correlation and fallback
 
@@ -74,7 +87,7 @@ Construct a permitted output arrangement, then classify its occurrences:
 3. Replace uncertain survival/content selections with permanent structural Error; discard candidate payloads no live capture needs.
 4. Use a missing-output marker only for a contribution with no established output placement representing its failure. An existing structural Error span is not supplemented with a diagnostic marker.
 
-The arrangement must preserve all established facts, even facts not yet observed. Include fallback in capacity and publication proofs. A skeleton never authorizes a guessed healthy value, an out-of-capacity slot, or restoration of a potentially deleted candidate.
+The arrangement must preserve all established facts, even facts not yet observed. Include fallback in capacity and publication proofs. A skeleton never authorizes a guessed healthy value or restoration of a potentially deleted candidate. Streaming positions beyond the successful Array limit contain structural Error under the common tail rule, never a healthy retained payload.
 
 Ordinary edits move/copy/remove Error slots and positional flags with their logical occurrences. Overwriting a destination replaces its prior local status. A genuine ancestor/path blocker remains a prerequisite until explicit repair or replacement. Complete mode applies its whole-Array structural failure boundary before consumption.
 
@@ -82,13 +95,13 @@ Ordinary edits move/copy/remove Error slots and positional flags with their logi
 
 | Methods | Mapping and failure behavior |
 | --- | --- |
-| push/unshift | Join k captured payloads after/before the source. Count L+k. Preserve all payloads independently; validate capacity before publication. Unknown L leaves append indexes pending, not payloads. |
+| push/unshift | Join k captured payloads after/before the source. Count L+k. Preserve payloads independently wherever their final/fallback position is proved below the successful Array limit; apply mode-specific capacity failure elsewhere. Unknown L leaves append indexes and any affected capacity eligibility pending. |
 | pop/shift | Retain all but the last/first occurrence; count max(L-1,0). The mutation's removed-value result is independent of the surviving receiver; an empty source returns undefined. Observation returns the shortened copy. |
 | reverse/toReversed | Reverse orientation and preserve L. toReversed densifies holes. No payload reads are required to move occurrences. |
 | slice | Restrict to normalized [s,e), preserving holes. The known-length range/fallback rules are in the [bounded analysis](array-iteration-technical-analysis.md#determined-shape-slice-and-fill). Unknown L retains the same restriction over captured normalizers. |
 | splice/toSpliced | Join prefix, k inserted payloads, and suffix after normalized deletion. Preserve correlated count L-d+k. Mutating splice separately selects its removed [s,s+d) result; observational splice returns the sparse successor; toSpliced returns the dense successor. Use the [bounded splice rule](array-iteration-technical-analysis.md#5-a-bounded-splice-fallback) with the internal normalizer relationships above; argument positions remain independent. |
 | with | Prove replacement-index validity before root handoff. Replace exactly that position and densify the copy. Its old payload is unused. An irrelevant replacement payload is not consumed when validity already fails. |
-| concat | Classify consumed part roots before root handoff: each valid Array contributes its captured sequence; another healthy root contributes one value. Failed required part-root preparation fails the call. Known Array parts may retain partial shape or pending payloads; concatenate their semantic counts and validate total capacity. |
+| concat | Classify consumed part roots before root handoff: each valid Array contributes its captured sequence; another healthy root contributes one value. Failed required part-root preparation fails the call. Known Array parts may retain partial shape or pending payloads; concatenate their semantic counts and apply mode-specific capacity publication. |
 
 Indexed writes, length writes, and deletion use the same shape/override boundary. Known-index assignment establishes its slot and growth; a rejected payload poisons only that value. A general unresolved property key is not yet an index and may select length. A failed required length/key selection follows its existing whole-path boundary, not an invented regional resize. Deletion establishes absence without consuming an unused old payload; length does not shrink.
 
@@ -106,12 +119,12 @@ For an in-range destination i, normalized target t, start s, and end e:
 
 ```text
 q = s+i-t
-write at i iff t <= i and q < e
-written source = captured predecessor[q]
-otherwise source = captured predecessor[i]
+selectCopied = t <= i and q < e
+selected source = selectCopied ? captured predecessor[q] : captured predecessor[i]
+writeRange = t != s and selectCopied
 ```
 
-The ordinary min with L-t is already enforced by i<L. Keeping q tied to t and s prevents overlapping copies from reading their own writes or inventing independent source offsets.
+The ordinary min with L-t is already enforced by i<L. Keeping q tied to t and s prevents overlapping copies from reading their own writes or inventing independent source offsets. The selection formula remains valid for t=s because q=i, but that case prescribes no writes and makes end irrelevant. writeRange is only a candidate effect region: actual sparse/status publication still follows the rules below.
 
 For known L and independent bounds t=[t0,t1], s=[s0,s1], e=[e0,e1]:
 
@@ -119,12 +132,14 @@ For known L and independent bounds t=[t0,t1], s=[s0,s1], e=[e0,e1]:
 tMax = min(t1,i)
 possible copied sources = [s0+i-tMax, min(s1+i-t0,e1-1,L-1)]
                          when t0 <= tMax and the interval is nonempty
-definitely written = t1 <= i and s1+i-t0 < e0
+always selects copied branch = t1 <= i and s1+i-t0 < e0
 ```
 
-Include original source i when the destination is not definitely written. Reduce identical captured selectors and uniform hole/repetition spans before retaining a control dependency. A relevant failed selector produces structural Error at that destination; unaffected sources are not poisoned. Do not enumerate every candidate index to represent a range.
+Include original source i when copied-branch selection is not definite. These bounds describe possible payload sources, not a write proof. A definite write-range proof also excludes t=s across all remaining permitted controls; with independent intervals, disjoint t and s intervals suffice. Preserve shared normalizer relationships rather than applying independent-interval tests to correlated controls. Reduce identical captured selectors and uniform hole/repetition spans before retaining a control dependency. A relevant failed selector produces structural Error at that destination; unaffected sources are not poisoned. Do not enumerate every candidate index to represent a range.
 
-If normalized target and source are provably identical, prescribe no writes and ignore end. Otherwise preserve ordinary same-value writes and sparse semantics: copying a hole deletes a present destination; copying a hole onto an absent destination publishes no placement change. Write identity follows the method's prescribed effect, separately from content selection.
+If normalized target and source are provably identical, prescribe no writes and ignore end. Otherwise preserve ordinary same-value writes and sparse semantics: copying a hole deletes a present destination; copying a clean hole onto a clean absent destination publishes no placement change. Status transfer or clearing remains an effect. Write identity follows the method's prescribed effect, separately from content selection.
+
+Witness: after [A,B,C].splice(2,p), successful p=1 gives length two and copyWithin(0,-2) is self-copy; p=0 gives length three and the call writes from index one. The same pair with repeated X payloads has equal selected values but different write/identity outcomes. Neither the source-selection formula nor payload equality certifies effectiveness. Sparse own-status transfer also counts as an effect even if both old and new placements are absent.
 
 ## 7. sort and toSorted
 
@@ -132,11 +147,13 @@ If normalized target and source are provably identical, prescribe no writes and 
 
 Capture source presence and occurrence order before consuming sortable roots. A pending value is retained as its original payload producer. Keep three groups: present non-undefined values, present undefined values, and holes. Sort places those groups in that order; toSorted materializes holes as present undefined values.
 
-Apply comparison-free proofs first: fewer than two sortable occurrences, or a structurally known repetition of one payload selector, needs no comparator/default keys. Preserve the ordinary permutation, hole rules, and prescribed writes. Otherwise prepare every required default key or one canonical comparator snapshot of all comparator-visible values. Keep aliases within that snapshot.
+Apply semantic comparison-free proofs first: fewer than two sortable occurrences needs no comparator/default keys. Preserve the ordinary permutation, hole rules, and prescribed writes. Two or more occurrences do not lose comparison obligations because their payloads share a selector or happen to be equal. Otherwise prepare every required default key or one canonical comparator snapshot of all comparator-visible values. Keep aliases within that snapshot. Literal construction, fill, copying, and materialization must preserve the same logical callback/poison requirements.
 
 Once a needed supplied comparator fails selection/validation, callback-only argument export is irrelevant; do not await its nested data or switch to default-key conversion. Such preparation failures remain conditional until comparator selection establishes that they are needed. Keep the original payloads and source-classification/presence work still required by the failure boundary; do not materialize a fallback permutation. Later deep consumers still observe retained payload errors; fatal failures retain their normal boundary.
 
 Run the existing stable sorting algorithm only after required preparation is complete. Comparator execution remains synchronous with the existing Number-result validation. Stage the permutation privately under ordinary captures; publish sort data writes only after preparation and comparison succeed. Do not call the comparator speculatively, sort arrivals in settlement order, invoke it again to recover from failure, or expose a partial native permutation.
+
+Omitting the comparator removes callback failure, not all sort failure. Required source delivery, presence discovery and default-key conversion can still fail. Cascada's intrinsic conversion invokes no user coercion hooks, but a consumed Error, a rejected required value or an unsupported scalar-conversion category remains a failure. Once required source facts and all default string keys are established, intrinsic string comparison adds no recoverable failure dependency. Apply comparison-free proofs where possible; do not add a second health scan. Infallibility alone does not establish the permutation, and does not remove the selected sort publication barrier while ordering is unresolved.
 
 ### Whole-Array failure
 
@@ -152,11 +169,11 @@ Fixed undefined/hole partition facts may be calculated privately under the contr
 
 Walk captured present occurrences in source order. At depth zero, retain the value without consuming its root and omit source holes. At positive depth, consume only the root needed to distinguish a logical Array from a retained leaf; do not inspect unrelated descendants of a non-Array. Repeated references produce repeated output occurrences, not deduplicated values.
 
-Required source discovery, capacity, and unlimited-depth cycle validity are root prerequisites. Establish them before exposing a root they could invalidate. Valid discovered Array regions can retain partial captured shapes. A pending required prerequisite may wait indefinitely; do not fabricate a marker to escape it. Known payload Error at a retained leaf remains value poison. Required discovery/selection failures keep their declared root or structural boundary.
+Required source discovery, complete-mode capacity, and unlimited-depth cycle validity retain their current root-prerequisite contracts. Streaming capacity instead transforms the affected output tail; it does not block independent output. Establish them before exposing a root they could invalidate. Valid discovered Array regions can retain partial captured shapes. A pending required prerequisite may wait indefinitely; do not fabricate a marker to escape it. Known payload Error at a retained leaf remains value poison. Required discovery/selection failures keep their declared root or structural boundary.
 
-For the singleton cycle `const a=[]; a[0]=a` and unrestricted pending depth, finite depth is legal but Infinity is not. Root safety therefore cannot be inferred from the shallow fallback alone. Wait for the required control or a safety proof; a failed depth that leaves required root validity unprovable returns its causal root poison. Apply the same precedence to possible capacity-expanding depths, including branching cycles at finite depth. Regional failed-depth fallback requires proved root safety and does not authorize unrelated discovery.
+For the singleton cycle `const a=[]; a[0]=a` and unrestricted pending depth, finite depth is legal but Infinity is not. Root safety therefore cannot be inferred from the shallow fallback alone. Wait for the required control or a safety proof; a failed depth that leaves required root validity unprovable returns its causal root poison. Complete mode applies the same root precedence to possible capacity-expanding depths. Streaming modes retain the specific membership/position/count dependencies needed by the common poisoned-tail rule, including branching cycles at finite depth. Regional failed-depth fallback requires proved root safety and does not authorize unrelated discovery.
 
-Depth Infinity rejects an active Array-ancestry cycle through the existing InvalidArrayOperation boundary. Use captured identities; a repeated alias outside the active ancestry is not a cycle. Finite depth is semantically consumed on descent, but repeated Number subtraction is not a sufficient implementation: `2**54 - 1 === 2**54`. Use depth-safe compact handling of repeated captured cycles, rather than one recursive frame or retained transform per conceptual depth. A singleton cycle produces one retained cyclic value at every finite depth; branching cycles can exceed capacity and require a bounded count proof before expansion. Preserve the accepted finite-depth domain without BigInt, an implicit cap, or conversion to Infinity. Memoized subtree/depth work must preserve repeated occurrences and release with its live uses; never traverse unrelated data merely to build a cache.
+Depth Infinity rejects an active Array-ancestry cycle through the existing InvalidArrayOperation boundary. Use captured identities; a repeated alias outside the active ancestry is not a cycle. Finite depth is semantically consumed on descent, but repeated Number subtraction is not a sufficient implementation: `2**54 - 1 === 2**54`. Use depth-safe compact handling of repeated captured cycles, rather than one recursive frame or retained transform per conceptual depth. A singleton cycle produces one retained cyclic value at every finite depth; branching cycles can exceed capacity and require bounded, saturating count evaluation before expansion. In streaming mode, retain only the needed layout and compressed Error tail; do not expand the virtual count. Preserve the accepted finite-depth domain without BigInt, an implicit cap, or conversion to Infinity. Memoized subtree/depth work must preserve repeated occurrences and release with its live uses; never traverse unrelated data merely to build a cache.
 
 ### Failed depth
 
@@ -170,6 +187,10 @@ An existing marker or structural Error produced by an earlier operation retains 
 
 ## 9. Searches and scalar producers
 
+Use the [search demand and completion rules](../iterate-plan.md#search-demand-and-completion) over captured occurrence discovery. After splice(2,pendingCount,X) on [A,B,C,D], includes(D) waits for survival; includes(X) can succeed in a streaming mode after root/capacity prerequisites. For Z distinct from every payload, includes(Z) must also wait because count failure introduces relevant structural Error slots, even though all successful counts give false. Put positive and negative witnesses side by side. A negative proof includes the declared failure outcomes; ordinary candidate mismatches can remove controls that affect only eligibility, not an unexamined structural-failure outcome. Complete consumption still passes its source gate first.
+
+The discovery layer may be shared with unordered iteration, but the search retains source mode, range filtering, holes/presence semantics, managed-identity comparisons, and its complete possible-candidate frontier. Do not convert iterator availability exhaustion into false, suppress a pending candidate because it has not yet been delivered, or invoke a public iterator that loses needed eligibility/status facts. A match short-circuits includes; a negative result needs every possible relevant candidate excluded and no relevant open contribution. Negative fromIndex and directional numeric results retain their endpoint/order dependencies.
+
 - at consumes the selected captured occurrence, using end-relative coordinates when appropriate. Out-of-range proofs return undefined without consuming its payload.
 - includes returns true when a definitely eligible comparison matches. indexOf/lastIndexOf additionally establish the directional first match and numeric result. Holes participate only as the method specifies.
 - Known mismatches remove candidates before an unresolved range control is consumed. An empty possible candidate set gives false/-1 despite poison arguments. No general search through combinations of unknown comparisons is required.
@@ -182,15 +203,19 @@ Presence is distinct from value. Holes have length but no placement; value itera
 
 A hole can carry positional own status on its captured absent-slot fact or symbolic span. Status blocks access without creating present undefined data or a managed-child parent edge. Repair clears status while preserving absence; structural transfers preserve it, including when a dense copy creates the prescribed undefined placement. Explicit deletion clears selected status even on a hole and is then an effective publication. Unordered discovery treats repeated holes as distinct occurrences rather than deduplicating their undefined payloads.
 
+Project data presence, observable status and prescribed effects separately from that same capture. Sparse remapping and parent edges use underlying presence; status discovery also visits flagged absent slots; write detection includes moving, clearing or replacing status. Today's placementPresent helper treats own failure as observable presence, so it cannot supply every projection unchanged. Audit its Array consumers at cutover rather than globally changing it and losing status discovery. Reversing [flagged hole, clean hole] preserves two holes but moves the failure to the other index and is effective for identity. A clean hole copied over a flagged absent destination clears status and is likewise effective.
+
 Keep structural selection failure and missing-output markers as named numeric roles on logical placement/version captures, separate from their Error values. Ordinary payload is the default role. Remap moves and structural copies preserve the role; positional status remains the selected placement's own flag. Neither role nor status is inferred from Error identity, text, or delivery timing. A marker is one real Error slot, with no second positional container or new language value class.
 
 Explicitly receiving a looked-up Error as a new payload creates a new structurally known occurrence: `b.push(a[i])` may therefore hold ordinary payload poison even when a[i] was structurally invalid in a. The failure value remains; b's occurrence is now defined. In contrast, slice/concat/flat and other placement-preserving copies retain the original structural role. Copying an Array as a value also preserves roles inside it. This distinction follows fresh placement construction versus captured placement transfer and requires no Error-provenance registry.
 
-Shallow root/status queries do not scan descendants. Deep queries inspect actual retained output membership, including structural Error slots and flags; input retention is not membership. Conditional membership waits for its deciding facts. A true hasError may short-circuit on a certain retained failure; false and complete getErrors cover the required frontier. Use shared captured query state, never iteration draining or a historical Error log.
+Shallow root/status queries do not scan descendants. Deep queries inspect actual retained output membership, including structural Error slots and flags; input retention is not membership. Conditional membership waits for its deciding facts. A true hasError may short-circuit on a certain retained failure; false and complete getErrors cover the required frontier. Use shared captured query state, never iteration draining or a historical Error log. [Actual structural failure](../iterate-plan.md#search-demand-and-completion) is separate from pending membership; neither can be replaced by comparing a placeholder as negative evidence.
+
+The [poisoned Array with a usable prefix](../poison-policy-plan.md#poisoned-array-with-a-usable-prefix) permits access only in the two streaming modes. Complete consumption of that state remains blocked by its Array poison. Prefix-compatible methods use its captured [0,p) allowance and preserve the Array's failure. Check the actual whole-method footprint: copyWithin with source bounds inside the prefix can still write beyond it, and omitted/negative bounds can require the unavailable total length. Never run the method on an imagined truncated Array merely to make it fit. Prefix removal/splice and unshift update p through their ordinary mappings; property delete leaves a hole. Push is blocked. Scalar method results still use their actual dependencies, not p as a guessed total length.
 
 ## 11. Lifetime and publication integration
 
-Use property-version capture for pending inputs and parent-derived preservation for layout-owned values whose keys are not established. Do not create unconditional lease roots around layout cycles. A selection use retains its needed source slice and semantic shape facts separately.
+Use property-version capture for pending inputs and a parent-derived source-occurrence relationship for layout-owned values whose keys are not established. The old repair-only preservation-parent mechanism was removed by D01; it is not available for reuse. Generalize the maintained Array backing/source projection, separating retention/COW relationships from proved output membership and numeric placement keys. Do not create unconditional lease roots around layout cycles. A selection use retains its needed source slice and semantic shape facts separately. Validate pending delivery, aliases, cycle retirement, and re-entry before publishing partial layouts.
 
 ### Restrict source retention through the mapping
 
@@ -210,6 +235,8 @@ Pending boundaries retain conservative candidate slices and their deciding facts
 
 ### Publish and retire
 
+Prove [complete captured-state handoff](../iterate-plan.md#captured-state-across-handoff) before exposing partial Arrays. Value lifetime protection alone does not transfer an owning placement's pending status, access validity or prefix allowance. Use the shared placement/Array boundary, preserving mode, role-transfer rules, historical captures and owner-isolated repair.
+
 When a destination key becomes established, attach its ordinary placement and active counter contribution before releasing provisional preservation or exposing callbacks. Duplicate occurrences have separate keys. A later overwrite/truncation detaches current publication authority immediately; late settlement updates retained historical captures, not the replacement.
 
 Retirement removes reverse preservation links, destinations, and optional counter projections. Authoritative forward captures remain sufficient for re-entry without source reinspection or resubscription. Re-entry restores inactive relationships only as needed, stopping at active descendants. Canonical export uses captured generation identities, including aliases and cycles, and releases source access before unrelated collection/assembly work completes.
@@ -228,7 +255,7 @@ Optional caches must not invalidate or wake every historical root eagerly. Regis
 
 ### Composition and release
 
-- Join/reverse/restrict operate on spans and balanced paths; endpoint count transforms fuse into the clamped-affine form.
+- Join/reverse/restrict operate on spans and balanced paths; endpoint count transforms fuse into the clamped-affine form only when fusion preserves every semantic operation's [lossy tail transition](../iterate-plan.md#preserve-loss-at-each-operation), Error causes/roles and prescribed effects. Inverse-looking edits cannot restore discarded data.
 - Conditional overwrites use last-effective-write summaries and shared-guard folding. A newer definite replacement drops older content dependencies while preserving owed results/effects.
 - Deferred regions retain only live candidate source slices. Narrow and release those uses at settlement; a shape-only capture cannot retain their payloads.
 - Consume determined subtrees through an unread frontier. Sequential iteration never issues a structurally unresolved source; numeric lookup and unordered discovery can retain their own conditional uses.

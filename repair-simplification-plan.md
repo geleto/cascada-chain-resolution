@@ -2,7 +2,7 @@
 
 **D01 implementation:** the current runtime uses exact-path status clearing, with failed managed native work still discarded before adoption. See [the implementation and evidence](docs/audit-report.md#d01---exact-path-status-repair-implemented). The streaming modes and positional policies below remain future work.
 
-Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes sequential-stream positional flags and failed mutating sort's Array-path status in every mode, but excludes ordinary complete-mode Array Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
+Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes complete-mode failed mutation status, sequential-stream positional flags, and failed mutating sort's status in every mode, but excludes failed copying-result Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
 
 ## 1. Contract
 
@@ -12,8 +12,8 @@ The distinction is status versus data poison. A sequential-stream positional fla
 
 | Selected state | Repair effect |
 | --- | --- |
-| Managed own-path status, including a sequential positional flag or failed mutating sort's flag | Clear that status and preserve the retained payload, fallback position, presence, pending versions, and local poison. |
-| Complete-mode root Error, structural Error element, or missing-output marker | No hidden value to restore. Leave the Error unchanged. Ordinary replacement/removal remains available. |
+| Managed own-path status, including complete-mode mutation failure, a sequential positional flag, or failed mutating sort | Clear that status and preserve the retained payload, fallback position where applicable, presence, pending versions, and local poison. |
+| Failed copying-result Error, structural Error element, or missing-output marker | No hidden value to restore. Leave the Error unchanged. Ordinary replacement/removal remains available. |
 | Canonical external own-path status | Clear only that status; preserve host state and descendant metadata. |
 | Healthy or absent placement | No data change; clear selected canonical own status there if one exists. |
 | Ordinary Error value, with no own status | Leave the Error unchanged; successful selection returns undefined without inspecting or repairing its payload. |
@@ -21,7 +21,7 @@ The distinction is status versus data poison. A sequential-stream positional fla
 | Invalid or inaccessible selection | Return the selection Error without changing state. |
 | Off-path alias of a registered external identity | Apply ordinary managed-placement rules; do not clear canonical resource metadata or grant authority. |
 
-A genuine poisoned strict ancestor blocks selection in every mode. Repair that ancestor before accessing a flagged descendant. Regional Array failure does not automatically flag the Array root, so a positional flag on a retained element can normally be repaired directly at its fallback index. Clearing a descendant never clears an ancestor or local value poison. Repair does not search for another scope or widen an absent index to its Array.
+Outside the explicitly certified streaming-prefix allowance, a poisoned strict ancestor blocks selection in every mode. Complete mode never uses that allowance. Repair that ancestor before accessing a flagged descendant. Regional Array failure does not automatically flag the Array root, so a positional flag on a retained element can normally be repaired directly at its fallback index. Clearing a descendant never clears an ancestor or local value poison. Repair does not search for another scope or widen an absent index to its Array.
 
 Successful repair returns undefined after status publication, including when no own status exists. Selection, authority, or publication failures return poison. Error-query snapshots taken before repair retain their earlier status.
 
@@ -35,11 +35,15 @@ Traversing an intermediate Error or an unavailable parent is still a selection d
 
 The [normative sort contract](iterate-plan.md#13-selected-decisions) selects when sort publishes repairable status rather than Error data and what that status retains. Use this same status-clearing transition for it; add no sort-specific repair path or baseline.
 
-Keep current logical data and own failure status in the same versioning system. A flagged path blocks access to its retained data until repair or permitted replacement. Unaffected siblings remain accessible. Unordered mode avoids creating positional flags; it does not bypass an existing one. No mode needs a hidden earlier value solely for repair.
+Keep current logical data and own failure status in the same versioning system. An ordinary flagged path blocks access to its retained data until repair or permitted replacement; the two streaming modes also have the explicit certified-prefix allowance described below. Unaffected siblings remain accessible. Unordered mode avoids creating positional flags; it does not bypass an existing one. No mode needs a hidden earlier value solely for repair.
 
 Every committed independent write survives. Other accessible regions can accept later mutations; repair clears only the selected status on current state. It must not reveal a saved pre-failure Array and discard those later writes.
 
 After a streaming mutation of [A,B,C,D] by splice(2,failedCount,"X"), the fallback [A,B,X,Error,Error] does not retain C/D for repair: their survival was uncertain. In contrast, failed-position pure insertion retains A/B/X, and sequential mode can repair their individual positional flags. Repair creates a successor; it does not restart an earlier captured iterator. Explicit assignment of a saved COW snapshot remains the way to request restoration.
+
+In complete mode ordinary consumption first passes the [shared Array access gate](poison-policy-plan.md#complete-access-gate), including reads and writes of the unchanged prefix. Queries, exact-path repair and permitted whole-Array replacement/deletion retain their exceptions. The same failed splice commits no candidate changes. It marks retained [A,B,C,D]; repair clears that status and exposes those same data. Required preparation may have run, but repair neither executes the failed splice nor restores discarded working state. Pending payloads keep their original producers. An already-issued repair with a pending target orders later affected reads like other mutations; earlier reads and Errors remain unchanged. No operation anticipates a repair or assignment that has not yet been issued.
+
+Only the two streaming modes can use the [usable-prefix state](poison-policy-plan.md#poisoned-array-with-a-usable-prefix) without repair before prefix operations or subsequent iteration. Complete-mode consumption remains blocked by the Array's status. Those operations maintain the prefix boundary and preserve Array poison. Repair remains explicit status clearing over retained current data; it never fabricates an unavailable tail or clears ordinary payload/structural Error data. Earlier captures keep their own allowance and failure. A bounded extraction wholly within the prefix can produce a separate healthy result without repairing its source.
 
 Ordinary replacement/deletion clears the own status at the selected location. A child replacement does not clear an ancestor's status. Creating or deleting a local Error at an Array index retains ordinary committed length behavior; status clearing itself neither grows nor shrinks the Array.
 
@@ -55,7 +59,7 @@ Opaque native mutation adopts its private working graph only after successful va
 
 Own-path status belongs to the owning logical placement/version, not the Error object, kind, message, or source context. Remove explicit-! repair-origin flags and eligibility tests. Keep causal provenance for reporting and ordinary mutation authority for writes; neither is a second repair policy.
 
-Ordinary Error values and stored payload rejection remain data poison. Ordinary access cannot bypass selected or ancestor path flags. Extraction of accessible data does not attach unrelated failures; status and marker roles contained in a captured substructure remain intact. Canonical external paths retain their existing authority rules.
+Ordinary Error values and stored payload rejection remain data poison. Ordinary access cannot bypass selected or ancestor path flags except for the explicit certified-prefix allowance in a streaming mode. Extraction of accessible data does not attach unrelated failures; status and marker roles contained in a captured substructure remain intact. Canonical external paths retain their existing authority rules.
 
 Historical captures and COW preserve the selected data/status versions. Clearing one owner's status cannot change another owner or earlier snapshot. Record status on owned logical path/placement state, separately from shared payload identity; apply the policy's extraction rule at ordinary handoff.
 
