@@ -547,7 +547,7 @@ Fallback is ordered, deterministic, and compatible with every published fact. A 
 
 The [Error-query contract](poison-policy-plan.md#4-error-queries) includes structural markers, local poison, and own-path status at their captured scopes. Genuine flags block access in every mode. Healthy extraction does not inherit unrelated failures; it also cannot erase failures contained in the captured value.
 
-[Repair](repair-simplification-plan.md) clears only selected own status on current data. It never clears Error values or markers, reconstructs deleted candidates, restores intended order, or rolls back. Repair of a sequential positional flag exposes the retained payload at its fallback index. Capacity and invalid explicit length use their declared whole-Array boundary; add no failed-size or failed-identity state.
+[Repair](repair-simplification-plan.md) clears only selected own status on current data. It never clears Error values or markers, reconstructs deleted candidates, restores intended order, or rolls back. Repair of a sequential positional flag exposes the retained payload at its fallback index. Complete capacity and invalid explicit length keep their specified whole-Array boundaries; streaming capacity uses permanent tail Error data. Add no failed-size or failed-identity state.
 
 ### 7.4 Release at last use
 
@@ -617,7 +617,7 @@ If unresolved logical facts remain, retain their layout/shape state; physical st
 
 Use Variant B's flat leaves and balanced relative-count tree for retained layouts. Ordinary Arrays and simple ArrayViews remain the compact path; a short block sequence needs only one leaf. Unknown lengths can still prevent selecting the containing block even with a balanced index.
 
-Blocks support deferred selection and sharing across multiple spans, including fully resolved spans. They are not limited to splice or unknown widths. Classified concat parts with uncertain lengths, slices, flat results, and conditional endpoint edits can also create multiple regions; their [result-root prerequisites](iterate-plan.md#validate-a-result-before-handing-out-its-root) still apply.
+Blocks support deferred selection and sharing across multiple spans, including fully resolved spans. They are not limited to splice or unknown widths. Pending concat part roots, classified parts with uncertain lengths, flat expansions, slices, and conditional endpoint edits can create multiple regions. In streaming modes, concat/flat discovery failure is contribution-local under the [method specification](docs/array-method-specification.md); there is no all-parts classification or cycle-safety gate. Their actual [result-root prerequisites](iterate-plan.md#validate-a-result-before-handing-out-its-root) still apply.
 
 The storage documents describe the selected design and its comparison baseline:
 
@@ -705,7 +705,7 @@ Use method-specific transfer rules over the common captured facts, with the spec
 6. Retained snapshots followed by writes, truncation, replacement, and retirement/re-entry. Include pending `a.length` captures before each push; retain only their needed shape facts and distinguish those from captures retaining layout storage.
 7. Many pending operations on a small Array, including operations later proved to have no effect.
 8. An indefinitely pending branch while unrelated work completes and releases sources. Include an iterator that has handed off a separately backed prefix, with its original Array replaced and no other prefix owner; unread tail state must not retain that spent prefix. Repeat with pending requested metadata and earlier snapshots that legitimately retain it.
-9. Concat accumulation: first use pending part roots, where the current classification contract can hold the result root; then use classified partial Arrays with safe length bounds and unresolved widths, so many regions coexist in a valid layout. Check independent progress, retained captures, and bounded propagation without treating unclassified parts as published regions.
+9. Concat accumulation: use pending part roots alongside known parts, then classified partial Arrays with safe length bounds and unresolved widths. Streaming roots and independent regions must progress while unresolved parts retain their own dependencies; a failed required part contributes one structural marker. Complete mode keeps required part-root validation. Check count bounds including failure, retained captures, and bounded propagation without publishing guessed contents for unclassified parts.
 10. Return to compact storage after structural uncertainty resolves, including pending payloads and retained older versions. Alternate short uncertain edits with long append tails; reject policies that repeatedly flatten or rescan the accumulated Array merely to return to the compact path.
 
 Compare ready controls, varied settlement order, rejection, and synchronous delivery. Verify early accessibility with controlled or never-settling inputs rather than timing-based sleeps. Successful native operations can be an oracle for layout; revised dependency-based failure behavior needs its own semantic model.
