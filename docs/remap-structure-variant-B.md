@@ -4,9 +4,9 @@
 
 This is the selected persistent-sequence design for the [queryable block layout](../array-layout-approaches.md). The [flat-sequence variant](remap-structure-variant-A.md) remains a comparison baseline. Both follow [iterate-plan.md](../iterate-plan.md).
 
-Methods generate mappings from captured source versions to a destination. The structure composes those mappings and answers which destination positions and contents are determined. Reads, searches, copies, Error queries, and iteration use the same facts. Structural availability does not override the [mode contract](../poison-policy-plan.md): ordinary complete consumption first passes its captured-Array validity gate; certified poisoned-prefix access belongs only to the streaming modes. Internal tree queries may prepare facts without publishing them through a pending gate.
+Methods generate mappings from captured source versions to a destination. The structure composes those mappings and answers which destination positions and contents are determined. Reads, searches, copies, Error queries, and iteration use the same facts. Structural availability does not override the [mode contract](../poison-policy-plan.md): ordinary access in every mode observes any earlier whole-scope blocker. Complete mode treats additional structural failures as whole-Array failures. Internal tree queries may prepare facts without publishing them through a pending gate.
 
-The [complete-only validity decision](../poison-policy-plan.md#tracking-complete-mode-validity) derives from captured failure ownership and relevant operation/issuer state. Exact tree counts do not certify it, and unresolved counts do not necessarily prevent it. Keep this dependency at the captured consumption boundary; add no independent tree-wide failure ledger or per-node health scan.
+The [complete-mode validity decision](../poison-policy-plan.md#tracking-complete-mode-validity) derives from captured failure ownership and relevant operation/issuer state. Exact tree counts do not certify it, and unresolved counts do not necessarily prevent it. Keep this dependency at the captured consumption boundary; add no independent tree-wide failure ledger or per-node health scan.
 
 Both variants follow the shared [query and publication rules](../array-layout-approaches.md#4-queries-and-publication), [settlement rules](../array-layout-approaches.md#6-settlement-and-dependent-layouts), and [materialization rules](../array-layout-approaches.md#91-retain-or-materialize).
 
@@ -46,7 +46,7 @@ Each node exposes a **count measure**: its number of output positions, either ex
 
 Extend the existing captured-shape boundary for subtraction, truncation, shifts, and the shape of failure fallbacks. A failed structural control does not itself leave length poisoned; its fallback can establish an exact length. For a layout-backed version, obtain length and `inRange(index)` from the logical root's semantic shape, including region constraints and indexed-growth transitions. Node count intervals are cached projections of those facts, not a second authority or a complete failure state.
 
-Shape-only captures reference independent count facts, not payload-owning tree nodes. Exclusive content storage can therefore coexist with an earlier captured shape; editing that storage must preserve the captured count version. Fuse ready additions and trims into the [compact shift/clamp form](array-layout-implementation-findings.md#compact-ready-count-transforms) rather than retaining a linked shape history.
+Shape-only captures reference independent count facts. Exclusive content storage can coexist with a retained earlier shape. Fuse ready additions and trims using the [compact shift/clamp form](array-layout-implementation-findings.md#compact-ready-count-transforms) with each operation's logical count cap. Back-relative descent starts at the last retained position. A join or rotation must preserve the exact cause selected there when the mathematical tail extends beyond the cap.
 
 Ordinary branch measures combine child counts and can be recomputed after balancing. Constraints that make a total more precise than independent interval addition must remain attached to the logical region.
 
@@ -160,8 +160,8 @@ Edits use the same front/back coordinates as reads. Preserve an end-relative tar
 
 | Operation | Captured edit |
 | --- | --- |
-| `pop()` | Remove the last position if present; select its value as the result. |
-| `shift()` | Remove the first position if present; select its value as the result. |
+| Mutating `pop()` | Remove the last position if present and extract its visible value. The observation returns the shortened copy. |
+| Mutating `shift()` | Remove the first position if present and extract its visible value. The observation returns the shortened copy. |
 | `splice(-1, 1, Y)` | Replace the last position when nonempty; insert `Y` when empty. |
 | `fill(Y, -1)` | Overwrite the last position when nonempty; do nothing when empty. |
 
@@ -301,7 +301,7 @@ Apply the common [mode and fallback contract](../poison-policy-plan.md), includi
 
 Sequential mode flags surviving occurrences whose intended positions are lost. Unordered mode keeps those occurrences usable without positional flags or an extra marker. Potentially deleted or overwritten occurrences become permanent structural poison; possibly missing output gets one real Error marker per failed contribution. Ordinary payload rejection remains value poison only.
 
-Fallback must preserve every established bound, occurrence, and publication and compose with later commands in issuance order. Represent markers as ordinary entries and positional status at its retained occurrence; preserve their structural role through captures and materialization. Ordinary path flags block access; only streaming modes use the explicit certified-prefix allowance. Complete consumption never uses that allowance. Repair clears only own status, exposing retained payload at the fallback position; it never repairs Error data or reconstructs deleted candidates.
+Fallback must preserve every established bound, occurrence, and publication and compose with later commands in issuance order. Represent markers as ordinary entries and positional status at its retained occurrence; preserve their structural role through captures and materialization. An owning or ancestor flag blocks every ordinary access through that scope in all modes. Layout pieces remain available for earlier captures and for the data an ordered repair exposes. Repair clears only own status, exposing retained payload at the fallback position; it never repairs Error data or reconstructs deleted candidates.
 
 Counts alone do not summarize Error membership. Pending selections retain only output-relevant candidate dependencies; discarded alternatives are not output members. Use the [deferred-child and graph-summary rules](../iterate-plan.md#deferred-children-and-graph-summaries). Keep no separate zero-width failure channel or error-history ledger.
 
@@ -371,7 +371,7 @@ Retain captured predecessors only where live versions, unresolved selections, or
 
 Process history-sized propagation and release with loops or synchronous worklists. Layout simplification cannot cancel prescribed writes, identity changes, call results, or completion obligations.
 
-It also cannot merge distinct causal tail regions or erase an intervening capacity loss. Forward existing structural Error producers; coalesce adjacent spans only when source/role/cause facts permit it. Query summaries and full export consume retained spans and causes without expanding virtual positions; a known tail failure ends output assembly but not required prefix Error collection. Keep these facts in the existing placement/layout and query owners, without a second failure log.
+A composed mapping must preserve intervening capacity loss and each selected structural Error's cause. Merge uniform spans only when their source, role and cause facts agree. For alternating causes, share the joins and captured subtrees. A wholly structural count/skip proof can span different causes. Full collection visits a shared subtree once per relevant restriction and includes any required pending prefix. Keep membership and causal projections on the same layout and query owners. [Virtual positions and full consumers](../iterate-plan.md#virtual-positions-and-full-consumers)
 
 ## Small layouts
 

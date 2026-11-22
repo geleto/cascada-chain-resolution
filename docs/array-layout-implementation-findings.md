@@ -39,7 +39,7 @@ Ready additions and endpoint trims need not create a chain of shape nodes. Store
 - a positive bounded prefix slice can add an upper clamp;
 - shape-preserving methods reuse the fact; a length reset supplies a new exact fact.
 
-Composing another ready shift/clamp updates these four fields. If the result is constant over the base's current domain, remove that dependency, even when the base has failed. Other root prerequisites and each command's identity/completion remain separate. The upper clamp represents a real operation such as slice; never clamp to the Array capacity limit to conceal overflow.
+Composing another ready shift or clamp updates these four fields. A constant count over the base domain releases the base for that question. Retain root, effect and identity prerequisites. The original probe uses small counts. In the planned streaming layout, each command's count includes the final logical cap K and each mapping includes its loss of payload beyond MAX. At K, append then pop gives K−1. A suffix selector uses the retained prefix of the mapped sequence even if later mathematical positions were discarded. Fuse only when the clipped count and exact selected causes survive. [Maximum logical count](../iterate-plan.md#maximum-logical-count)
 
 The probe checks 180,000 count outcomes and composes 20,000 append/trim operations while retaining one base reference. Pending splice controls and multi-part totals still use their method-specific region facts; this form is not a universal formula language.
 
@@ -85,20 +85,15 @@ through their ordinary logical parent relationships; `preserveRecovery` and
 its separate retention callbacks no longer exist. The former experiment-only
 adapter for that index is retired, so it supplies no current integration evidence.
 
-Future layout-owned inputs still need ownership before a destination key is
-known, without inventing a numeric placement or an Error/Promise membership
-claim. Design that retention from the layout's authoritative forward selections
-and existing retirement rules. An unconditional lease root is insufficient:
-a cycle `Array -> deferred input -> Array` must retire when its external owner
-is released. Independently held results and unfinished operation work retain
-their existing capture/lease lifetimes. No replacement layout mechanism is
-implemented by D01.
+Use each live restricted source span as the ownership record for its captured candidates. The layout owner keeps the forward use. While active, that use participates in retention-parent traversal and protects its captured data in the ordinary COW decision. Share the span across overlapping uses and release its source at last use. Keep numeric-parent enumeration and output counters restricted to established placements. Retirement unlinks the active use and reconsiders its source. Re-entry restores the use from the owner's forward selection. A cycle `Array → deferred input → Array` can then retire after its last outside holder or independent work releases it. [Retention parents](../src/parent-placements.js) · [COW decision](../src/meta.js) · [Retirement](../src/ownership.js)
 
 ### Publication baseline
 
 For the initial integration, publish established changed placements through existing property versions and parent updates. Retain the current simple Array backing projection where it already applies. Defer arbitrary multi-span/reversed backing projection until a measured workload justifies that additional mechanism.
 
 When selection establishes a managed value's destination key, acquire its placement relationship and required counter contribution before releasing its provisional preservation use or invoking consumers. Repeated occurrences get distinct destination keys. Later writes and truncation detach obsolete destination authority; earlier captures keep their own uses.
+
+For a streaming `out=src.slice(0,p)`, start with `src=[child]` and a second holder of `child={n:1}`. Replace `src[0]`, then set n to 2 through the second holder. If p is 1, out must still yield `[{n:1}]`. If p is 0, out is empty and releases the candidate. If p fails, the one structural Error supplies the output and releases the displaced child. With p permanently pending, closing the last output use releases its capture when independent work has no further use for it. Measure parent relationships and release separately from deep query membership.
 
 Direct updates can cost O(M) for M affected managed placements, even when the layout edit costs O(log B). Enumerate affected maintained placements, not sparse holes or unrelated data, and measure that graph cost separately. This baseline does not promise logarithmic total mutation cost.
 

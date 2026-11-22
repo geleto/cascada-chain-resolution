@@ -4,7 +4,7 @@ Technical analysis for the two deferred tasks in [iterate-plan.md](../iterate-pl
 
 ## 1. Conclusions
 
-- Complete-mode consumption uses one [captured-Array validity gate](../poison-policy-plan.md#complete-access-gate) across observation, methods, mutation, iteration and export/native preparation. Its [complete-only tracking rule](../poison-policy-plan.md#tracking-complete-mode-validity) follows failure ownership and open/nested issuers rather than payload readiness or a zero pending-command count. No complete-mode poisoned-prefix allowance exists; ordinary pending/poisoned payloads remain independent.
+- All modes preserve the order of operations that can fail the entire captured Array. Whole-Array failure blocks the first item and ordinary writes through the failed version. The [complete-mode gate](../poison-policy-plan.md#complete-access-gate) covers additional failures that streaming operations can confine to particular slots. Stored payload rejection stays local.
 - Use one demand-driven selector evaluator over captured mappings. Method rules define shape, selection, effects, and failure; the tree indexes those facts. No general solver or second failure-only evaluator is needed.
 - A deterministic fallback must respect captured bounds and every established publication. Always appending an insertion with a failed position is wrong when tighter position bounds exist.
 - Receive each delivered item into its ordinary elem Chain inside `next()`. Return that Chain directly to Cascada's trusted consumer. This uses the existing ownership mechanism and avoids protecting a raw managed value through a protocol-record Promise.
@@ -20,7 +20,7 @@ Evaluate the question the consumer actually asks:
 
 | Question | Required answer |
 | --- | --- |
-| Array access validity | Complete consumption waits while earlier work could poison that captured Array; only streaming modes can use a certified poisoned-prefix allowance. |
+| Array access validity | Wait when earlier work can poison the whole captured Array or an ancestor. Its failure blocks access at every index and orders later repair. Each mode supplies its declared failure scope. |
 | Length or membership | Exact count, sound bounds, or the remaining structural dependency. |
 | Presence | Present, absent, or the selection that can still change it. A hole is not an unknown placement. |
 | Payload source | Captured source version, inserted payload, prescribed literal, or hole. A pending payload differs from pending source selection. |
@@ -59,7 +59,7 @@ Apply fallback only after actual relevant failure, at that operation's logical p
 
 The three modes share successful mappings under [sequential equivalence](../iterate-plan.md#sequential-equivalence-is-the-publication-criterion). Complete-mode failed mutations retain unchanged data under repairable status; failed copies return root Error. Streaming modes retain sequential positional status or unordered survivor fallback. The [sort boundary](array-method-specification.md#7-sort-and-tosorted) follows complete-mode mutation failure and overrides streaming regional failure. Payload rejection remains value poison in every mode.
 
-Per-command effects and direct results remain separate. For example, a failed required splice deletion count can poison the removed-elements result while its streaming receiver has a usable prefix. Folding a mapping does not cancel prescribed writes or erase a call-result failure.
+Per-command effects and direct results remain separate. For example, a failed required splice deletion count can poison the removed-elements result while its streaming receiver has an unaffected prefix and a regional failure. Folding a mapping does not cancel prescribed writes or erase a call-result failure.
 
 ## 5. A bounded splice fallback
 
@@ -151,13 +151,13 @@ These initial rules are extended by the [completed method specification](array-m
 
 ## 7. Select Chain-valued iterator steps
 
-The public Chain constructor already receives ready or pending input, maintains its placement, and protects it through ordinary ownership. Chains are not thenable. Therefore `next()` can receive the established payload immediately and return:
+The standard async-iterator interface requires a Promise from every valid `next()` and `return()`. A ready item is captured in its non-thenable elem Chain synchronously. The outward step can then be returned as a settled Promise.
 
 ```js
-{ done: false, value: elemChain }
+return Promise.resolve({ done: false, value: elemChain });
 ```
 
-The source occurrence must first pass structural publication checks. Create the Chain by transferring the captured placement without awaiting its value or extracting an inert external reference. A structural selection failure rejects the step; a rejection of the established payload becomes poison inside the elem Chain. Raw lookup's registration/authority checks are not the item-transfer boundary; apply the [inert item contract](../iterate-plan.md#item-boundaries).
+The source occurrence must first pass structural publication checks. Receive the captured placement in an ordinary holder before raw extraction. A healthy hole binds a present `undefined` root and leaves the source hole intact. A sparse structural copy preserves the source absence. A structural selection failure rejects the step; a rejection of the established payload becomes poison inside the elem Chain. Raw lookup's registration/authority checks are not the item-transfer boundary; apply the [inert item contract](../iterate-plan.md#item-boundaries).
 
 The trusted Cascada consumer binds that exact Chain. It does not import it as language data or wrap it in another Chain. `for await` awaits the step, not the holder's root. Cascada must recognize this managed-item transport; a generic value-stream adapter cannot assume the item is the underlying JavaScript value.
 
@@ -174,18 +174,20 @@ There is at most one outstanding `next()` under the trusted consumer contract. G
 | Event | Required outcome |
 | --- | --- |
 | `next()` establishes an item | Receive its elem Chain, release step-only captures, deliver the step. |
-| `next()` reaches end | Close enumeration and return `done: true`. |
+| `next()` reaches end | Close enumeration synchronously and fulfill the step Promise with `{ done: true }`. |
 | Ordered structural failure | Reject that step with the existing poison and close future enumeration. Payload poison remains item data. |
-| `return()` with no pending step | Close future enumeration; release unread cursor state; return `done: true`. |
+| `return()` with no pending step | Close future enumeration, release unread cursor state immediately and fulfill the close Promise with `{ done: true }`. |
 | `return()` with a pending step | Close future enumeration and release cursor-only state immediately. The issued step retains exactly what it still needs and finishes with its original result/failure. |
-| Repeated close or `next()` after local termination | Return `done: true`; do not reopen the source or reinterpret prior stop/failure as healthy empty input. |
+| Repeated close or `next()` after local termination | Return a fulfilled done Promise. Earlier stop/failure retains its loop-control meaning. |
 | Execution fatality | Reject outstanding public results through the common fatal boundary; subsequent entry observes the fatal. |
 
 `return()` does not mean that the previously issued request, body work, or shared production has finished. A required never-settling input can keep that one request pending. The caller remains responsible for receiving or discarding its result, including normal binding cleanup. This is consistent with the runtime's existing no-timeout/no-cancellation contract. Under [mode-specific validity and completion](../iterate-plan.md#mode-specific-validity-and-completion), complete establishes source validity before its first successful step. Cascada's logical break and function return use ordinary control channels and conditionals at every affected scope; neither is equivalent to this low-level cursor return. Preserve existing scope/loop dependencies when optimizing that lowering. Cursor closure itself adds no whole-producer wait to either stream.
 
+For a bounded request this lifetime includes the demand updates it still needs from previously admitted bodies and proved skips. A closed cursor can release the rest of its traversal immediately. Source selection that already started live native work keeps its existing native completion reservation. [Issued-step and close witnesses](../iterate-plan.md#completion-and-early-stop)
+
 Cancelling the step to `done: true` would introduce an avoidable timing distinction: the all-ready execution had already returned an item, while delayed delivery would erase that same issued request. Preserving the request also avoids adding an abort event, request queue, or new cancellation owner.
 
-Use one outward pending-result/fatal registration per pending step, and existing guarded continuations. Shared settlement remains independent. The probe demonstrates capture ownership across closure, not production fatal registration or integrated structural waiting; test those at implementation.
+Keep one public fatal registration for an unfinished step and use existing guarded continuations. A ready item, empty end or close needs only its settled Promise. Fatality observed on a valid step or close rejects that Promise. The fixed-layout probe returns raw records on ready paths to exercise ownership. Public integration must also exercise `.then` directly on ready item, exhaustion, failure, early close and repeated close. [ECMAScript async iterator interface](https://tc39.es/ecma262/multipage/control-abstraction-objects.html#sec-asynciterator-interface)
 
 ## 9. Specification completed; implementation acceptance
 
