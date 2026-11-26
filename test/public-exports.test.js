@@ -4,10 +4,10 @@ import { expect } from "./support.js"
 
 const exportsByRole = {
     "execution operation": [
-        "assignPath", "deletePath", "enter", "export", "getErrors",
-        "hasError", "import", "importMethodResult", "lookupPath", "lookupPathForExpression", "run", "repairPath",
+        "appendMissingOutput", "assignPath", "capturePath", "deletePath", "enter", "export", "getErrors",
+        "hasError", "import", "importMethodResult", "isPoisoned", "iterate", "lookupPath", "lookupPathForExpression", "poisonPath", "run", "repairPath",
     ],
-    construction: ["Chain", "ContextChain"],
+    construction: ["Chain", "CHAIN_MODE", "ContextChain"],
     "contextless configuration": [
         "externalState", "managedState", "managedStateClass",
     ],

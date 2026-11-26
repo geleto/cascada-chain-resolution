@@ -8,34 +8,58 @@ function logicalVersionEntries(meta) {
     return [...(meta?.outgoingPlacements ?? [])].filter(([, placement]) => placement.present !== undefined)
 }
 
+function visitSharedPlacements(region, first, end, visit) {
+    walk(region?.prefix?.layout, 0)
+    walk(region?.layout, 0)
+    function walk(node, offset) {
+        if (!node?.shared || offset >= end || offset + node.length <= first) return
+        if (node.left) {
+            walk(node.left, offset)
+            walk(node.right, offset + node.left.length)
+        } else if (node.placement?.layoutChild)
+            visit(node.placement, Math.max(first, offset), Math.min(end, offset + node.length))
+    }
+}
+
 function logicalPlacements(owner, context) {
     const meta = metadata.metaOf(owner, context)
     const array = meta.type === metadata.TYPE.Array
     const view = meta.arrayRange
     const offset = view?.start ?? 0
     const length = view ? view.lengthState.minimum ?? view.lengthState : undefined
+    const backing = array && metadata.metaOf(view?.backing ?? owner, context)?.arrayBacking
+    const borrowed = view?.borrowed
+    const storage = borrowed?.record.array ?? view?.backing ?? owner
+    const physicalStart = offset + (borrowed?.start ?? 0)
     const placements = new Map()
-    for (const key of Reflect.ownKeys(view?.backing ?? owner)) {
+    for (const key of Reflect.ownKeys(storage)) {
         if (typeof key !== "string") continue
         let logical = key
         if (array) {
             const index = Number(key)
             if (!Number.isInteger(index) || index < 0 || index >= 4294967295 || String(index) !== key) continue
-            const projected = index - offset
+            const projected = index - physicalStart
+            if (borrowed && projected + offset >= borrowed.length) continue
             if (projected < 0 || length !== undefined && projected >= length) continue
             logical = String(projected)
         }
-        const descriptor = Object.getOwnPropertyDescriptor(view?.backing ?? owner, key)
+        const descriptor = Object.getOwnPropertyDescriptor(storage, key)
         if (descriptor?.enumerable && "value" in descriptor) placements.set(logical, descriptor.value)
     }
     if (array) {
-        const record = metadata.metaOf(view?.backing ?? owner, context)?.arrayBacking?.producers
-        for (const [physical, version] of logicalVersionEntries(metadata.metaOf(record, context))) {
-            const index = Number(physical) - offset
-            if (index < 0 || length !== undefined && index >= length) continue
-            if (version.present === false) placements.delete(String(index))
-            else placements.set(String(index), version.value)
+        if (backing?.region) visitSharedPlacements(backing.region, offset, offset + (length ?? owner.length), (p, first, end) => {
+            for (let i = first; i < end; i++) placements.set(String(i - offset), p.value)
+        })
+        function applyProducers(record, start, end) {
+            for (const [physical, version] of logicalVersionEntries(metadata.metaOf(record?.producers, context))) {
+                const index = Number(physical) - start
+                if (index < 0 || index >= end) continue
+                if (version.present === false) placements.delete(String(index))
+                else placements.set(String(index), version.value)
+            }
         }
+        if (borrowed) applyProducers(borrowed.record, physicalStart, Math.min(length, borrowed.length - offset))
+        applyProducers(backing, offset, length ?? Infinity)
     }
     for (const [key, version] of logicalVersionEntries(meta)) {
         if (version.present === false) placements.delete(key)
@@ -51,9 +75,25 @@ function logicalVersion(owner, key, context) {
     if (meta.type !== metadata.TYPE.Array) return
     const range = meta.arrayRange
     const index = Number(key)
-    if (range && index >= (range.lengthState.minimum ?? range.lengthState)) return
-    const record = metadata.metaOf(range?.backing ?? owner, context)?.arrayBacking?.producers
-    return metadata.metaOf(record, context)?.outgoingPlacements?.get(String(index + (range?.start ?? 0)))
+    const backing = metadata.metaOf(range?.backing ?? owner, context)?.arrayBacking
+    // A requested regional point can own a pending counter projection
+    // before its eventual membership raises the guaranteed length.
+    if (range) {
+        const shape = range.lengthState
+        if (index >= ((backing?.region ? shape.maximum : shape.minimum) ?? shape)) return
+    }
+    const physical = index + (range?.start ?? 0)
+    const borrowed = range?.borrowed
+    if (borrowed && physical < borrowed.length)
+        return metadata.metaOf(borrowed.record.producers, context)?.outgoingPlacements?.get(String(borrowed.start + physical))
+    let version = metadata.metaOf(backing?.producers, context)?.outgoingPlacements?.get(String(physical))
+    if (!version) visitSharedPlacements(backing?.region, physical, physical + 1, p => { version = p })
+    return version
+}
+
+function isCounterCut(owner, key, context) {
+    const meta = metadata.metaOf(owner, context)
+    return meta?.cycleCuts?.has(key) || meta?.sharedCuts?.has(logicalVersion(owner, key, context))
 }
 
 function verifyParents(context, ...roots) {
@@ -85,12 +125,13 @@ function verifyParents(context, ...roots) {
         // A native Array's length-only projection needs no backing record until
         // it stores a managed child or another logical owner shares its storage.
         if ((array !== owner || record) && !record?.owners.has(owner)) fail("Missing Array backing owner")
+        if (meta.arrayRange?.borrowed && !meta.arrayRange.borrowed.record.owners.has(owner)) fail("Missing borrowed prefix owner")
         if (backings.has(array)) return
         backings.add(array)
         for (const registered of record?.owners ?? []) {
             const registeredMeta = metadata.metaOf(registered, context)
             if (!registeredMeta?.relationshipsActive ||
-                (registeredMeta.arrayRange?.backing ?? registered) !== array)
+                (registeredMeta.arrayRange?.backing ?? registered) !== array && registeredMeta.arrayRange?.borrowed?.record !== record)
                 fail("Invalid Array backing owner")
         }
         for (const version of logicalVersionEntries(metadata.metaOf(record?.producers, context)).map(([, version]) => version)) {
@@ -116,7 +157,9 @@ function verifyParents(context, ...roots) {
             const exposed = [...record?.owners ?? [owner]].some(registered => {
                 const state = metadata.metaOf(registered, context)
                 const range = state.arrayRange
-                const logical = index - (range?.start ?? 0)
+                const prefix = range?.borrowed?.record === record && range?.borrowed
+                if (prefix && index - prefix.start >= prefix.length) return false
+                const logical = index - (range?.start ?? 0) - (prefix?.start ?? 0)
                 const length = range ? range.lengthState.minimum ?? range.lengthState : array.length
                 return logical >= 0 && logical < length && !logicalVersion(registered, String(logical), context)
             })
@@ -146,6 +189,11 @@ function verifyParents(context, ...roots) {
                     fail("Incoming backing occurrence has no active owner")
                 if (metadata.metaOf(source.array, context)?.arrayBacking !== source) fail("Detached Array backing record")
                 for (const index of indexes) {
+                    if (typeof index === "object") {
+                        if (!index.layoutChild || index.value !== node || sourceMeta.outgoingPlacements?.get(index)?.value !== node)
+                            fail("Shared backing placement does not hold its child")
+                        continue
+                    }
                     const descriptor = Object.getOwnPropertyDescriptor(source.array, String(index))
                     if (!Number.isInteger(index) || index < 0 || index >= 4294967295 ||
                         !descriptor?.enumerable || descriptor.value !== node)
@@ -166,7 +214,7 @@ function verifyParents(context, ...roots) {
         for (const version of meta.backingCounterVersions ?? []) {
             const key = version.counterProjections?.get(node)
             if (!meta.parents || key === undefined || logicalVersion(node, key, context) !== version)
-                fail("Missing backing producer counter projection")
+                fail(`Missing backing producer counter projection at ${key}`)
         }
         const incoming = getParentPlacements(node, context)
         const pairs = new Map()
@@ -179,7 +227,7 @@ function verifyParents(context, ...roots) {
             if (forward(parent).get(key) !== node) fail("Incoming parent placement does not hold its child")
             const parentMeta = metadata.metaOf(parent, context)
             if (!parentMeta?.relationshipsActive) fail("Incoming parent placement belongs to a retired parent")
-            if (parentMeta.parents && !logicalVersion(parent, key, context)?.ownFailure && !parentMeta.cycleCuts?.has(key))
+            if (parentMeta.parents && !logicalVersion(parent, key, context)?.ownFailure && !isCounterCut(parent, key, context))
                 projection.set(parent, (projection.get(parent) ?? 0) + 1)
         }
         if (meta.parents) {
@@ -215,4 +263,4 @@ function verifyLiveness(context, nodes, expectedLive) {
     verifyParents(context, ...nodes)
 }
 
-export { verifyParents, verifyLiveness, logicalPlacements, logicalVersionEntries }
+export { verifyParents, verifyLiveness, logicalPlacements, logicalVersionEntries, isCounterCut }

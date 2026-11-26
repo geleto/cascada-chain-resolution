@@ -113,6 +113,9 @@ function createLeaseLedger(operationContext) {
 // incorrectly COW private Chain holders and detach those writes from the Chain.
 function retainWriter(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
+    // A backing producer has no private mutation authority. Its owners keep
+    // its topology active; an outstanding point capture needs only its version.
+    if (meta.backingOwners) return
     meta.pinCount = (meta.pinCount ?? 0) + 1
     return () => {
         if (!owner) return

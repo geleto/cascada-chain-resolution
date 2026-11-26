@@ -1,5 +1,5 @@
 import { getPromiseVersion } from "./verify-storage.js"
-import { logicalVersionEntries } from "./verify-parents.js"
+import { isCounterCut, logicalVersionEntries } from "./verify-parents.js"
 // Test-only consistency oracle. It independently recounts projected
 // placements, verifies cycle-cut shape and both parent-edge directions, and
 // rejects cycles in the projected parent graph. It also runs the storage
@@ -11,6 +11,7 @@ import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
 import { verifyStorage } from "./verify-storage.js"
 import { verifyParents } from "./verify-parents.js"
+import { ArrayView } from "../src/array-view.js"
 
 function verifyRefCounts(operationContext, ...roots) {
     verifyParents(operationContext, ...roots)
@@ -32,6 +33,11 @@ function verifyReachable(node, seen, operationContext) {
         let frontierCount = 0
         let errorCount = 0
         const childEdges = new Map()
+        const region = ArrayView.region(node, operationContext)
+        if (region?.indexed?.has(node)) {
+            if (!region.pending || counter.indexedRegion !== region) fatal("Stale Array region counter", operationContext)
+            frontierCount++
+        } else if (counter.indexedRegion) fatal("Missing Array region counter registration", operationContext)
 
         for (const key of languageProperties.enumerableLanguageKeys(
             node,
@@ -178,8 +184,10 @@ function verifyParentGraph(node, states, operationContext) {
 
 // Recount each property here instead of using the count helpers being checked.
 function recountProperty(node, key, operationContext) {
+    const placement = languageProperties.readLanguagePlacement(node, key, operationContext)
+    if (placement.ownFailure) return { child: undefined, frontierCount: 0, errorCount: 1 }
     const promiseVersion = getPromiseVersion(node, key, operationContext)
-    let child = readPropertyForRecount(node, key, operationContext)
+    let child = propertyVersions.placementValue(placement)
     let frontierCount = 0
     let errorCount = 0
     if (languageValues.isPending(child, operationContext)) {
@@ -191,7 +199,7 @@ function recountProperty(node, key, operationContext) {
         }
         child = undefined
         frontierCount = 1
-    } else if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
+    } else if (isCounterCut(node, key, operationContext)) {
         child = undefined
         frontierCount = 1
     } else if (errorUtils.isPoisonError(child)) {

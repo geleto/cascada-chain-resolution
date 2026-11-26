@@ -5,8 +5,10 @@ import * as steps from "./internal-step.js"
 import * as values from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as properties from "./language-properties.js"
-import { observePromiseVersion, placementValue, placementPresent } from "./property-versions.js"
+import { observePlacement, placementPresent } from "./property-versions.js"
 import { captureContainerStructure, defineCopyProperty, orderRecordKeys } from "./placement-structure.js"
+import { ArrayView } from "./array-view.js"
+import { consumeArrayValue } from "./array-layout.js"
 
 // Capture records contain edges, shape and admitted facts, never source containers.
 // Inspect every physical representation, even when its identity already has data.
@@ -66,7 +68,7 @@ class ManagedCapture {
     describe(value, meta) { return meta }
 
     keys(value) {
-        try { return properties.enumerableLanguageKeyCandidates(value, this.owner.operationContext) }
+        try { return properties.enumerableLanguageKeyCandidates(value, this.owner.operationContext, 0, undefined, undefined, true) }
         finally { value = undefined }
     }
 
@@ -83,14 +85,21 @@ class ManagedCapture {
     consume(placement, visit) {
         const { owner } = this
         const { operationContext } = owner
-        const value = placementValue(placement)
-        return values.isPending(value, operationContext)
-            ? observePromiseVersion(placement.value, placement.sourceVersion, operationContext,
-                (value, version) => visit(value, placementPresent(version)), owner)
-            : visit(value)
+        return observePlacement(placement, operationContext,
+            (value, version) => visit(value, placementPresent(version)), owner)
+    }
+
+    consumeRegion(range, visit) {
+        return range.region.visit(range, this.owner, (placement, key) =>
+            this.consume(placement, (child, present) => visit(child, key, present)), error => this.collect(error),
+            () => Boolean(this.records))
     }
 
     walk(value, receive) {
+        return consumeArrayValue(value, this.owner, selected => this.walkValue(selected, receive), this.collect)
+    }
+
+    walkValue(value, receive) {
         const { owner } = this
         const { operationContext } = owner
         let meta, facts
@@ -153,6 +162,10 @@ class ManagedCapture {
                 if (!placementPresent(placement)) { visit(undefined, key, false); continue }
                 const readiness = this.consume(placement, (child, present) => visit(child, key, present))
                 if (values.isPending(readiness, operationContext)) waits.push(readiness)
+            }
+            for (const range of ArrayView.implicitRanges(value, operationContext)) {
+                const wait = this.consumeRegion(range, visit)
+                if (values.isPending(wait, operationContext)) waits.push(wait)
             }
             if (waits.length) return waits.length === 1 ? waits[0] : Promise.all(waits)
         } finally { value = meta = facts = undefined }

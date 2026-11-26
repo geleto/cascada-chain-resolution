@@ -4,6 +4,9 @@ import * as r from '../src/index.js'
 import { metaOf } from '../src/meta.js'
 import { buildRefIndex } from '../src/refcounts.js'
 import { ArrayView } from '../src/array-view.js'
+import { span } from '../src/array-layout.js'
+import { publishLayout } from '../src/array-sequence.js'
+import { readLanguagePlacement } from '../src/language-properties.js'
 import { verifyRefCounts } from './verify-refcounts.js'
 import { OrderedThenable } from './ordered-thenable.js'
 
@@ -16,6 +19,43 @@ function producer(chain, ctx) {
 }
 
 describe('shared Array backing producers', () => {
+    it('keeps the selected flag on every copy of a repeated pending payload', async () => {
+        for (const delayed of [false, true]) {
+            const ctx = context(), hold = Promise.withResolvers(), data = Promise.withResolvers()
+            const source = new r.Chain([data.promise], ctx)
+            const entry = r.enter(source, [0], ctx, true, () => delayed ? hold.promise : undefined)
+            const slot = readLanguagePlacement(r.lookupPath(source, [], ctx), 0, ctx)
+            const repeated = publishLayout(span(5, slot), ctx)
+            const cause = r.validationError('missing', ctx, r.ERROR_KIND.OperationInputFailed)
+            const empty = new r.Chain([], ctx, r.CHAIN_MODE.Sequential)
+            const output = new r.Chain(r.run(empty, [], 'concat', [cause, repeated], ctx, {}), ctx)
+            const first = r.lookupPath(output, [1], ctx)
+            hold.resolve()
+            await entry
+            assert.equal(await first, cause)
+            data.resolve(17)
+            await turn()
+            assert.equal(await r.lookupPath(output, [5], ctx), cause)
+            r.repairPath(output, [5], ctx)
+            assert.equal(await r.lookupPath(output, [5], ctx), 17)
+            assert.equal(await r.lookupPath(output, [1], ctx), cause)
+        }
+    })
+
+    it('preserves a compact snapshot when entry assigns a pending value into a hole', async () => {
+        const ctx = context(), pending = Promise.withResolvers()
+        const source = new r.Chain(new Array(70), ctx)
+        const snapshot = new r.Chain(r.run(source, [], 'fill', [7, 1, 70], ctx, {}), ctx)
+        const chain = new r.Chain(r.lookupPath(snapshot, [], ctx), ctx)
+        const entry = r.enter(chain, [0], ctx, true, inside => { r.assignPath(inside, [], pending.promise, ctx) })
+        assert.equal(r.lookupPath(snapshot, [0], ctx), undefined)
+        verifyRefCounts(ctx, snapshot._state, chain._state)
+        pending.resolve(3)
+        await entry
+        assert.equal(r.lookupPath(snapshot, [0], ctx), undefined)
+        assert.equal(await r.lookupPath(chain, [0], ctx), 3)
+    })
+
     for (const delivery of ['ready', 'native', 'ordered', 'rejected'])
         it(`publishes an authorized backing slot before physical growth, delivery=${delivery}`, async () => {
             const ctx = context(), gate = Promise.withResolvers()

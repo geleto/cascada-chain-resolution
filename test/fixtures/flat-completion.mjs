@@ -9,14 +9,14 @@ let cases=0
 // must not alter the flattened result, even when entry publication is pending.
 for(const depth of [0,1,Infinity])for(const present of [false,true])for(const view of [false,true]){
  const ctx={execution:new r.Execution(),errorContext:'flat presence'}
- let chain=new r.Chain([1,,[2,,3]],ctx)
- if(view)chain=new r.Chain(r.run(chain,[],'slice',[],ctx,{}),ctx)
+ let chain=new r.Chain([1,,[2,,3]],ctx, r.CHAIN_MODE.Complete)
+ if(view)chain=new r.Chain(r.run(chain,[],'slice',[],ctx,{}),ctx, r.CHAIN_MODE.Complete)
  const gate=Promise.withResolvers()
  const entry=r.enter(chain,[1],ctx,true,inside=>{
    if(present)r.assignPath(inside,[],[4,,5],ctx)
    return gate.promise
  })
- const output=new r.Chain(r.run(chain,[],'flat',[depth],ctx,{}),ctx)
+ const output=new r.Chain(r.run(chain,[],'flat',[depth],ctx,{}),ctx, r.CHAIN_MODE.Complete)
  r.assignPath(chain,[2],99,ctx)
  gate.resolve();await entry
  const expected=[1];if(present)expected[1]=[4,,5];else expected.length=2
@@ -25,13 +25,12 @@ for(const depth of [0,1,Infinity])for(const present of [false,true])for(const vi
  cases++
 }
 // A known cycle Error releases source-only state while required pending sibling
-// traversal continues. A later structural failure must still be collected;
-// an ordinary Error leaf is carried data and needs no discarded-output scan.
+// traversal continues. Positive depth consumes the later root for discovery.
 async function pendingCycle(mode, lateCycle){
  const ctx={execution:new r.Execution(),errorContext:'flat cycle collection/'+mode}
  const later=mode==='ordered'?new OrderedThenable():Promise.withResolvers()
  let array=[1];array.push(array,later.promise??later)
- let root={array,payload:{}}, chain=new r.Chain(r.import(root,ctx),ctx)
+ let root={array,payload:{}}, chain=new r.Chain(r.import(root,ctx),ctx, r.CHAIN_MODE.Complete)
  const weak=new WeakRef(root.payload)
  let completed=false
  const result=Promise.resolve(r.run(chain,['array'],'flat',[Infinity],ctx,{})).then(v=>{completed=true;return v})
@@ -49,8 +48,9 @@ async function pendingCycle(mode, lateCycle){
  const failure=await result
  assert(r.isPoisonError(failure))
  const errors=failure.errors??[failure]
- assert.equal(errors.length,lateCycle?2:1)
- assert(errors.every(e=>e.kind===r.ERROR_KIND.InvalidArrayOperation&&e.errorContext===ctx.errorContext))
+ assert.equal(errors.length,lateCycle?1:2)
+ assert.equal(errors.filter(e=>e.kind===r.ERROR_KIND.InvalidArrayOperation&&e.errorContext===ctx.errorContext).length,1)
+ if(!lateCycle)assert(errors.some(e=>e.cause===cause))
  cases++
 }
 for(const mode of ['native','ordered'])for(const lateCycle of [false,true])await pendingCycle(mode,lateCycle)
@@ -62,9 +62,9 @@ async function nestedOutput(mode, failed){
  const later=mode==='ordered'?new OrderedThenable():Promise.withResolvers()
  let payload={tag:'retained output'}, nested=[payload,later.promise??later], cyclic=[]
  cyclic.push(cyclic)
- let root=failed?[cyclic,nested]:[nested], chain=new r.Chain(root,ctx)
+ let root=failed?[cyclic,nested]:[nested], chain=new r.Chain(root,ctx, r.CHAIN_MODE.Complete)
  const weak=new WeakRef(payload)
- const result=new r.Chain(r.run(chain,[],'flat',[Infinity],ctx,{}),ctx)
+ const result=new r.Chain(r.run(chain,[],'flat',[Infinity],ctx,{}),ctx, r.CHAIN_MODE.Complete)
  r.assignPath(chain,[],null,ctx)
  payload=nested=cyclic=root=chain=undefined
  await gc()
@@ -87,9 +87,9 @@ async function crossBranchOutput(mode,failed){
  const later=signal()
  let b=[edge.promise??edge],c=[b],payload={tag:'cross-branch output'}
  let root=[first.promise??first,second.promise??second,payload,later.promise??later]
- let chain=new r.Chain(root,ctx)
+ let chain=new r.Chain(root,ctx, r.CHAIN_MODE.Complete)
  const weak=new WeakRef(payload)
- const result=new r.Chain(r.run(chain,[],'flat',[Infinity],ctx,{}),ctx)
+ const result=new r.Chain(r.run(chain,[],'flat',[Infinity],ctx,{}),ctx, r.CHAIN_MODE.Complete)
  let completed=false
  const output=Promise.resolve(r.export(result,[],ctx)).then(value=>{completed=true;return value})
  r.assignPath(chain,[],null,ctx)
@@ -104,7 +104,7 @@ async function crossBranchOutput(mode,failed){
  const value=await output
  if(failed){
   const leaves=value.errors??[value]
-  assert.equal(leaves.length,2)
+  assert.equal(leaves.length,1)
   assert(leaves.every(error=>error.kind===r.ERROR_KIND.InvalidArrayOperation&&error.errorContext===ctx.errorContext))
  }else assert.deepEqual(value,[7,7,{tag:'cross-branch output'},1])
  assert.equal(ctx.execution.fatalError,null)
@@ -115,32 +115,43 @@ for(const mode of ['native','ordered'])for(const failed of [false,true])await cr
 // A depth-one call never needs a nested Array's payload classification. Once
 // presence is captured, failed output must release that version even while a
 // different root placement still needs classification.
-async function finiteBoundaryOutput(mode,failed){
+async function finiteBoundaryOutput(mode,failed,compact,depth=1){
  const ctx={execution:new r.Execution(),errorContext:'flat finite-boundary output/'+mode}
  const later=mode==='ordered'?new OrderedThenable():Promise.withResolvers()
  const cause=new Error('finite sibling inspection')
  let broken=false
  let sibling=new Proxy([1],{ownKeys(target){if(broken)throw cause;return Reflect.ownKeys(target)}})
  let payload={tag:'finite-boundary output'},nested=[payload],root=[nested,sibling,later.promise??later]
- let chain=new r.Chain(root,ctx)
+ if(depth>1){nested.push(later.promise??later);root=[nested,[nested],sibling]}
+ if(compact)root.length=70
+ let source=new r.Chain(root,ctx,r.CHAIN_MODE.Complete)
+ let chain=compact?new r.Chain(r.run(source,[],'fill',[0,3,70],ctx,{}),ctx,r.CHAIN_MODE.Complete):source
  const weak=new WeakRef(payload)
  broken=failed
- const result=new r.Chain(r.run(chain,[],'flat',[1],ctx,{}),ctx)
+ const result=new r.Chain(r.run(chain,[],'flat',[depth],ctx,{}),ctx, r.CHAIN_MODE.Complete)
  let completed=false
  const output=Promise.resolve(r.export(result,[],ctx)).then(value=>{completed=true;return value})
  r.assignPath(chain,[],null,ctx)
- sibling=payload=nested=root=chain=undefined
+ if(compact)r.assignPath(source,[],null,ctx)
+ sibling=payload=nested=root=source=chain=undefined
  await gc()
  assert.equal(completed,false,'Finite flat still requires its pending root placement')
  assert.equal(Boolean(weak.deref()),!failed,'Failed finite flat must release completed boundary payloads')
  later.resolve(7);later.flush?.()
  const value=await output
  if(failed){assert.equal(value.kind,r.ERROR_KIND.InvocationFailed);assert.equal(value.cause,cause)}
- else assert.deepEqual(value,[{tag:'finite-boundary output'},1,7])
+ else {
+  const item={tag:'finite-boundary output'}
+  assert.deepEqual(value,[...(depth>1?[item,7,item,7,1]:[item,1,7]),...(compact?new Array(67).fill(0):[])])
+  if(depth>1)assert.equal(value[0],value[2])
+ }
  assert.equal(ctx.execution.fatalError,null)
  cases++
 }
-for(const mode of ['native','ordered'])for(const failed of [false,true])await finiteBoundaryOutput(mode,failed)
+for(const mode of ['native','ordered'])for(const failed of [false,true])for(const compact of [false,true])
+ await finiteBoundaryOutput(mode,failed,compact)
+for(const mode of ['native','ordered'])for(const failed of [false,true])
+ for(const depth of [5,Infinity]) await finiteBoundaryOutput(mode,failed,true,depth)
 
 // Capacity rejection happens after successful capture. Retaining its unformatted
 // diagnostic must not retain successful placements through a lazy Error stack.
@@ -149,9 +160,9 @@ async function overflowOutput(failed){
  let payload={tag:'capacity output'},array=[]
  array.push(payload,array)
  const weak=new WeakRef(payload)
- let source=new r.Chain(array,ctx)
+ let source=new r.Chain(array,ctx, r.CHAIN_MODE.Complete)
  const value=r.run(source,[],'flat',[failed?2**54:3],ctx,{})
- const result=new r.Chain(value,ctx)
+ const result=new r.Chain(value,ctx, r.CHAIN_MODE.Complete)
  if(failed)assert.equal(value.kind,r.ERROR_KIND.InvalidArrayLength)
  r.assignPath(source,[],null,ctx)
  payload=array=source=undefined

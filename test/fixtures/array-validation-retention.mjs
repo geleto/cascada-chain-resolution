@@ -11,7 +11,7 @@ async function issue(method, delivery, outcome = 'failure') {
     let payload = { selected: label }, source = new Array(outcome === 'failure' && method !== 'with' ? 0xffffffff : 2)
     source[0] = { sourceChild: label }
     let expected = outcome === 'failure' ? undefined : source.slice()
-    let chain = new r.Chain(source, ctx)
+    let chain = new r.Chain(source, ctx, r.CHAIN_MODE.Complete)
     let argument = payload, pending
     if (delivery === 'sync') argument = ready(payload)
     if (delivery === 'native' || delivery === 'ordered') {
@@ -52,7 +52,25 @@ for (const method of ['concat', 'push', 'unshift', 'splice', 'toSpliced', 'with'
         await issue(method, delivery, 'live')
     }
 }
+// The comparator can stay pending after sort has finished reading its source.
+// Keep a separate live-holder control and mutate a selected child after capture.
+function sortCapture(method, live) {
+    const ctx = { execution: new r.Execution(), errorContext: method }
+    const source = [{ n: 2 }, { n: 1 }], chain = new r.Chain(source, ctx)
+    const weak = new WeakRef(source), comparator = Promise.withResolvers()
+    const holder = live && r.capturePath(chain, [], ctx)
+    const output = new r.Chain(r.run(chain, [], method, [comparator.promise], ctx, {}), ctx)
+    r.assignPath(chain, [0, "n"], 7, ctx)
+    r.assignPath(chain, [], null, ctx)
+    return { ctx, weak, comparator, holder, output }
+}
+const sorts = ["sort", "toSorted"].flatMap(method => [false, true].map(live => sortCapture(method, live)))
 for (let turn = 0; turn < 30; turn++) { await new Promise(setImmediate); globalThis.gc() }
+for (const { ctx, weak, comparator, holder, output } of sorts) {
+    assert.equal(Boolean(weak.deref()), Boolean(holder), ctx.errorContext)
+    comparator.resolve((left, right) => left.n - right.n)
+    assert.deepEqual(await r.export(output, [], ctx), [{ n: 1 }, { n: 2 }])
+}
 const retained = rows.filter(row => !row.live && row.weak.some(weak => weak.deref()))
     .map(row => ({ label: row.label, live: row.weak.map(weak => !!weak.deref()) }))
 for (const row of rows.filter(row => row.live)) assert(row.weak[0].deref(), `${row.label} lost retained payload`)

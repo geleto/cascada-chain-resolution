@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const fixture = fileURLToPath(new URL('./fixtures/array-range-work.js', import.meta.url))
 describe('localized Array mutation work', () => {
     for (const disabled of [false, true]) it(disabled ? 'rejects disabled range instrumentation' :
-        'bounds point fill and copyWithin work by the selected range', function () {
+        'bounds repeated point replacements by the selected range', function () {
         this.timeout(60000)
         const result = spawnSync(process.execPath, [...process.execArgv, '--unhandled-rejections=strict',
             fixture, ...(disabled ? ['--no-op-loader'] : [])], { encoding: 'utf8', timeout: 50000 })

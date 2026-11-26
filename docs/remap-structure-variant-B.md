@@ -12,7 +12,7 @@ Both variants follow the shared [query and publication rules](../array-layout-ap
 
 ## One sequence, two directions
 
-Store remap entries in output order in a balanced tree. Small leaves hold short arrays of entries; internal nodes join consecutive pieces and summarize their lengths. This is a **rope**: a sequence represented by a tree of spans.
+A retained block layout stores entries in output order in a balanced tree. Leaves describe spans and internal nodes join consecutive pieces and summarize their lengths. This structure is a **rope**. Ordinary Array and ArrayView results follow the shared [materialization rules](../array-layout-approaches.md#91-retain-or-materialize).
 
 Each node groups consecutive entries. A node may have an uncertain total simply because some child widths are uncertain; that alone does not require a deferred entry. A deferred entry represents a region needing a method-specific selection or transformation. Sibling regions never compete for the same output positions.
 
@@ -254,6 +254,8 @@ A query may use an older conservative bound when it already proves the answer; o
 
 ### Structural work bound
 
+Compose mappings that the captured front or back coordinates already determine. Reversing a safe join exchanges its operands and reverses each one. Preserve each earlier clipping or failure boundary. Genuinely unresolved selections can refer to predecessors. Follow a history-sized sequence of such references and propagate bounds with an iterative worklist. A lookup, reader or settlement on a fixed small Array must survive histories deeper than the JavaScript call stack.
+
 For bounded fan-out `f`, refreshing an ordinary structural count summary reads at most `f` child summaries and clears one dirty mark. Recursive child refreshes are charged to those children's marks. Across a trace with `I` clean-to-dirty transitions and `N` initially dirty summaries, total structural refresh work is `O(f × (I + N))`. In-place edits that make a summary stale count in `I`. Refreshing dirty siblings may exceed one lookup path, but is charged to the events that dirtied them, not unexplained extra work.
 
 One occurrence has `O(log B)` structural ancestors for `B` entries. Across `V` retained versions with one occurrence each, a change can reach up to `O(V log B)` ancestors, stopping earlier where the relevant projection is unchanged. This per-change bound is not a total-history proof: the fixed-size probe shows why refreshing and waking every affected version on every settlement can still be quadratic.
@@ -289,9 +291,9 @@ a!.splice(-1, p2)
 
 With normalized counts `p1` in `[0, 2]` and `p2` in `[0, 1]`, `M` is always present between an uncertain prefix and an optional `C`. `includes("M")` can succeed even though neither its front nor back numeric index is fixed.
 
-Ordered iteration issues the structurally published prefix: membership, intended position, and final payload source must be established. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
+Ordered iteration issues the structurally published prefix: membership, current numeric position, clear slot status and final payload source must be established. The producer's accepted fallback supplies current coordinates. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
 
-A future iterator delivers guaranteed surviving occurrences before their numeric indexes are known, carrying index futures as specified in the [iteration plan](../iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors). Numeric queries remain useful, but occurrence discovery and delivery require their own unordered-stage integration over the same layout.
+The unordered cursor delivers guaranteed surviving occurrences before their numeric indexes are known. Its captured index feeds the embedding's branch order and bounded admission. Numeric queries and occurrence discovery use the same layout. [Iteration plan](../iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors)
 
 The subsequent [bounded-window phase](../iterate-plan.md#bounded-window-iteration) adds demand restricted to consumer-supplied [f,r). Positive integer B bounds unfinished positions: every newly finalized position extends r once, while trimming the finalized prefix advances f without a second credit. Finalization includes body completion and proved unordered structural skips; preserve their distinct failure/body outcomes and report skip progress during a pending pull. The numeric window can exceed B. Relative-count bounds and correlated totals prove whether a not-yet-delivered occurrence's entire final/fallback index range is contained in that window. Reuse this tree and its maintained uses for disjoint-region pruning, unresolved boundary dependencies, compact completed runs, and exactly-once delivery; no second index or whole-suffix/completion-history rescan is introduced. Cascada owns completion accounting and branch execution. A completed occurrence may still retain necessary index facts, but not its finished body or payload solely for window bookkeeping.
 
@@ -371,7 +373,7 @@ Retain captured predecessors only where live versions, unresolved selections, or
 
 Process history-sized propagation and release with loops or synchronous worklists. Layout simplification cannot cancel prescribed writes, identity changes, call results, or completion obligations.
 
-A composed mapping must preserve intervening capacity loss and each selected structural Error's cause. Merge uniform spans only when their source, role and cause facts agree. For alternating causes, share the joins and captured subtrees. A wholly structural count/skip proof can span different causes. Full collection visits a shared subtree once per relevant restriction and includes any required pending prefix. Keep membership and causal projections on the same layout and query owners. [Virtual positions and full consumers](../iterate-plan.md#virtual-positions-and-full-consumers)
+A composed mapping must preserve intervening capacity loss and each selected structural Error's cause. Merge uniform spans only when their source, role and cause facts agree. For alternating causes, share the joins and captured subtrees. A wholly structural count/skip proof can span different causes. For a representable selection, full collection visits a shared subtree once per relevant restriction and includes any required pending prefix. Whole-value collection stops at a reached oversized Array with one capacity Error. Keep membership and causal projections on the same layout and query owners. [Virtual positions and full consumers](../iterate-plan.md#virtual-positions-and-full-consumers)
 
 ## Small layouts
 

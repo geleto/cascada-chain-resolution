@@ -6,6 +6,10 @@ import { ArrayView } from "./array-view.js"
 import { getOwnPlacementVersion } from "./property-versions.js"
 
 const COUNT_FIELDS = ["frontierCount", "errorCount"]
+const OWN_FAILURE = Symbol("own placement failure")
+
+// Identifying the cause later cannot change this edge's contribution.
+function counterValue(placement) { return placement.ownFailure ? OWN_FAILURE : placement.value }
 
 function getRefCounter(node, operationContext) {
     const meta = metadata.metaOf(node, operationContext)
@@ -24,7 +28,7 @@ function getValueRefState(child, operationContext, cycleCut = false) {
     const state = { frontierCount: 0, errorCount: 0 }
     if (languageValues.isPending(child, operationContext) || cycleCut) {
         state.frontierCount = 1
-    } else if (errorUtils.isPoisonError(child)) {
+    } else if (child === OWN_FAILURE || errorUtils.isPoisonError(child)) {
         state.errorCount = 1
     } else if (languageValues.isTraversable(child, operationContext)) {
         state.childCounter = getRequiredRefCounter(child, operationContext)
@@ -34,7 +38,7 @@ function getValueRefState(child, operationContext, cycleCut = false) {
     return state
 }
 
-function buildRefIndex(value, operationContext) {
+function buildRefIndex(value, operationContext, canIndex) {
     if (languageValues.isPending(value, operationContext)) return value
     languageValues.admitReadyValue(value, operationContext)
     if (
@@ -46,17 +50,25 @@ function buildRefIndex(value, operationContext) {
 
     const staged = new Map()
     const active = new Set()
+    let excluded = false
     try {
         visit(value)
+        // A full query can encounter a virtual Array whose boundary excludes
+        // its interior. Leave the optional index unbuilt across that edge.
+        if (excluded) return false
 
         // No external reflection or subscription remains. Publish the complete region,
         // including cut targets, before adding its reverse edges to existing indexes.
         for (const { meta, counter } of staged.values()) {
             Object.assign(meta, counter)
         }
-        for (const [node, { children, backingUses }] of staged) {
-            for (const child of children) addParentCounterEdge(child, node, operationContext)
+        for (const [node, { children, backingUses, span, meta }] of staged) {
+            for (const [child, count] of children) addParentCounterEdge(child, node, operationContext, count)
             for (const [key, version] of backingUses) retainBackingCounter(version, node, key, operationContext)
+            if (span?.region.pending) {
+                meta.indexedRegion = span.region
+                ;(span.region.indexed ??= new Set()).add(node)
+            }
         }
         return value
     } finally { staged.clear(); active.clear(); value = undefined }
@@ -64,6 +76,7 @@ function buildRefIndex(value, operationContext) {
     function visit(node) {
         const existing = getRefCounter(node, operationContext) ?? staged.get(node)?.counter
         if (existing) return existing
+        if (canIndex && !canIndex(node)) { excluded = true; return }
         const counter = {
             frontierCount: 0,
             errorCount: 0,
@@ -71,30 +84,45 @@ function buildRefIndex(value, operationContext) {
         }
         const children = []
         const backingUses = []
+        let span
         staged.set(node, { meta: metadata.requireMeta(node, operationContext), counter, children, backingUses })
         active.add(node)
-        for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
-            const child = languageProperties.readLanguageProperty(node, key, operationContext)
+        for (const range of ArrayView.implicitRanges(node, operationContext)) {
+            if (range.region.pending) { counter.frontierCount++; span = range }
+            counter.errorCount += range.errors
+            range.region.children(range, (p, count) => {
+                if (!excluded && !p.ownFailure && languageValues.isTraversable(p.value, operationContext))
+                    childEdge(p.value, count, p)
+            })
+            if (excluded) return
+        }
+        staged.get(node).span = span
+        for (const key of languageProperties.enumerableLanguageKeys(node, operationContext, 0, undefined, undefined, true)) {
+            const child = counterValue(languageProperties.readLanguagePlacement(node, key, operationContext))
             const backingVersion = !getOwnPlacementVersion(node, key, operationContext) &&
                 ArrayView.backingVersion(node, key, operationContext)
             if (backingVersion) backingUses.push([key, backingVersion])
             if (languageValues.isPending(child, operationContext))
                 counter.frontierCount++
-            else if (errorUtils.isPoisonError(child)) counter.errorCount++
-            else if (languageValues.isTraversable(child, operationContext)) {
-                if (active.has(child)) {
-                    updateCycleCut(counter, key, true)
-                    counter.frontierCount++
-                } else {
-                    const childCounter = visit(child)
-                    for (const field of COUNT_FIELDS)
-                        counter[field] += Number(childCounter[field] > 0)
-                    children.push(childCounter)
-                }
-            }
+            else if (child === OWN_FAILURE || errorUtils.isPoisonError(child)) counter.errorCount++
+            else if (languageValues.isTraversable(child, operationContext)) childEdge(child, 1, key)
+            if (excluded) return
         }
         active.delete(node)
         return counter
+
+        function childEdge(child, count, key) {
+            if (active.has(child)) {
+                if (typeof key === "object") (counter.sharedCuts ??= new WeakSet()).add(key)
+                else updateCycleCut(counter, key, true)
+                counter.frontierCount += count
+            } else {
+                const childCounter = visit(child)
+                if (!childCounter) return
+                for (const field of COUNT_FIELDS) if (childCounter[field]) counter[field] += count
+                children.push([childCounter, count])
+            }
+        }
     }
 }
 
@@ -170,7 +198,7 @@ function prepareCounterUpdate(
     const previousState = getValueRefState(
         before,
         operationContext,
-        counter.cycleCuts?.has(key) === true,
+        counter.cycleCuts?.has(key) === true || backingVersion?.layoutChild && counter.sharedCuts?.has(backingVersion),
     )
     const nextState = getValueRefState(value, operationContext, cycleCut)
     return () => {
@@ -203,16 +231,38 @@ function releaseBackingCounter(version, owner, operationContext) {
 
 function retireRefIndex(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
+    meta.indexedRegion?.indexed?.delete(owner)
+    delete meta.indexedRegion
     for (const parents of meta.counterChildren ?? []) parents.delete(owner)
     for (const version of meta.backingCounterVersions ?? [])
         releaseBackingCounter(version, owner, operationContext)
-    for (const field of ["parents", "frontierCount", "errorCount", "cycleCuts", "counterChildren"])
+    for (const field of ["parents", "frontierCount", "errorCount", "cycleCuts", "sharedCuts", "counterChildren"])
         delete meta[field]
 }
 
-function addParentCounterEdge(counter, parent, operationContext) {
+function indexRegionPoint(version, owner, key, operationContext) {
+    retainBackingCounter(version, owner, key, operationContext)
+    updateCount(getRequiredRefCounter(owner, operationContext), "frontierCount", 1, operationContext)
+}
+
+function publishRegionCount(owner, failed, region, range, operationContext) {
+    const counter = getRequiredRefCounter(owner, operationContext)
+    if (range) region.children(range, (p, count) => {
+        if (p.ownFailure || !languageValues.isTraversable(p.value, operationContext)) return
+        const cut = prepareRefEdge(owner, counter, p.value, operationContext)
+        if (cut) (counter.sharedCuts ??= new WeakSet()).add(p)
+        const state = getValueRefState(p.value, operationContext, cut)
+        addParentCounterEdge(state.childCounter, owner, operationContext, count)
+        for (const field of COUNT_FIELDS) if (state[field]) updateCount(counter, field, count, operationContext)
+    })
+    delete counter.indexedRegion
+    updateCount(counter, "frontierCount", -1, operationContext)
+    if (failed) updateCount(counter, "errorCount", failed, operationContext)
+}
+
+function addParentCounterEdge(counter, parent, operationContext, count = 1) {
     if (!counter) return
-    counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + 1)
+    counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + count)
     const meta = metadata.requireMeta(parent, operationContext)
     ;(meta.counterChildren ??= new Set()).add(counter.parents)
 }
@@ -263,6 +313,11 @@ function updateCount(counter, field, delta, operationContext) {
 }
 
 export {
+    counterValue,
+    indexRegionPoint,
+    publishRegionCount,
+    retainBackingCounter,
+    releaseBackingCounter,
     buildRefIndex,
     getRefCounter,
     getRequiredRefCounter,

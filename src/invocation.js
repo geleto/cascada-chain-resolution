@@ -6,6 +6,7 @@ import * as internalSteps from "./internal-step.js"
 import * as languageValues from "./language-values.js"
 import { createLeaseLedger, releaseDetached } from "./ownership.js"
 import { PathOperation } from "./path-operation.js"
+import { CHAIN_MODE } from "./chain.js"
 import { receiveValue } from "./input-preparations.js"
 
 // One preparation is shared by receiver discovery and selected dispatch. The
@@ -49,12 +50,16 @@ class ArgumentInput {
 
 class InvocationWork extends PathOperation {
     receiverReached = false
+    get receiverOwnsFailure() { return this.controlledArray && this.mode !== CHAIN_MODE.Complete }
     #inputs
     #receiverLeases
     #outputLeases
 
     constructor(chain, path, operationContext, facts, method, args) {
-        super(chain, path, operationContext, facts.mutationScopeDepth, facts.repair, facts.firstDynamicSegment ?? path.length)
+        super(chain, path, operationContext, facts.mutationScopeDepth, facts.repair, facts.firstDynamicSegment ?? path.length,
+            path.length, false, method === "push")
+        this.appendOnly = chain._appendOnly
+        this.missingOutput = facts.missingOutput
         this.method = method
         this.args = args
         args = undefined
@@ -64,6 +69,8 @@ class InvocationWork extends PathOperation {
         this.leaseReceiver = this.#receiverLeases.acquire
         this.releaseReceiverLeases = () => {
             this.#receiverLeases.release()
+            this.releaseCapturedReceiver?.()
+            this.releaseCapturedReceiver = undefined
             this.receiver = undefined
             this.receiverCapture?.discard()
             this.receiverCapture = undefined
@@ -111,6 +118,18 @@ class InvocationWork extends PathOperation {
         this.#inputs?.[index]?.release()
     }
 
+    takeArgument(index, args) {
+        const value = this.prepareArgument(index, args)
+        this.argumentInput(index, true)?.release()
+        return value
+    }
+
+    argumentInput(index, transfer = false) {
+        const input = this.#inputs?.[index]
+        if (input && transfer) this.#inputs[index] = undefined
+        return input
+    }
+
     preparationFailed() {
         this.releaseReceiverLeases()
         this.discardPreparedOutput?.()
@@ -121,6 +140,7 @@ class InvocationWork extends PathOperation {
     }
 
     transferInputs = value => {
+        this.releaseReceiverLeases()
         if (!errorUtils.isPoisonError(value)) {
             this.releaseArgumentLeases()
             this.#inputs = undefined
@@ -250,7 +270,9 @@ function invokeMethod(
                 languageValues.isPending(result, operationContext)
             if (!pendingInputUse) {
                 invocationWork.releaseArgumentLeases()
-                invocationWork.releaseReceiverLeases()
+                // Array mutation publication still needs the receiver for a
+                // no-write result or to inherit its logical identity.
+                if (!mutation || !invocationWork.controlledArray) invocationWork.releaseReceiverLeases()
             }
             // This callback belongs to work, so pending input transfer retains
             // neither this invocation's prepared arguments nor its description.

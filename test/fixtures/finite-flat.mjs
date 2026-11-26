@@ -6,7 +6,7 @@ import { createRandom } from "../native-equivalence-support.js"
 let cases = 0
 function flatten(array, depth) {
     const ctx = { execution: new r.Execution(), errorContext: "finite flat expansion" }
-    const source = new r.Chain(array, ctx)
+    const source = new r.Chain(array, ctx, r.CHAIN_MODE.Complete)
     const value = r.run(source, [], "flat", [depth], ctx, {})
     assert(!(value instanceof Promise))
     const result = new r.Chain(value, ctx)
@@ -69,6 +69,24 @@ for (let level = 0; level < 35; level++) doubled = [doubled, doubled]
 const overflow = flatten(doubled, 35).value
 assert(r.isPoisonError(overflow))
 assert.equal(overflow.kind, r.ERROR_KIND.InvalidArrayLength)
+
+// A large valid expansion has usable endpoints and a retained cyclic value.
+// The constrained child can hold its captured graph but cannot allocate an
+// individual placement for each of the two billion result slots.
+for (const mode of Object.values(r.CHAIN_MODE)) {
+    const ctx = { execution: new r.Execution(), errorContext: "compact finite flat" }
+    const array = [1, 2]
+    array.push(array)
+    const source = new r.Chain(array, ctx, mode)
+    const output = new r.Chain(r.run(source, [], "flat", [2 ** 30 - 1], ctx, {}), ctx, mode)
+    assert.equal(r.lookupPath(output, ["length"], ctx), 2 ** 31 + 1)
+    assert.equal(r.lookupPath(output, [2 ** 31 - 1], ctx), 2)
+    assert.equal(r.lookupPath(output, [2 ** 31], ctx), r.lookupPath(source, [], ctx))
+    r.assignPath(output, [0], 7, ctx)
+    assert.equal(r.lookupPath(output, [0], ctx), 7)
+    assert.equal(r.lookupPath(source, [0], ctx), 1)
+    cases++
+}
 
 // Successful native flattening is an independent oracle at bounded depths.
 // Vary cycles, aliases, holes, empty exits, payload leaves and retained Arrays.

@@ -35,7 +35,7 @@ function exportValues(inputs, owner, onResult) {
 
     function finish() {
         const outcome = errors.size
-            ? errorUtils.combineErrors(errors)
+            ? errorUtils.combineErrors(errors, operationContext)
             : assembleCapturedGraph(capture)
         release()
         return onResult(outcome)

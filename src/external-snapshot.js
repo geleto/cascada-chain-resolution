@@ -1,8 +1,9 @@
 import { ArrayView, isArrayIndex } from "./array-view.js"
+import { MAX_ARRAY_LENGTH } from "./array-layout.js"
 import * as errors from "./error.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
-import { capturePlacement } from "./property-versions.js"
+import { capturePlacement, placementValue } from "./property-versions.js"
 import { copyIdentity, groupCapturedIdentities } from "./captured-identity.js"
 import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 import { continueGraphTransition } from "./internal-step.js"
@@ -32,6 +33,15 @@ class SnapshotCapture extends ManagedCapture {
     invalid(message) {
         return this.failed(errors.validationError(message, this.owner.operationContext,
             errors.ERROR_KIND.InvalidExternalSnapshot))
+    }
+
+    walk(value, receive) {
+        // This reader must reject unsettled native snapshot structure in the
+        // current phase. It cannot wait for a full-consumption size decision.
+        const ctx = this.owner.operationContext
+        if (ArrayView.hasPendingLength(value, ctx) && ArrayView.minimumLength(value, ctx) <= MAX_ARRAY_LENGTH)
+            return this.walkValue(value, receive)
+        return super.walk(value, receive)
     }
 
     native(action) {
@@ -78,7 +88,7 @@ class SnapshotCapture extends ManagedCapture {
 
     keys(source, facts) {
         try {
-            if (facts.managed) return properties.enumerableLanguageKeyCandidates(source, this.owner.operationContext)
+            if (facts.managed) return super.keys(source)
             return errors.runExternalAction(this.owner.operationContext, () => Reflect.ownKeys(source)).filter(
                 key => typeof key === "string" && (facts.type !== metadata.TYPE.Array || isArrayIndex(key)))
         } finally { source = facts = undefined }
@@ -97,6 +107,11 @@ class SnapshotCapture extends ManagedCapture {
     }
 
     consume(placement, visit) { return visit(placement.value) }
+
+    consumeRegion(range, visit) {
+        return range.region.pending ? this.invalid("External snapshots require settled Array structure") :
+            super.consumeRegion(range, visit)
+    }
 
     inspectPrototype(prototype) {
         const { operationContext } = this.owner
@@ -171,7 +186,7 @@ function captureSnapshotPlacement(owner, key, operationContext, type = metadata.
     return placement.sourceVersion?.pendingPresence ? { present: true, value: errors.validationError(
         "External snapshots require settled property presence", operationContext,
         errors.ERROR_KIND.InvalidExternalSnapshot) } : { ...placement,
-            value: placement.ownFailure ?? placement.value, present: Boolean(placement.ownFailure) || placement.present }
+            value: placementValue(placement), present: Boolean(placement.ownFailure) || placement.present }
 }
 
 export { captureSnapshotPlacement, captureExternalValue, assembleExternalSnapshot, snapshotExternalValue }

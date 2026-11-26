@@ -22,8 +22,8 @@ describe("trusted Array intrinsic boundaries", function () {
                 const reports = [], execution = new r.Execution(error => reports.push(error))
                 const ctx = { execution, errorContext: label }
                 const source = large === "receiver" ? new Array(0xffffffff) : [1, 2]
-                let chain = new r.Chain(route === "imported" ? r.import(source, ctx) : source, ctx)
-                if (route === "view") chain = new r.Chain(r.run(chain, [], "slice", [0], ctx, {}), ctx)
+                let chain = new r.Chain(route === "imported" ? r.import(source, ctx) : source, ctx, r.CHAIN_MODE.Complete)
+                if (route === "view") chain = new r.Chain(r.run(chain, [], "slice", [0], ctx, {}), ctx, r.CHAIN_MODE.Complete)
                 const argument = large === "argument" ? new Array(0xffffffff) : [1]
                 const signal = pending ? Promise.withResolvers() : undefined
                 const result = r.run(chain, [], "concat", [pending ? signal.promise : argument], ctx, {})
@@ -41,7 +41,7 @@ describe("trusted Array intrinsic boundaries", function () {
             for (const imported of [false, true]) {
                 const ctx = { execution: new r.Execution(), errorContext: { imported, growth: true } }
                 const source = new Array(0xfffffffe)
-                const chain = new r.Chain(imported ? r.import(source, ctx) : source, ctx)
+                const chain = new r.Chain(imported ? r.import(source, ctx) : source, ctx, r.CHAIN_MODE.Complete)
                 const hold = Promise.withResolvers()
                 let inside
                 const entry = r.enter(chain, [0xfffffffe], ctx, true, entered => {
@@ -68,6 +68,7 @@ describe("trusted Array intrinsic boundaries", function () {
             import assert from "node:assert/strict"
             import { registerHooks } from "node:module"
             const target = ${JSON.stringify(sourceRoot + "array-methods.js")}
+            const flatTarget = ${JSON.stringify(sourceRoot + "array-flat-stream.js")}
             let armed
             globalThis.arrayIntrinsicFault = method => {
                 if (!armed || armed.method !== method || --armed.remaining > 0) return
@@ -77,19 +78,19 @@ describe("trusted Array intrinsic boundaries", function () {
             }
             registerHooks({ load(url, context, next) {
                 const result = next(url, context)
+                if (url === flatTarget) {
+                    const source = String(result.source), marker = "publishLayout(node, ctx)"
+                    assert.equal(source.split(marker).length - 1, 1, "Flat publication anchor needs updating")
+                    return { ...result, source: source.replace(marker, '(globalThis.arrayIntrinsicFault("flat"), ' + marker + ')') }
+                }
                 if (url !== target) return result
                 let source = String(result.source)
-                for (const method of ["concat"]) {
-                    const name = "arrayConcat"
-                    const marker = "const " + name + " = Array.prototype." + method
-                    assert(source.includes(marker), "Array intrinsic anchor needs updating")
-                    source = source.replace(marker, "const " + name + " = function (...args) { " +
-                        'globalThis.arrayIntrinsicFault("' + method + '"); ' +
-                        "return Reflect.apply(Array.prototype." + method + ", this, args) }")
-                }
-                const marker = "flattenCapturedArrays(prepared, depth)"
-                assert.equal(source.split(marker).length - 1, 1, "Flat expansion anchor needs updating")
-                source = source.replace(marker, '(globalThis.arrayIntrinsicFault("flat"), ' + marker + ')')
+                const concat = "const extended = arrayRemaps.appendView(work.receiver, parts, length,"
+                assert.equal(source.split(concat).length - 1, 1, "Concat publication anchor needs updating")
+                source = source.replace(concat, 'globalThis.arrayIntrinsicFault("concat"); ' + concat)
+                const mapped = "const sequence = concatSequence(receiver, suffix, ctx, streaming)"
+                assert.equal(source.split(mapped).length - 1, 1, "Concat mapping anchor needs updating")
+                source = source.replace(mapped, 'globalThis.arrayIntrinsicFault("concat"); ' + mapped)
                 return { ...result, source }
             } })
             const r = await import(${JSON.stringify(sourceRoot + "index.js")})
@@ -108,7 +109,7 @@ describe("trusted Array intrinsic boundaries", function () {
                 const initialization = { execution, errorContext: "initialization" }
                 const ctx = { execution, errorContext: label }
                 const original = method === "flat" ? [[2], 1] : [2, 1]
-                const chain = new r.Chain(imported ? r.import(original, initialization) : original, initialization)
+                const chain = new r.Chain(imported ? r.import(original, initialization) : original, initialization, r.CHAIN_MODE.Complete)
                 const signal = pending ? Promise.withResolvers() : undefined
                 const argument = method === "flat" ? 1 : [3]
                 const sibling = r.import(new Promise(() => {}), initialization)

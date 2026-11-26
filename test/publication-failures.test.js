@@ -39,7 +39,7 @@ describe("complete publication failures", () => {
         verifyRefCounts(ctx, chain._state)
     })
 
-    it("counts failed gated no-op publication as an identity write", async () => {
+    it("preserves gated no-op identity when an optional cache write is refused", async () => {
         const ctx = context(), hold = Promise.withResolvers(), cause = new Error("refused gate publication")
         let refuses = false
         const chain = new runtime.Chain(new Proxy({ items: [0] }, {
@@ -53,10 +53,10 @@ describe("complete publication failures", () => {
         const result = runtime.run(chain, ["items"], "fill", [7, hold.promise, 1], ctx, { mutationScopeDepth: 1 })
         refuses = true
         hold.resolve(1)
-        const failure = await result
-        assert.equal(failure.cause, cause)
-        assert.equal(runtime.lookupPath(chain, ["items"], ctx), failure)
-        assert.equal(compareIdentities(before, captureIdentity(chain._state.value, ctx), new OperationOwner(ctx)), false)
+        const value = await result
+        assert.deepEqual(await runtime.export(new runtime.Chain(value, ctx), [], ctx), [0])
+        assert.equal(runtime.isPoisoned(chain, ["items"], ctx), false)
+        assert.equal(await compareIdentities(before, captureIdentity(chain._state.value, ctx), new OperationOwner(ctx)), true)
         refuses = false
         await runtime.repairPath(chain, ["items"], ctx)
         assert.deepEqual(runtime.export(chain, ["items"], ctx), [0])
@@ -310,7 +310,7 @@ describe("complete publication failures", () => {
     })
 
     for (const method of ["pop", "shift"]) {
-        it(`${method} retains a pending removed Error after parent publication fails without delaying repair`, async () => {
+        it(`${method} publishes the shorter receiver before a removed Error settles when the parent refuses storage`, async () => {
             const ctx = context()
             const introduced = context(ctx.execution)
             const original = runtime.createPoisonError(new Error("removed value"), introduced, runtime.ERROR_KIND.OperationInputFailed)
@@ -323,14 +323,13 @@ describe("complete publication failures", () => {
             runtime.lookupPath(chain, ["items"], ctx) // Mutation needs a replacement.
             const work = runtime.run(chain, ["items"], method, [], ctx, { mutationScopeDepth: 1 })
             assert(work instanceof Promise)
-            const graphFailure = runtime.lookupPath(chain, ["items"], ctx)
-            assert.equal(graphFailure.cause, publicationFailure)
+            assert.deepEqual(runtime.export(chain, ["items"], ctx), [])
             assert.equal(metadata.hasReadLease(items, ctx), false)
             runtime.assignPath(chain, [], { healthy: 1 }, ctx)
             assert.equal(runtime.lookupPath(chain, ["healthy"], ctx), 1)
             pending.reject(original)
             const result = await work
-            assert.deepEqual(new Set(leaves(result)), new Set([original, graphFailure]))
+            assert.equal(result, original)
             assert.equal(original.errorContext, introduced.errorContext)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, items, chain._state)
@@ -413,7 +412,7 @@ describe("complete publication failures", () => {
 
     for (const method of ["pop", "shift"]) {
         for (const pending of [false, true]) {
-            it(`${method} publishes receiver failure while retaining its ${pending ? "pending" : "ready"} result Error`, async () => {
+            it(`${method} keeps its ${pending ? "pending" : "ready"} removed Error independent of receiver cache storage`, async () => {
                 const ctx = context()
                 const introduced = context(ctx.execution)
                 const original = runtime.createPoisonError(new Error("removed value"), introduced, runtime.ERROR_KIND.OperationInputFailed)
@@ -429,19 +428,15 @@ describe("complete publication failures", () => {
                 const chain = new runtime.Chain(new Proxy({ items: source }, { set() { throw publication } }), ctx)
                 buildRefIndex(source, ctx)
                 const work = runtime.run(chain, ["items"], method, [], ctx, { mutationScopeDepth: 1 })
-                const receiverFailure = runtime.lookupPath(chain, ["items"], ctx)
-                assert.equal(receiverFailure.cause, publication)
-                assert.equal(receiverFailure.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+                assert.deepEqual(runtime.export(chain, ["items"], ctx), [2])
                 if (pending) {
                     assert(work instanceof Promise)
                     later.reject(original)
                 } else assert(runtime.isPoisonError(work))
                 const result = await work
-                assert.equal(leaves(result).length, 2)
-                assert(leaves(result).includes(original))
-                assert(leaves(result).includes(receiverFailure))
+                assert.equal(result, original)
                 assert.equal(ctx.execution.fatalError, null)
-                verifyRefCounts(ctx, source, receiverFailure)
+                verifyRefCounts(ctx, source, chain._state)
                 runtime.assignPath(chain, [], [3], ctx)
                 assert.equal(runtime.run(chain, [], "pop", [], ctx, { mutationScopeDepth: 0 }), 3)
             })

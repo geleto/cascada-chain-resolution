@@ -10,6 +10,7 @@ class OperationOwner {
     close() {
         if (!this.open) return
         this.open = false
+        if (this.intrinsicFailures) this.intrinsicFailures = undefined
         try {
             this.release?.()
         } finally {

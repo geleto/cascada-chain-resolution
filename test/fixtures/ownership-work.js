@@ -4,7 +4,7 @@ import { instrumentRuntime } from "../runtime-transform.js"
 
 let counts, nodeCounts
 const reset = () => {
-    counts = { copies: 0, activations: 0, retirements: 0, proofs: 0, owners: 0, backings: 0, scheduled: 0, identities: 0,
+    counts = { layoutCaptures: 0, copies: 0, activations: 0, retirements: 0, proofs: 0, owners: 0, backings: 0, scheduled: 0, identities: 0,
         destinations: 0, lengthConsumers: 0, lengthVisits: 0 }
     nodeCounts = new WeakMap()
 }
@@ -27,6 +27,7 @@ globalThis.CountedOwners = class extends Set {
 }
 const replacements = {
     "captured-identity.js": [["capture(value) {", "identities"]],
+    "array-layout.js": [["const index = Number(key) - first", "layoutCaptures"]],
     "placement-structure.js": [
         [/function defineCopyProperty(?:Untraced)?\(copy, key, value\) \{/g, "copies"],
     ],
@@ -87,9 +88,9 @@ for (const pending of [false, true]) for (const protection of ["none", "holder",
     samples.push({ case: "pending descent", depth, width, pending, protection, copies })
 }
 
-{
+for (const mode of Object.values(r.CHAIN_MODE)) {
     const context = ctx(), start = Promise.withResolvers()
-    const source = new r.Chain([1, 2, 3], context)
+    const source = new r.Chain([1, 2, 3], context, mode)
     reset()
     const outcome = r.run(source, [], "splice", [start.promise, 1], context, { mutationScopeDepth: 0 })
     const removed = new r.Chain(outcome, context)
@@ -98,7 +99,7 @@ for (const pending of [false, true]) for (const protection of ["none", "holder",
     assert.deepEqual(r.export(source, [], context), [2, 3])
     const events = nodeCounts.get(source._state.value)
     assert.deepEqual(events, { activations: 1, retirements: 0 }, "Replacement stays active until mutation publication")
-    samples.push({ case: "pending splice publication", ...events })
+    samples.push({ case: "pending splice publication", mode, ...events })
 }
 
 for (const entry of [false, true]) for (const size of [8, 128]) {
@@ -167,7 +168,7 @@ for (const iterations of [200, 400, 800]) for (const offset of [0, 5]) {
     }
     // An oversized initial offset is compacted once, copying its one live
     // placement. Subsequent retained-view extensions still copy no prefix.
-    assert.equal(counts.copies, Number(offset > 0))
+    assert.equal(counts.copies + counts.layoutCaptures, Number(offset > 0))
     assert(counts.owners <= 2 * iterations, JSON.stringify({ iterations, offset, ...counts }))
     samples.push({ case: "retained view extension", iterations, offset, ...counts })
     for (const [index, holder] of retained.entries()) {
@@ -239,10 +240,9 @@ for (const retainedCount of [0, 8]) for (const offset of [0, 5]) {
     }
     assert.equal(r.lookupPath(array, ["length"], context), size)
     assert.equal(r.lookupPath(array, [size - 1], context), iterations - 1)
-    // Interior extension still uses the conservative materialization fallback.
-    // The tail-reuse trial copied no prefix, but failed sparse indexed growth.
-    assert.equal(counts.copies, (size - 1) * iterations)
-    assert(counts.backings >= iterations - 1 && counts.backings <= iterations)
+    // Each push takes independent tail storage and keeps the preceding range.
+    assert.equal(counts.copies + counts.layoutCaptures, 0)
+    assert(counts.backings >= iterations && counts.backings <= iterations + 1, JSON.stringify({ size, iterations, ...counts }))
     for (const holder of retained) assert.equal(r.lookupPath(holder, [0], context), offset)
     samples.push({ case: "pop/push", size, iterations, retainedCount, offset, ...counts })
 }

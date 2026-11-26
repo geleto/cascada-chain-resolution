@@ -35,16 +35,34 @@ function issue(method, boundary, fresh, indexed, live = false) {
     handler.armed = true
     let result = r.run(chain, ['array'], method, method === 'fill' ? [payload, 0, 2] : [1, 0, 2], ctx, { mutationScopeDepth: 1 })
     handler.armed = false
-    if (boundary) {
+    if (boundary === 'reflection') {
         assert.equal(result.cause, handler.cause, label)
         assert.equal(result.errorContext, label)
         assert(handler.hits > 0)
-    } else result = undefined
+    } else {
+        assert(!r.isPoisonError(result), label)
+        result = undefined
+    }
     if (!live) r.assignPath(chain, [], null, ctx)
     assert.equal(ctx.execution.fatalError, null)
     return { label, ctx, chain, poison: result, weak, selected, live }
 }
 const rows = []
+// Explicit point assignment still has a required storage boundary. Retaining
+// its diagnostic after replacing the root must release the old descriptor value.
+function pointFailure() {
+    const ctx = { execution: new r.Execution(), errorContext: 'point assignment' }
+    const old = { n: 1 }, raw = [old]
+    const source = new Proxy(raw, { set() { throw new Error('refused point') } })
+    const chain = new r.Chain(source, ctx)
+    r.assignPath(chain, [0], 7, ctx)
+    const poison = r.lookupPath(chain, [0], ctx)
+    assert.equal(poison.kind, r.ERROR_KIND.PropertyMutationFailed)
+    r.assignPath(chain, [], null, ctx)
+    return { label: 'point assignment', poison, ctx, chain,
+        weak: [new WeakRef(old), new WeakRef(raw), new WeakRef(source)], selected: [], live: false }
+}
+rows.push(pointFailure())
 for (const method of ['fill', 'copyWithin']) {
     for (const boundary of ['reflection', 'storage', 'publication'])
         for (const fresh of [false, true]) for (const indexed of [false, true])

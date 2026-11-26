@@ -6,12 +6,12 @@ import { registerHooks } from "node:module"
 import { ready, OrderedThenable, ChainedThenable } from "../ordered-thenable.js"
 
 const sites = {
-    indexing: ["refcounts.js", "function buildRefIndex(value, operationContext) {"],
+    indexing: ["refcounts.js", "function buildRefIndex(value, operationContext, canIndex) {"],
     publication: ["parent-placements.js", "function recordLogicalPlacement(owner, key, before, after, operationContext, wasOverlay) {"],
     copying: ["placement-structure.js", "function createEmptyContainer(source, operationContext) {"],
     assembly: ["managed-capture.js", "function assembleCapturedGraph(capture, initializeCopy) {"],
-    length: ["array-view.js", "static captureLength(array, operationContext, owner) {"],
-    remap: ["array-remap.js", "function createArrayFromRemap(\n    remap,\n    operationContext,\n    refIndexSource = undefined,\n) {"],
+    length: ["array-view.js", "static captureLength(array, operationContext, owner, limit) {"],
+    remap: ["array-remap.js", "function createArrayFromRemap(remap, operationContext) {"],
     isolation: ["mutations.js", "function shallowCopyPathContainer(source, operationContext) {"],
     scope: ["path-operation.js", "state.key = depth ? target.key : chain._rootKey\n"],
     validation: ["language-properties.js", "function validatePropertyValue(key, value, operationContext, kind = errorUtils.ERROR_KIND.PropertyValidation) {"],

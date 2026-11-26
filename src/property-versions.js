@@ -1,6 +1,5 @@
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { createLeaseLedger, releaseDetached, retainWriter, releasePin } from "./ownership.js"
-import { captureIdentity } from "./captured-identity.js"
 import { ArrayView, isArrayView } from "./array-view.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
@@ -13,44 +12,14 @@ import { beginPlacementStructure, preparePlacementStructure, defineCopyProperty 
 import { receiveValue } from "./input-preparations.js"
 import { CONSTRUCTION_STATE, recordLogicalPlacement, destinationOf } from "./parent-placements.js"
 
-class PropertyPlacement {
-    constructor(owner, key, operationContext) {
-        this.owner = owner
-        this.key = key
-        this.operationContext = operationContext
-    }
-
-    ensureCaptured() {
-        if (Object.hasOwn(this, "value")) return this
-        const { owner, key, operationContext } = this
-        // A failed capture also consumes this lazy placement. Saved diagnostic
-        // frames must not retain its source through the method receiver.
-        try { Object.assign(this, languageProperties.readLanguagePlacement(owner, key, operationContext)) }
-        finally { this.owner = undefined }
-        return this
-    }
-
-    resolveValue(project) {
-        const captured = this.ensureCaptured()
-        // The caller receives pending data through another Promise reaction.
-        // Protect it at publication, before a later writer can resume.
-        return resolveVisiblePlacement(captured, this.operationContext, placement => {
-            Object.assign(this, placement)
-            // Search identity is captured at delivery, before later writers resume.
-            const value = placementValue(this)
-            return project ? project(value, this.operationContext) : value
-        })
-    }
-
-    resolvePresence() {
-        const version = Object.hasOwn(this, "value") ? this.sourceVersion :
-            getPlacementVersion(this.owner, this.key, this.operationContext)
-        if (!version?.pendingPresence && version?.present !== false) return this
-        // Publication fixes presence even when the published value is pending.
-        return resolvePlacementTransition(this.ensureCaptured(), this.operationContext,
-            placement => Object.assign(this, placement))
-    }
-}
+// Only a failed structural selection creates this role. The same Error used
+// as an explicit value is an ordinary payload, even at another Array index.
+const STRUCTURAL_ERROR = 1
+// A skipped selection may resolve to a removable flag or to permanent Error
+// data. A missing output is already known to be the latter.
+const BLOCKED_SELECTION = 1, MARKER_SELECTION = 2
+const CACHE_WRITE = 2
+const ERROR_PAYLOAD = 3
 
 // Capture without consuming an unused old value. A replacement must not wait
 // for the value it replaces merely to preserve current data on failure.
@@ -69,7 +38,9 @@ function capturePlacementFromVersion(version) {
     return {
         value: version.value, present: version.present !== false,
         sourceVersion: version.promiseBacked ? version : undefined,
+        transition: version.transition,
         ownFailure: version.ownFailure,
+        role: version.role,
         pendingPresence: version.pendingPresence,
         discoveryBlocked: version.discoveryBlocked,
         position: version.position ?? (version.present === false ? Infinity : -1),
@@ -81,6 +52,7 @@ function capturePlacementFromVersion(version) {
 function createVersionFromPlacement(placement) {
     return {
         value: placement.value, present: placement.present !== false, ownFailure: placement.ownFailure,
+        role: placement.role,
         pendingPresence: placement.pendingPresence,
         transition: placement.sourceVersion?.transition,
         discoveryBlocked: placement.discoveryBlocked,
@@ -88,12 +60,54 @@ function createVersionFromPlacement(placement) {
     }
 }
 
+// A proved failure can precede identification of its Error. Only its
+// diagnostic producer is shared between captures, never the hidden data.
+class PendingFailure {
+    constructor(result, ctx) {
+        const version = this.version = createVersionFromPlacement({ value: result, role: ERROR_PAYLOAD })
+        const publication = internalSteps.continueGraphTransition(result, ctx, error => {
+            version.value = error
+            version.promiseBacked = false
+            version.publication = undefined
+            return error
+        })
+        trackVersionPublication(version, publication, ctx)
+    }
+    get value() { return this.version.value }
+    outcome(mutation) { return mutation ? { failure: this, result: this.value } : this.value }
+}
+
 // Status belongs to this placement, independently of its retained data. Only
 // consumers project it to an Error; copying and publication keep both facts.
-function placementValue(placement) { return placement.ownFailure ?? placement.value }
+function placementValue(placement) {
+    const failure = placement.ownFailure
+    return failure instanceof PendingFailure ? failure.value : failure ?? placement.value
+}
 function placementPresent(placement) { return Boolean(placement.ownFailure) || placement.present !== false }
+function structuralFailure(placement) {
+    if (placement.ownFailure || placement.role === STRUCTURAL_ERROR) return placementValue(placement)
+}
+
+function blockedPlacement(placement) {
+    return placement.transition ? placement.transition.structuralError :
+        placement.ownFailure || placement.role === STRUCTURAL_ERROR || placement.role === ERROR_PAYLOAD
+}
+
+function knownObstruction(placement, certainty = BLOCKED_SELECTION) {
+    if (placement.transition) placement.transition.structuralError = certainty
+    return placement
+}
+
+function visiblePlacement(placement) {
+    const failure = placement.ownFailure
+    if (failure instanceof PendingFailure) return capturePlacementFromVersion(failure.version)
+    if (placement.transition?.structuralError === MARKER_SELECTION && placement.transition.placement)
+        return placement.transition.placement
+    return placement
+}
 
 function resolveVisiblePlacement(placement, operationContext, onReady) {
+    placement = visiblePlacement(placement)
     if (!languageValues.isPending(placementValue(placement), operationContext)) return onReady(placement)
     let version = placement.sourceVersion
     return continueCapturedPromiseVersion(placement.value, version, operationContext, (value, releaseCapture) => {
@@ -105,6 +119,25 @@ function resolveVisiblePlacement(placement, operationContext, onReady) {
     }, undefined, placementValue)
 }
 
+// Sort and flat observe data presence before consuming the value or its flag.
+function resolvePresentPlacement(placement, ctx, consume) {
+    return resolvePlacementTransition(placement, ctx, selected =>
+        selected.present === false ? consume(selected) : resolveVisiblePlacement(selected, ctx, consume))
+}
+
+// Mutation needs a healthy receiver's data. An established blocker ends
+// dispatch as soon as the preceding publication selects that placement.
+function resolveMutationInput(placement, ctx, consume) {
+    return consumePlacementTransition(placement, ctx, selected =>
+        blockedPlacement(selected) ? consume(selected) : resolveVisiblePlacement(selected, ctx, consume), undefined, blockedPlacement)
+}
+
+function resolvePlacementPresence(placement, ctx, consume) {
+    const version = placement.sourceVersion
+    return placement.pendingPresence || version?.pendingPresence || version?.present === false
+        ? resolvePlacementTransition(placement, ctx, consume) : consume(placement)
+}
+
 // A pending capture follows its own version, never a later live placement.
 // Reception has already installed the version and its causal validation policy.
 // Delivery fixes presence and own status together with the logical value.
@@ -113,7 +146,7 @@ function resolvePlacement(placement, operationContext, onReady) {
     let version = placement.sourceVersion
     return continueCapturedPromiseVersion(placement.value, version, operationContext, (value, releaseCapture) => {
         try {
-            return onReady({ value, present: version.present !== false, ownFailure: version.ownFailure, position: version.position,
+            return onReady({ value, present: version.present !== false, ownFailure: version.ownFailure, role: version.role, position: version.position,
                 discoveryBlocked: version.discoveryBlocked, sourceVersion: undefined }, releaseCapture)
         } finally { version = onReady = undefined }
     })
@@ -134,12 +167,69 @@ function trackVersionPublication(version, publication, operationContext) {
 
 // Replacement waits for preceding work to publish, not for the data that work
 // publishes. Copies carry the same transition until their value becomes ready.
-function resolvePlacementTransition(placement, operationContext, onReady) {
-    const transition = placement.sourceVersion?.transition
-    if (!transition) return onReady(placement)
-    const resume = () => resolvePlacementTransition(transition.placement, operationContext, onReady)
-    return transition.placement ? resume() :
-        internalSteps.continueGraphTransition(transition.promise, operationContext, resume)
+function resolvePlacementTransition(placement, operationContext, onReady, stopAt) {
+    // Publication can clear the version's live gate before a saved placement
+    // is consumed. Its captured gate still identifies the exact successor.
+    while (placement.transition && !stopAt?.(placement)) {
+        const transition = placement.transition
+        if (!transition.placement) return internalSteps.continueGraphTransition(transition.promise, operationContext,
+            () => resolvePlacementTransition(transition.placement, operationContext, onReady, stopAt))
+        placement = transition.placement
+    }
+    return onReady(placement)
+}
+
+// A reader may resume after another writer in the source publication turn.
+// Keep the exact selected value until the reader takes ownership or finishes.
+function consumePlacementTransition(placement, ctx, consume, owner, stopAt) {
+    if (!placement.transition) return consume(placement)
+    const release = retainPlacement(placement, ctx)
+    const unregister = owner && releaseOnClose(owner, () => { consume = undefined; release() })
+    return resolvePlacementTransition(placement, ctx, ready => {
+        try { return consume?.(ready) }
+        finally { unregister?.(); release() }
+    }, stopAt)
+}
+
+// A mapping changes the selected placement, including its status. Later
+// payload settlement supplies data without undoing that mapped structure.
+function projectPlacement(placement, ctx, project) {
+    return placementFromSelection(resolvePlacementTransition(placement, ctx, project), ctx, placement)
+}
+
+function placementFromSelection(selected, ctx, input) {
+    if (!languageValues.isPending(selected, ctx)) return selected
+    const release = input && retainPlacement(input, ctx)
+    const transition = { selection: true, promise: selected }
+    const version = { present: true, transition }
+    version.value = internalSteps.continueGraphTransition(selected, ctx, p => {
+        const { present, ownFailure, role } = p
+        try {
+            commitPlacementVersion(undefined, undefined, version, createVersionFromPlacement(p), ctx, false)
+            transition.placement = capturePlacementFromVersion(version)
+            const publication = resolvePlacement(p, ctx, (ready, done) => {
+                try {
+                    commitPlacementVersion(undefined, undefined, version,
+                        { ...ready, present, ownFailure, role }, ctx, false)
+                    return ready.value
+                } finally { done?.() }
+            })
+            trackVersionPublication(version, publication, ctx)
+            return ownFailure ? placementValue(p) : publication
+        } finally { release?.() }
+    })
+    trackVersionPublication(version, version.value, ctx)
+    return capturePlacementFromVersion(version)
+}
+
+function densePlacement(placement, ctx) {
+    return projectPlacement(placement, ctx, p => p.present === false ? { ...p, present: true } : p)
+}
+
+// Replacing an inherited layout selection masks its contents. A command or
+// open entry still owns real preceding effects and must publish first.
+function replacePlacementTransition(placement, operationContext, onReady) {
+    return resolvePlacementTransition(placement, operationContext, onReady, p => p.transition.selection)
 }
 
 // Captures subscribe to the version's publication, not its source Promise.
@@ -179,6 +269,9 @@ function retainPlacement(placement, operationContext) {
 // structural effect to publish; the container copier transfers their shape.
 // Shared backing copies only overlays. Pending copies keep ordinary publication.
 function copyPlacement(placement, owner, key, operationContext, writeBack = true) {
+    if (writeBack && ArrayView.region(owner, operationContext)) writeBack = false
+    if (placement.transition)
+        return transferPlacement(placement, owner, key, operationContext, undefined, undefined, writeBack)
     if (languageValues.isPending(placement.value, operationContext)) {
         if (writeBack) {
             const destination = ArrayView.placementDestination(owner, key, operationContext)
@@ -187,11 +280,15 @@ function copyPlacement(placement, owner, key, operationContext, writeBack = true
         const version = createCopiedVersion(placement, owner, key, operationContext)
         if (!languageValues.isPending(version.value, operationContext))
             return copyPlacement(version, owner, key, operationContext, writeBack)
-        replacePlacement(owner, key, version, operationContext, writeBack && !version.pendingPresence)
+        // The bounds and topology of a private view are published together.
+        // Installing an overlay there consumes no predecessor descriptor.
+        if (!writeBack && metadata.metaOf(owner, operationContext)?.construction && isArrayView(owner, operationContext))
+            installPlacementVersion(owner, key, version, operationContext)
+        else replacePlacement(owner, key, version, operationContext, !version.pendingPresence && writeBack)
         return
     }
     if (writeBack && placement.present) defineCopyProperty(owner, key, placement.value)
-    if (!writeBack || placement.ownFailure || placement.discoveryBlocked)
+    if (!writeBack || placement.ownFailure || placement.role || placement.discoveryBlocked)
         installPlacementVersion(owner, key, createVersionFromPlacement(placement), operationContext)
 }
 
@@ -202,8 +299,8 @@ function createCopiedVersion(placement, owner, key, operationContext) {
     const delivery = source.copiedDelivery?.delivery ?? (source.copyDelivery ??=
             createCopyDelivery(placement, operationContext))
     if (delivery.placement) return createVersionFromPlacement({ ...delivery.placement,
-        ownFailure: placement.pendingPresence || source.transition ? delivery.placement.ownFailure : placement.ownFailure,
-        position: placement.pendingPresence || source.transition ? delivery.placement.position : placement.position ?? delivery.placement.position })
+        ownFailure: placement.pendingPresence || placement.transition ? delivery.placement.ownFailure : placement.ownFailure,
+        position: placement.pendingPresence || placement.transition ? delivery.placement.position : placement.position ?? delivery.placement.position })
     const version = createVersionFromPlacement(placement)
     version.promiseBacked = true
     version.publication = delivery.publication
@@ -256,21 +353,22 @@ function releaseCopiedDelivery(version, inactive = false) {
 
 function transferPlacement(placement, owner, key, operationContext, destinationVersion,
     kind = errorUtils.ERROR_KIND.AssignmentValueFailed, writeBack = true, structure) {
+    if (writeBack && ArrayView.region(owner, operationContext)) writeBack = false
     const ownerMeta = metadata.metaOf(owner, operationContext)
     if (writeBack && !destinationVersion && !structure && ownerMeta?.type === metadata.TYPE.Array &&
         ownerMeta.arrayRange && ownerMeta.arrayRange.backing !== owner &&
-        (placement.sourceVersion || placement.ownFailure || placement.discoveryBlocked ||
+        (placement.sourceVersion || placement.ownFailure || placement.role || placement.discoveryBlocked ||
             languageValues.isPending(placement.value, operationContext) ||
             ArrayView.backingVersion(owner, key, operationContext))) {
         const destination = ArrayView.placementDestination(owner, key, operationContext)
         if (destination) { owner = destination.owner; key = destination.key }
     }
     if (writeBack && !destinationVersion && !placementPresent(placement)) {
-        deleteProperty(owner, key, operationContext)
+        replacePlacement(owner, key, placement, operationContext, writeBack)
         return undefined
     }
     const construction = metadata.metaOf(owner, operationContext)?.construction
-    if (placement.sourceVersion && !placement.pendingPresence && !placement.sourceVersion.transition &&
+    if (placement.sourceVersion && !placement.pendingPresence && !placement.transition &&
         !destinationVersion && !structure && !construction && languageValues.isPending(placement.value, operationContext)) {
         const version = createCopiedVersion(placement, owner, key, operationContext)
         replacePlacement(owner, key, version, operationContext, writeBack)
@@ -278,15 +376,27 @@ function transferPlacement(placement, owner, key, operationContext, destinationV
     }
     let version = createVersionFromPlacement(placement)
     let destination
+    const destinationOwner = () => construction ? construction.owner : destination ? destination.owner : owner
     const deliver = (resolved, releaseCapture) => {
         try {
             if (construction?.state !== CONSTRUCTION_STATE.Discarded)
-                return publishPromiseVersion(construction ? construction.owner : destination ? destination.owner : owner,
-                    key, version, resolved, operationContext)
+                return publishPromiseVersion(destinationOwner(), key, version, resolved, operationContext)
         } finally { releaseCapture?.() }
     }
+    // A copy can learn its presence and failure before its data arrives. Publish
+    // that selection so point reads and repair can proceed with the cursor.
+    const receiveSelected = selected => {
+        if (construction?.state === CONSTRUCTION_STATE.Discarded) return
+        if (!languageValues.isPending(selected.value, operationContext)) return deliver(selected)
+        commitPlacementVersion(destinationOwner(), key, version, createVersionFromPlacement(selected), operationContext, false)
+        const receipt = resolvePlacement(selected, operationContext, deliver)
+        trackVersionPublication(version, receipt, operationContext)
+        return receipt
+    }
     try {
-        const publication = placement.sourceVersion
+        const publication = placement.transition
+            ? consumePlacementTransition(placement, operationContext, receiveSelected)
+            : placement.sourceVersion
             ? resolvePlacement(placement, operationContext, deliver)
             : receiveValue(placement.value, operationContext, { kind },
                 value => deliver({ ...placement, value }), construction)
@@ -296,13 +406,13 @@ function transferPlacement(placement, owner, key, operationContext, destinationV
             else destination = destinationOf(owner, operationContext)
         }
         if (destinationVersion) {
-            commitPlacementVersion(owner, key, destinationVersion, version, operationContext, writeBack && !version.pendingPresence, structure)
+            commitPlacementVersion(owner, key, destinationVersion, version, operationContext, !version.pendingPresence && writeBack, structure)
             // Synchronous delivery stages above; later delivery advances the exact
             // captured version only after its complete placement has committed.
             version = destinationVersion
         } else if (!writeBack || version.pendingPresence) replacePlacement(owner, key, version, operationContext, false)
         else if (!placementPresent(version)) deleteProperty(owner, key, operationContext)
-        else replacePlacement(owner, key, version, operationContext)
+        else replacePlacement(owner, key, version, operationContext, writeBack)
         return pending ? undefined : publication
     } finally {
         // A private destination is retained solely by its construction record,
@@ -316,21 +426,32 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
     const releaseWriter = retainWriter(owner, operationContext)
     const previous = capturedVersion ?? getPlacementVersion(owner, key, operationContext)
     const { promise, resolve } = Promise.withResolvers()
-    const publication = Promise.withResolvers()
-    const transition = { promise: publication.promise }
+    let publication = Promise.withResolvers()
+    let transition = { promise: publication.promise }
     const gate = {
         promise, owner, key, structure,
+        proveObstruction(certainty) {
+            // Publish the intermediate fact through the same captured gate.
+            // Exact readers still follow this destination's final commit.
+            const previous = transition, selected = publication
+            publication = Promise.withResolvers()
+            transition = { selection: true, structuralError: certainty, promise: publication.promise }
+            gate.version.transition = transition
+            previous.placement = capturePlacementFromVersion(gate.version)
+            previous.structuralError = certainty
+            selected.resolve()
+        },
         resolve() {
             const version = gate.version
             gate.publication?.finish()
             gate.structure.complete?.()
             transition.placement = capturePlacementFromVersion(version)
             publication.resolve()
-            releaseWriter()
+            releaseWriter?.()
             gate.owner = undefined
             // Replacement may proceed after publication. Value consumers still
             // wait for any pending data that was published through the gate.
-            if (version.ownFailure) resolve(version.ownFailure)
+            if (version.ownFailure) resolve(placementValue(version))
             else markPromiseHandled(continueCapturedPromiseVersion(version.value, version,
                 operationContext, resolve), operationContext)
         },
@@ -399,6 +520,7 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
         version.value = placement.value
         version.present = placement.present !== false
         version.ownFailure = placement.ownFailure
+        version.role = placement.role
         version.pendingPresence = placement.pendingPresence
         version.transition = placement.transition
         version.publication = placement.publication
@@ -417,7 +539,7 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
         if (storageAbsent !== undefined) version.storageAbsent = storageAbsent
         commit()
         if (absent) detachAbsentVersion(owner, key, version, operationContext)
-    }, optionalStorage)
+    }, optionalStorage || writeBack === CACHE_WRITE)
 }
 
 function detachAbsentVersion(owner, key, version, operationContext) {
@@ -497,7 +619,13 @@ function continueCapturedPromiseVersion(promise, promiseVersion, operationContex
         return consume(value, complete)
     }
     let result
-    try { result = resume(promise) }
+    try {
+        // A saved capture can be consumed after its exact version has already
+        // published. Re-entry must restore ready data and parent edges now.
+        const current = project ? project(promiseVersion) : promiseVersion.value
+        if (current !== promise && !languageValues.isPending(current, operationContext)) promise = current
+        result = resume(promise)
+    }
     catch (failure) { complete(); throw failure }
     if (!languageValues.isPending(result, operationContext)) { complete(); return result }
     if (operation) unregister = releaseOnClose(operation, complete)
@@ -506,14 +634,30 @@ function continueCapturedPromiseVersion(promise, promiseVersion, operationContex
     return result
 }
 
-function observePromiseVersion(
-    promise,
-    promiseVersion,
-    operationContext,
-    onValue,
-    operation,
-) {
+function observePlacement(placement, operationContext, onValue, operation, onBlocked) {
     if (operation && !operation.open) return undefined
+    const blocked = blockedPlacement(placement)
+    if (blocked && operation?.found?.()) return true
+    if (blocked && onBlocked) {
+        if (placement.transition) {
+            const cause = resolvePlacementTransition(placement, operationContext, structuralFailure)
+            placement = { ownFailure: new PendingFailure(cause, operationContext) }
+        }
+        const visible = visiblePlacement(placement)
+        const value = placementValue(visible)
+        return onBlocked({ value, sourceVersion: languageValues.isPending(value, operationContext) ? visible.sourceVersion : undefined,
+            present: true, role: ERROR_PAYLOAD })
+    }
+    if (placement.transition) {
+        operation?.beforeWait?.()
+        return consumePlacementTransition(placement, operationContext, selected =>
+            observePlacement(selected, operationContext, onValue, operation, onBlocked), operation,
+            !blocked && (onBlocked || operation?.found) ? blockedPlacement : undefined)
+    }
+    placement = visiblePlacement(placement)
+    let promise = placementValue(placement), promiseVersion = placement.sourceVersion
+    if (!languageValues.isPending(promise, operationContext)) return onValue(promise, placement)
+    placement = undefined
     operation?.beforeWait?.()
     // A transition can publish through another signal before this observer
     // resumes. Its captured value needs protection at publication, independently
@@ -549,46 +693,30 @@ function installMutationVersion(owner, key, source, operationContext, onValue) {
     prepareEdgeUpdate(owner, key, captured, version.value, operationContext,
         () => installPlacementVersion(owner, key, version, operationContext))()
     let result
-    transition.promise = resolveVisiblePlacement(captured, operationContext, (placement, releaseCapture) => {
+    transition.promise = resolveMutationInput(captured, operationContext, (placement, releaseCapture) => {
         version.writing = true
-        if (placement.ownFailure) transferPlacement(placement, owner, key, operationContext,
+        const blocked = blockedPlacement(placement)
+        if (blocked) transferPlacement(placement, owner, key, operationContext,
             version, errorUtils.ERROR_KIND.AssignmentValueFailed, false, structure)
         else publishPromiseVersion(owner, key, version, placement, operationContext, structure)
         // Only a live destination accepts this capture. A displaced writer
         // keeps its lease through descent: the remaining parent may belong to
         // another owner. The capture releases when this callback returns.
         if (isLivePlacementVersion(owner, key, version, operationContext)) releaseCapture?.()
-        result = onValue(placementValue(version), version, structure)
+        result = blocked ? { result: resolvePlacementTransition(placement, operationContext, placementValue) } :
+            onValue(placementValue(version), version, structure)
         delete version.writing
         detachAbsentVersion(owner, key, version, operationContext)
         transition.placement = capturePlacementFromVersion(version)
         structure.complete?.()
     })
     trackVersionPublication(version, transition.promise, operationContext)
-    return internalSteps.continueGraphTransition(transition.promise, operationContext, () => { releaseWriter(); return result })
-}
-
-// Fix presence and key order when structure is observed; capture the value and
-// its exact version only when the operation reaches this placement.
-function getPropertyPlacement(owner, key, operationContext) {
-    key = String(key)
-    if (!languageProperties.hasLanguageProperty(owner, key, operationContext)) {
-        return undefined
-    }
-    return new PropertyPlacement(owner, key, operationContext)
-}
-
-function isPropertyPlacement(value) {
-    return value instanceof PropertyPlacement
+    return internalSteps.continueGraphTransition(transition.promise, operationContext, () => { releaseWriter?.(); return result })
 }
 
 function resolvePropertyValueAtKey(owner, key, operationContext) {
-    // Immediate capture supplies both presence and value in one read.
-    return new PropertyPlacement(owner, String(key), operationContext).resolveValue()
-}
-
-function resolvePropertyIdentityAtKey(owner, key, operationContext) {
-    return new PropertyPlacement(owner, String(key), operationContext).resolveValue(captureIdentity)
+    return resolveVisiblePlacement(languageProperties.readLanguagePlacement(owner, key, operationContext),
+        operationContext, placementValue)
 }
 
 function assignProperty(
@@ -639,6 +767,7 @@ function publishPromiseVersion(
         // Ordinary payload delivery cannot reinstate status cleared by a later
         // placement version. A structural transition still selects its status.
         ownFailure: structure || promiseVersion.transition || promiseVersion.pendingPresence ? placement.ownFailure : promiseVersion.ownFailure,
+        role: placement.role,
         discoveryBlocked: placement.discoveryBlocked,
         // Ordinary payload settlement does not insert the property again.
         // Only an unfinished transition still owns its structural decision.
@@ -684,13 +813,14 @@ function commitPromiseVersion(
 
 function replacePlacement(owner, key, placement, operationContext, writeBack = true) {
     try {
-        preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack, () => {
+        preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack, absent => {
             // Failed storage work must leave the old logical version available.
             detachPlacementVersion(owner, key, operationContext)
-            if (!writeBack || placement.promiseBacked || placement.ownFailure || placement.discoveryBlocked ||
+            if (absent === undefined ||
+                placement.promiseBacked || placement.ownFailure || placement.role || placement.discoveryBlocked ||
                 ArrayView.backingVersion(owner, key, operationContext))
                 installPlacementVersion(owner, key, placement, operationContext)
-        })()
+        }, writeBack === CACHE_WRITE)()
     } finally { owner = placement = undefined }
 }
 
@@ -700,13 +830,16 @@ function preparePlacementStorage(owner, key, placement, operationContext) {
     // history around one value: prepare and write outermost-first without
     // recursive calls, preserving storage failure before private publication.
     const destinations = []
-    for (;;) {
+    // A regional owner publishes through its version. Its shared backing
+    // must stay untouched even when reached through a nested entry holder.
+    while (!ArrayView.region(owner, operationContext)) {
         const gate = metadata.metaOf(owner, operationContext)?.entryGate
         destinations.push({ owner, key, gate })
         if (!gate || !isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)) break
         owner = gate.owner
         key = gate.key
     }
+    if (!destinations.length) return
     const absent = placement.present === false
     for (let index = destinations.length - 1; index >= 0; index--) {
         const destination = destinations[index]
@@ -760,7 +893,7 @@ function preparePropertyCommit(owner, key, placement, operationContext, structur
                 updateProperty(absent)
                 commitStructure(absent !== undefined)
             } finally { storage = updateProperty = commitStructure = undefined }
-        }, placementValue(placement))
+        }, refcounts.counterValue(placement))
     } finally { owner = placement = undefined }
 }
 
@@ -768,7 +901,7 @@ function preparePropertyCommit(owner, key, placement, operationContext, structur
 // optional counters can therefore be prepared against one stable edge capture.
 function prepareEdgeUpdate(owner, key, before, value, operationContext, commit, visible = value) {
     const wasOverlay = Boolean(getPlacementVersion(owner, key, operationContext))
-    let updateCounter = refcounts.prepareCounterUpdate(owner, key, placementValue(before), visible, operationContext)
+    let updateCounter = refcounts.prepareCounterUpdate(owner, key, refcounts.counterValue(before), visible, operationContext)
     visible = undefined
     return () => {
         try {
@@ -796,14 +929,28 @@ function copyArrayOverlays(
 }
 
 export {
+    CACHE_WRITE,
+    densePlacement,
+    placementFromSelection,
+    projectPlacement,
+    replacePlacementTransition,
+    STRUCTURAL_ERROR,
+    MARKER_SELECTION,
+    structuralFailure,
+    resolvePlacementPresence,
+    resolvePresentPlacement,
     placementValue,
+    visiblePlacement,
+    PendingFailure,
+    knownObstruction,
+    blockedPlacement,
     placementPresent,
     resolveVisiblePlacement,
+    resolveMutationInput,
     refreshCopiedDelivery,
     retainCopiedDelivery,
     releaseCopiedDelivery,
     observePlacementCapture,
-    resolvePropertyIdentityAtKey,
     installPlacementGate,
     completePlacementGate,
     publishPlacementFailure,
@@ -812,6 +959,7 @@ export {
     capturePlacementFromVersion,
     createVersionFromPlacement,
     resolvePlacement,
+    consumePlacementTransition,
     resolvePlacementTransition,
     retainPlacement,
     copyPlacement,
@@ -820,16 +968,14 @@ export {
     publishPromiseVersion,
     assignProperty,
     prepareInputPlacement,
-    observePromiseVersion,
+    observePlacement,
     installMutationVersion,
     continueCapturedPromiseVersion,
     deleteProperty,
     releaseHolder,
-    getPropertyPlacement,
     getPlacementVersion,
     getOwnPlacementVersion,
     ownPlacementVersionEntries,
-    isPropertyPlacement,
     commitPromiseVersion,
     installPlacementVersion,
     copyArrayOverlays,

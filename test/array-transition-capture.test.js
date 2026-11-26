@@ -10,6 +10,30 @@ const methods = [
 ]
 
 describe("Array methods capture unfinished placements", () => {
+    it("exposes determined endpoints while an indexed entry may still grow the Array", async () => {
+        for (const mode of Object.values(r.CHAIN_MODE)) for (const created of [false, true]) {
+            const ctx = context(), source = new r.Chain([10, 20], ctx, mode), hold = Promise.withResolvers()
+            let inside
+            const entry = r.enter(source, [3], ctx, true, ref => { inside = ref; return hold.promise })
+            const copy = (method, args) => {
+                const result = r.run(source, [], method, args, ctx, {})
+                assert(!r.isPending(result, ctx), method)
+                return new r.Chain(result, ctx, mode)
+            }
+            const front = copy("unshift", [5]), removed = copy("shift", []), reverse = copy("reverse", [])
+            assert.equal(r.lookupPath(front, [0], ctx), 5)
+            assert.equal(r.lookupPath(removed, [0], ctx), 20)
+            const firstReversed = r.lookupPath(reverse, [0], ctx)
+            assert(r.isPending(firstReversed, ctx))
+            r.assignPath(source, [0], 99, ctx)
+            if (created) r.assignPath(inside, [], 30, ctx)
+            hold.resolve()
+            await entry
+            assert.equal(await firstReversed, created ? 30 : 20)
+            assert.deepEqual(await r.export(front, [], ctx), created ? [5, 10, 20, , 30] : [5, 10, 20])
+        }
+    })
+
     for (const [method, args] of methods) for (const representation of ["owned", "imported", "shared", "view"]) {
         it(`${method}(${args}) preserves progress and history on ${representation} storage`, async () => {
             for (const captures of [false, true]) for (const index of [0, 1, 2]) for (const action of ["noop", "set", "delete", "pending"]) {
@@ -86,7 +110,7 @@ describe("Array methods capture unfinished placements", () => {
             }
         })
 
-        it(`${method}(${args}) preserves its earlier baseline when publication fails`, async () => {
+        it(`${method}(${args}) publishes its captured successor when cache storage refuses the write`, async () => {
             const ctx = context(), hold = Promise.withResolvers(), cause = new Error("publication refused")
             const source = [10, , 30]
             let refuse = false
@@ -99,20 +123,21 @@ describe("Array methods capture unfinished placements", () => {
             const chain = new r.Chain(root, ctx)
             assert.equal(r.hasError(chain, [], ctx), false)
             const entry = r.enter(chain, ["list", 0], ctx, true, inside => hold.promise.then(() => r.assignPath(inside, [], 50, ctx)))
+            const before = r.export(chain, ["list"], ctx)
             refuse = true
             const result = r.run(chain, ["list"], method, args, ctx, { mutationScopeDepth: 1 })
-            const failure = r.lookupPath(chain, ["list"], ctx)
-            assert(r.isPoisonError(failure), "Publication failure must not wait for an unrelated entry")
-            assert.equal(failure.cause, cause)
+            assert.equal(r.isPoisoned(chain, ["list"], ctx), false)
             assert.equal(r.lookupPath(chain, ["sibling"], ctx), 4)
             verifyRefCounts(ctx, chain._state)
             refuse = false
             assert.equal(r.repairPath(chain, ["list"], ctx), undefined)
-            assert.equal(r.lookupPath(chain, ["list", "length"], ctx), 3)
+            const expected = [50, , 30], returned = expected[method](...args)
+            assert.equal(r.lookupPath(chain, ["list", "length"], ctx), expected.length)
             hold.resolve()
             await entry
-            assert.equal((await result).cause, cause)
-            assert.deepEqual(await r.export(chain, [], ctx), { list: [50, , 30], sibling: 4 })
+            assert.deepEqual(await before, [50, , 30])
+            assert.deepEqual(await r.export(new r.Chain(await result, ctx), [], ctx), returned)
+            assert.deepEqual(await r.export(chain, [], ctx), { list: expected, sibling: 4 })
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state)
         })

@@ -254,6 +254,18 @@ function validationError(message, operationContext, kind) {
     )
 }
 
+// Intrinsic checks use a fixed vocabulary. Repeating the same check in one
+// source operation reports one failure, including across deferred deliveries.
+function intrinsicValidationError(work, kind, message, cause) {
+    const failures = work.intrinsicFailures ??= []
+    const existing = failures.find(error => error.kind === kind && error.message === message)
+    if (existing) return existing
+    const error = cause === undefined ? validationError(message, work.operationContext, kind) :
+        Object.freeze(new PoisonError(message, work.operationContext.errorContext, kind, { cause }))
+    failures.push(error)
+    return error
+}
+
 function declarationValidationError(message) {
     return Object.freeze(new PoisonError(message, undefined, ERROR_KIND.DeclarationValidation))
 }
@@ -271,21 +283,35 @@ function pathAccessError(value, operationContext) {
 // Preserve Object.is source equality in Maps, which otherwise merge signed zeros.
 const NEGATIVE_ZERO_CONTEXT = Symbol("negative zero Error context")
 
-// Every CompoundPoisonError already contains leaves, so one-level expansion is
-// sufficient for both compound construction and Error queries.
-function flattenAndDeduplicateErrors(errors) {
-    const distinct = []
-    const causes = new Map()
+// Compounds contain deduplicated leaves. Consume the input once and keep the
+// largest existing union for reuse. A lone input needs no traversal or index.
+const MAX_DIAGNOSTIC_LEAVES = 0xffffffff
+function combineErrors(errors, operationContext = undefined) {
+    let first, leaves, causes, largest
     for (const error of errors) {
-        if (!isPoisonError(error))
-            throw new TypeError("Error collection requires poison")
-        if (error instanceof CompoundPoisonError) {
-            for (const leaf of error.errors) addLeaf(leaf)
-        } else {
-            addLeaf(error)
+        if (!isPoisonError(error)) throw new TypeError("Error collection requires poison")
+        if (!first) { first = error; continue }
+        if (error === first) continue
+        if (!leaves) {
+            leaves = []
+            causes = new Map()
+            add(first)
         }
+        if (!add(error)) return Object.freeze(new PoisonError(
+            "Invalid Array length", operationContext?.errorContext, ERROR_KIND.InvalidArrayLength))
     }
-    return distinct
+    if (!first) throw new TypeError("Error combination requires at least one poison")
+    if (!leaves) return first
+    // Every input is a subset of the union. Equal size proves completeness.
+    if (largest?.errors.length === leaves.length) return largest
+    return leaves.length === 1 ? leaves[0] : Object.freeze(new CompoundPoisonError(leaves))
+
+    function add(error) {
+        if (!(error instanceof CompoundPoisonError)) return addLeaf(error)
+        if (!largest || error.errors.length > largest.errors.length) largest = error
+        for (const leaf of error.errors) if (!addLeaf(leaf)) return false
+        return true
+    }
 
     function addLeaf(error) {
         const cause = Object.hasOwn(error, "cause") ? error.cause : error
@@ -294,28 +320,13 @@ function flattenAndDeduplicateErrors(errors) {
         const source = Object.is(error.errorContext, -0) ? NEGATIVE_ZERO_CONTEXT : error.errorContext
         let kinds = sources.get(source)
         if (!kinds) sources.set(source, (kinds = new Set()))
-        if (kinds.has(error.kind)) return
-        kinds.add(error.kind)
-        distinct.push(error)
+        if (!kinds.has(error.kind)) {
+            if (leaves.length === MAX_DIAGNOSTIC_LEAVES) return false
+            kinds.add(error.kind)
+            leaves.push(error)
+        }
+        return true
     }
-}
-
-function combineErrors(errors) {
-    const inputs = Array.from(errors)
-    // Forward a sole compound without walking or deduplicating its leaves.
-    if (inputs.length === 1 && isPoisonError(inputs[0])) return inputs[0]
-    const leaves = flattenAndDeduplicateErrors(inputs)
-    if (leaves.length === 0)
-        throw new TypeError("Error combination requires at least one poison")
-    // Input compounds are already deduplicated, and their member sets are
-    // subsets of the union. Equal cardinality proves one already represents it.
-    const complete = inputs.find(error =>
-        error instanceof CompoundPoisonError && error.errors.length === leaves.length,
-    )
-    if (complete) return complete
-    return leaves.length === 1
-        ? leaves[0]
-        : Object.freeze(new CompoundPoisonError(leaves))
 }
 
 function errorMessage(reason, objectFallback) {
@@ -352,5 +363,5 @@ export {
     runExternalAction,
     runExternalBoundary,
     runWithFatalGuard,
-    validationError,
+    validationError, intrinsicValidationError,
 }

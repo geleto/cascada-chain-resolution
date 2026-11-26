@@ -22,7 +22,7 @@ describe("Array structure after pending key selection", () => {
 })
 
 import { ARRAY_METHODS } from "../src/array-methods.js"
-import { logicalProperty, logicalKeys, deferred } from "./support.js"
+import { arrayBacking, logicalProperty, logicalKeys, deferred } from "./support.js"
 import {
     VALUES,
     argumentsByArity,
@@ -286,7 +286,7 @@ const ARRAY_MODES = [
         cases: 4,
         promiseElements: "first",
         shapeSource: ensurePresentElement,
-        supports: scenario => ELEMENT_WAIT_METHODS.has(scenario.method),
+        supports: elementWillWait,
         compare: compareDelayedObservation,
     },
     mutationMode(
@@ -305,7 +305,7 @@ const ARRAY_MODES = [
             compare: compareDelayedMutation,
             promiseElements: "first",
             shapeSource: ensurePresentElement,
-            supports: scenario => ELEMENT_WAIT_METHODS.has(scenario.method),
+            supports: elementWillWait,
         },
     ),
     mutationMode(
@@ -487,9 +487,8 @@ async function compareArrayCase(testContext, scenario, mode) {
         testContext,
         result,
         native.error,
-        mode.mutate ? native.result : (
-            scenario.mutates ? nativeSource : native.result
-        ),
+        world.discoveryFailure ?? (mode.mutate ? native.result :
+            scenario.mutates ? nativeSource : native.result),
         scenario,
         mode.assertValue,
     )
@@ -584,10 +583,12 @@ function rejectedElementWorld(testContext, scenario) {
     const receiver = cloneData(scenario.source)
     const rejection = deferred()
     receiver[0] = undefined
-    const chain = new Chain(receiver, testContext)
+    const chain = new Chain(receiver, testContext, runtime.CHAIN_MODE.Complete)
     assignPath(chain, ["0"], rejection.promise, testContext)
     return {
         chain,
+        discoveryFailure: scenario.method === "flat" && (scenario.args[0] === undefined || scenario.args[0] >= 1)
+            ? scenario.source[0] : undefined,
         afterInvoke: () => rejection.reject(scenario.source[0]),
     }
 }
@@ -599,7 +600,7 @@ function setupViewWorld(testContext, scenario, mode) {
     } else if (mode.restriction === "fixed-length") {
         Object.defineProperty(backing, "length", { writable: false })
     }
-    const base = new Chain(backing, testContext)
+    const base = new Chain(backing, testContext, runtime.CHAIN_MODE.Complete)
     const view = run(
         base,
         [],
@@ -613,7 +614,7 @@ function setupViewWorld(testContext, scenario, mode) {
     )
     assert(arrayViews.isArrayView(view, testContext), scenario.message)
     const world = {
-        chain: new Chain(view, testContext),
+        chain: new Chain(view, testContext, runtime.CHAIN_MODE.Complete),
         retained: [
             { actual: view, expected: scenario.source },
             { actual: base._state.value, expected: scenario.layout.backing },
@@ -632,7 +633,7 @@ function setupViewWorld(testContext, scenario, mode) {
 
 function setupAttachedWorld(testContext, scenario) {
     const receiver = cloneData(scenario.layout.backing)
-    const chain = new Chain(receiver, testContext)
+    const chain = new Chain(receiver, testContext, runtime.CHAIN_MODE.Complete)
     const marker = 0x61 + scenario.index
     const version = run(
         chain,
@@ -802,11 +803,22 @@ function withDuplicatePromise(source) {
 }
 
 function argumentWillWait(scenario) {
+    if (scenario.method === "flat" && scenario.source.every(value => !Array.isArray(value) && !(value instanceof Error))) return false
+    if (["indexOf", "lastIndexOf"].includes(scenario.method) && !Object.keys(scenario.source).length) return false
+    if (scenario.method === "join" && scenario.source.length < 2) return false
+    if (["sort", "toSorted"].includes(scenario.method) && scenario.source.filter(value => value !== undefined).length < 2) return false
+    if (["at", "flat", "includes", "indexOf", "lastIndexOf", "slice", "splice", "toSpliced", "with"].includes(scenario.method) &&
+        scenario.source.length === 0) return false
     if (scenario.method === "copyWithin" && scenario.source.length <= 1) return false
     if (scenario.method === "fill" && scenario.source.length === 0) return false
     if (scenario.method === "fill") return scenario.args.length > 1
     return scenario.args.length > 0 &&
         ARGUMENT_WAIT_METHODS.has(scenario.method)
+}
+
+function elementWillWait({ method, source }) {
+    if (method === "sort" || method === "toSorted") return Object.keys(source).length > 1
+    return ELEMENT_WAIT_METHODS.has(method)
 }
 
 async function assertLogicalValue(testContext, actual, expected, scenario) {
@@ -845,29 +857,22 @@ function verifyViewRepresentation(
     const method = scenario.method
     let expected
     if (method === "push") {
-        const endpoint = world.viewInfo.endAvailable
-        expected = scenario.args.length === 0 || (
-            endpoint && !world.viewInfo.restricted
-        )
+        const output = mode.mutate ? world.chain._state.value : actualResult
+        const extendsBacking = !scenario.args.length || world.viewInfo.endAvailable && !world.viewInfo.restricted
+        assert.equal(arrayBacking(output, testContext) === arrayBacking(world.retained[0].actual, testContext), extendsBacking, scenario.message)
+        return
     } else if (method === "pop" || method === "shift") {
         expected = nativeSource.length > 0
     } else if (method === "concat") {
         const growth = native.result.length - scenario.source.length
-        expected = growth === 0 || (
-            world.viewInfo.endAvailable && !world.viewInfo.restricted
-        )
+        const extendsBacking = growth === 0 || world.viewInfo.endAvailable && !world.viewInfo.restricted
+        assert.equal(arrayBacking(actualResult, testContext) === arrayBacking(world.chain._state.value, testContext),
+            extendsBacking, scenario.message)
+        return
     } else if (method === "slice") {
         expected = native.result.length > 0
-    } else if (
-        [
-            "flat",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "with",
-        ].includes(method)
-    ) {
-        expected = false
+    } else if (["flat", "toReversed", "toSorted", "toSpliced", "with"].includes(method)) {
+        assert.notEqual(arrayBacking(actualResult, testContext), arrayBacking(world.chain._state.value, testContext), scenario.message)
     }
     if (expected === undefined) return
 
@@ -888,6 +893,7 @@ async function compareDelayedObservation(testContext, scenario, mode) {
     const chain = new Chain(
         runtimeArray(scenario.source, mode),
         testContext,
+        runtime.CHAIN_MODE.Complete,
     )
     const result = run(
         chain,
@@ -984,7 +990,7 @@ async function comparePromiseViewVersionChain(testContext, scenario) {
     const logicalIndex = firstPresentIndex(scenario.source)
     const physicalIndex = scenario.layout.start + logicalIndex
     backing[physicalIndex] = Promise.resolve(backing[physicalIndex])
-    const base = new Chain(backing, testContext)
+    const base = new Chain(backing, testContext, runtime.CHAIN_MODE.Complete)
     const view = run(
         base,
         [],
@@ -996,7 +1002,7 @@ async function comparePromiseViewVersionChain(testContext, scenario) {
         testContext,
         { repair: false },
     )
-    const chain = new Chain(view, testContext)
+    const chain = new Chain(view, testContext, runtime.CHAIN_MODE.Complete)
     const result = run(
         chain,
         [],

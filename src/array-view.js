@@ -4,7 +4,7 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import { LengthState } from "./array-length.js"
-import { addParent, removeParent, PlacementConstruction, activateRelationships } from "./parent-placements.js"
+import { addParent, removeParent, PlacementConstruction, activateRelationships, updateBackingOwners } from "./parent-placements.js"
 import { copyArrayOverlays, getOwnPlacementVersion, ownPlacementVersionEntries } from "./property-versions.js"
 
 class ArrayBacking {
@@ -28,7 +28,7 @@ class ArrayBacking {
     // Includes the original Array alongside its derived views.
     visitViewPlacements(indexes, operationContext, visit) {
         return this.visitStoragePlacements(this.producers ? [...indexes].filter(
-            index => !getOwnPlacementVersion(this.producers, index, operationContext)) : indexes,
+            index => typeof index === "object" || !getOwnPlacementVersion(this.producers, index, operationContext)) : indexes,
             operationContext, visit)
     }
 
@@ -38,9 +38,23 @@ class ArrayBacking {
         for (const owner of this.owners) {
             const meta = metadata.requireMeta(owner, operationContext)
             const range = meta.arrayRange
-            const start = range?.start ?? 0
-            const length = range ? range.lengthState.minimum ?? range.lengthState : undefined
+            const borrowed = range?.borrowed?.record === this && range.borrowed
+            const offset = range?.start ?? 0
+            const start = offset + (borrowed?.start ?? 0)
+            let length = range ? range.lengthState.minimum ?? range.lengthState : undefined
+            if (borrowed) length = Math.min(length, borrowed.length - offset)
             for (const index of indexes) {
+                if (typeof index === "object") {
+                    if (!range || owner === this.array) continue
+                    const keyAt = i => {
+                        const key = String(i - start)
+                        if (!getOwnPlacementVersion(owner, key, operationContext) && !getOwnPlacementVersion(this.producers, i, operationContext))
+                            return visit(owner, key)
+                    }
+                    if (this.region?.prefix?.visitChildKeys(index, start, start + length, keyAt) === false ||
+                        this.region?.visitChildKeys(index, start, start + length, keyAt) === false) return false
+                    continue
+                }
                 const logical = index - start
                 if (logical < 0 || length !== undefined && logical >= length) continue
                 const key = String(logical)
@@ -75,15 +89,45 @@ class ArrayBackingProducers {
 // Each logical owner keeps its bounds and pending length in metadata. Native
 // Arrays need no range until their logical shape diverges from physical storage.
 class ArrayView {
-    constructor(source, operationContext, start = 0, end) {
+    constructor(source, operationContext, start = 0, end, prefix) {
         languageValues.admitReadyValue(source, operationContext)
         const range = metadata.requireMeta(source, operationContext).arrayRange
         end ??= ArrayView.minimumLength(source, operationContext)
         languageValues.admitReadyValue(this, operationContext, languageValues.TYPE.Array)
-        metadata.requireMeta(this, operationContext).arrayRange = {
+        const bounds = metadata.requireMeta(this, operationContext).arrayRange = {
             backing: range?.backing ?? source,
             start: (range?.start ?? 0) + start,
             lengthState: end - start,
+        }
+        if (prefix) bounds.borrowed = prefix
+        else if (range?.borrowed && bounds.start < range.borrowed.length) bounds.borrowed = range.borrowed
+    }
+
+    static prefixLength(owner, ctx) {
+        const range = metadata.metaOf(owner, ctx)?.arrayRange
+        return range?.borrowed ? Math.max(0, Math.min(ArrayView.minimumLength(owner, ctx), range.borrowed.length - range.start)) : 0
+    }
+
+    // A cursor past the borrowed prefix still needs the tail's versions,
+    // shape and COW protection at their original coordinates.
+    static captureAfterPrefix(owner, first, ctx) {
+        const range = metadata.requireMeta(owner, ctx).arrayRange
+        const view = new ArrayView(range.backing, ctx, range.start, range.start)
+        ArrayView.prepareShapeCopy(owner, view, ctx)()
+        return PlacementConstruction.initializeAndPublish(view, ctx, output =>
+            copyArrayOverlays(owner, output, ctx, first, ArrayView.maximumLength(owner, ctx)))
+    }
+
+    static borrowPrefix(owner, length, ctx) {
+        let range = metadata.requireMeta(owner, ctx).arrayRange
+        if (range?.borrowed) {
+            const start = range.borrowed.start + range.start
+            length = ArrayView.prefixLength(owner, ctx)
+            if (length && start <= length) return { record: range.borrowed.record, start, length }
+        } else if (length > 0 && !ArrayView.region(owner, ctx) && ArrayView.tryShareStorage(owner, ctx, true)) {
+            range = metadata.requireMeta(owner, ctx).arrayRange
+            const storage = metadata.requireMeta(range.backing, ctx)
+            return { record: storage.arrayBacking ??= new ArrayBacking(range.backing, ctx), start: range.start, length }
         }
     }
 
@@ -99,6 +143,11 @@ class ArrayView {
         return typeof state === "number" ? state : state.answer()
     }
 
+    static hasPendingLength(array, operationContext) {
+        const state = metadata.metaOf(array, operationContext)?.arrayRange?.lengthState
+        return state instanceof LengthState && state.answer() === undefined
+    }
+
     static resolveLength(array, work, onLength) {
         const state = ArrayView.#stateOf(array, work.operationContext)
         return typeof state === "number" ? onLength(state) : state.resolve(work, onLength)
@@ -109,9 +158,16 @@ class ArrayView {
         return typeof state === "number" ? onInRange(index < state) : state.resolve(work, onInRange, index)
     }
 
-    static captureLength(array, operationContext, owner) {
+    static captureLength(array, operationContext, owner, limit) {
         const state = ArrayView.#stateOf(array, operationContext)
-        return typeof state === "number" ? state : state.capture(owner)
+        return typeof state === "number" ? Math.min(state, limit ?? Infinity) : state.capture(owner, undefined, limit)
+    }
+
+    static captureInRange(array, index, operationContext, owner) {
+        const state = ArrayView.#stateOf(array, operationContext)
+        if (typeof state === "number") return index < state
+        const question = state.capture(owner, index)
+        return question?.read ? question.read() : question
     }
 
     // An entry can create an index without committing growth at issuance.
@@ -122,7 +178,21 @@ class ArrayView {
         if (bound <= (state.minimum ?? state)) return
         if (typeof state === "number") state = new LengthState(state)
         ArrayView.#setState(array, state, operationContext)
-        return state.add(bound).complete
+        const growth = state.add(bound)
+        return created => growth.complete(created ? bound : 0)
+    }
+
+    // The same captured length facts cover a variable-width output region
+    // and later indexed growth. Earlier questions keep their original bounds.
+    static deferLength(array, minimum, maximum, operationContext, widths) {
+        const state = new LengthState(minimum, widths)
+        ArrayView.#setState(array, state, operationContext)
+        if (!widths) return state.add(maximum)
+    }
+
+    static maximumLength(array, operationContext) {
+        const state = ArrayView.#stateOf(array, operationContext)
+        return state.maximum ?? state
     }
 
     // Read fallible storage before publication. The returned commit runs after
@@ -158,22 +228,89 @@ class ArrayView {
         const meta = metadata.requireMeta(backing, operationContext)
         if (range || meta.arrayBacking) {
             const record = meta.arrayBacking ??= new ArrayBacking(backing, operationContext)
-            metadata.requireMeta(owner, operationContext).backingRecord = record
-            if (metadata.requireMeta(owner, operationContext).relationshipsActive) {
-                record.owners.add(owner)
-                activateRelationships(record, operationContext)
-                activateRelationships(record.producers, operationContext)
-            }
+            const ownerMeta = metadata.requireMeta(owner, operationContext)
+            ownerMeta.backingRecord = record
+            if (ownerMeta.relationshipsActive) updateBackingOwners(owner, ownerMeta, operationContext)
         }
     }
 
-    static recordBackingPlacement(owner, key, previous, value, operationContext) {
+    static storedIndexes(owner, operationContext) {
+        const range = metadata.metaOf(owner, operationContext)?.arrayRange
+        const storage = range?.borrowed?.record.array ?? range?.backing ?? owner
+        return metadata.requireMeta(storage, operationContext).storedIndexes ?? 0
+    }
+
+    static hasStoredVersions(owner, ctx) {
+        const meta = metadata.requireMeta(owner, ctx)
+        const backing = metadata.requireMeta(meta.arrayRange?.backing ?? owner, ctx)
+        return Boolean(meta.outgoingPlacements?.size ||
+            metadata.metaOf(backing.arrayBacking?.producers, ctx)?.outgoingPlacements?.size)
+    }
+
+    static hasSparsePrefix(owner, length, ctx) {
+        return length > 0 && length > 2 * ArrayView.storedIndexes(owner, ctx)
+    }
+
+    // A subrange can be much sparser than the rest of its backing. Even if
+    // every physical hole were inside it, a native copy must still pay for
+    // at least half its slots. Open and compressed data keep their layout.
+    static denseStorage(owner, length, ctx, skip, cut, requireMovedSlot) {
+        const meta = metadata.requireMeta(owner, ctx), range = meta.arrayRange
+        const borrowed = range?.borrowed, offset = range?.start ?? 0, region = ArrayView.region(owner, ctx)
+        if (!length || length > 0xffffffff || region?.pending) return
+        const backing = borrowed?.record.array ?? range?.backing ?? owner, storage = metadata.requireMeta(backing, ctx)
+        const prefix = borrowed ? ArrayView.prefixLength(owner, ctx) : region ? 0 : length
+        const kept = prefix - Math.min(cut, Math.max(0, prefix - skip))
+        const start = (borrowed?.start ?? 0) + offset, stored = storage.storedIndexes ?? 0
+        // The occupied end bounds physical density without inspecting the host.
+        const present = stored - start - Math.max(0, (storage.storedEnd ?? 0) - start - prefix)
+        if (kept && prefix - present > kept / 2) return
+        if (requireMovedSlot) {
+            // Mutating reverse writes if either side of any pair is present.
+            // Exclude every possible override and the unpaired center. The
+            // ordinary layout decides conditional writes when this cannot.
+            const overrides = (meta.outgoingPlacements?.size ?? 0) +
+                (metadata.metaOf(storage.arrayBacking?.producers, ctx)?.outgoingPlacements?.size ?? 0)
+            const center = length % 2 === 1 && prefix > Math.floor(length / 2)
+            if (present <= overrides + Number(center)) return
+        }
+        let tail
+        if (prefix < length) {
+            if (!region) return
+            // A settled region contributes its individual slots. Gaps still
+            // consult its physical backing and published producers.
+            const slots = Object.create(null)
+            if (!collect(prefix, Math.min(skip, length), slots) || !collect(Math.max(prefix, skip + cut), length, slots)) return
+            const backing = range?.backing ?? owner
+            tail = { slots, backing, start: offset, producers: metadata.requireMeta(backing, ctx).arrayBacking.producers }
+        }
+        return { backing, start, prefix, producers: storage.arrayBacking?.producers, tail }
+
+        function collect(first, end, slots) {
+            if (first >= end) return true
+            first += offset
+            end += offset
+            const middle = Math.max(first, Math.min(end, region.start))
+            if (first < middle && (region.prefix ? !region.prefix.copyIndividualSlots(first, middle, slots, offset) : middle - first > 1)) return false
+            if (middle >= end) return true
+            if (end > region.end && end - middle > 1) return false
+            return middle >= region.end || region.copyIndividualSlots(middle, Math.min(end, region.end), slots, offset)
+        }
+    }
+
+    static recordBackingPlacement(owner, key, previous, value, operationContext, countChange = 0) {
         if (!isArrayIndex(key)) return
         const range = metadata.metaOf(owner, operationContext)?.arrayRange
         const backing = range?.backing ?? owner
         const meta = metadata.requireMeta(backing, operationContext)
         const index = (range?.start ?? 0) + Number(key)
         if (!meta.placementsInitialized) return
+        if (countChange) {
+            meta.storedIndexes += countChange
+            if (countChange > 0) meta.storedEnd = Math.max(meta.storedEnd, index + 1)
+            else if (!meta.storedIndexes) meta.storedEnd = 0
+            else if (meta.storedEnd === index + 1) meta.storedEnd = index
+        }
         let record = meta.arrayBacking
         if (!record && metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type)) {
             record = meta.arrayBacking = new ArrayBacking(backing, operationContext)
@@ -187,6 +324,7 @@ class ArrayView {
         // Sharing and leases use ordinary COW; this checks representation only.
         const range = metadata.metaOf(value, operationContext)?.arrayRange
         if (!range) return false
+        if (ArrayView.region(value, operationContext)) return false
         const length = ArrayView.minimumLength(value, operationContext)
         if (isArrayIndex(key) && Number(key) < length) {
             const backing = metadata.requireMeta(range.backing, operationContext)
@@ -198,6 +336,7 @@ class ArrayView {
     }
 
     static hasOtherStorageUse(owner, key, operationContext) {
+        if (ArrayView.region(owner, operationContext)) return false
         const meta = metadata.metaOf(owner, operationContext)
         const backing = meta?.backingRecord
         if (!backing || !isArrayIndex(key)) return false
@@ -213,12 +352,124 @@ class ArrayView {
 
     static backingVersion(owner, key, operationContext) {
         const meta = metadata.metaOf(owner, operationContext)
-        if (meta?.type !== metadata.TYPE.Array || !isArrayIndex(key)) return
+        if (meta?.type !== metadata.TYPE.Array || !isArrayIndex(key) && !ArrayView.mayHaveVirtualIndex(owner, key, operationContext)) return
         const range = meta.arrayRange
-        if (range && Number(key) >= ArrayView.minimumLength(owner, operationContext)) return
         const backing = range?.backing ?? owner
-        const producers = metadata.metaOf(backing, operationContext)?.arrayBacking?.producers
-        return getOwnPlacementVersion(producers, (range?.start ?? 0) + Number(key), operationContext)
+        const record = metadata.metaOf(backing, operationContext)?.arrayBacking
+        if (range && Number(key) >= (record?.region ? ArrayView.maximumLength(owner, operationContext) :
+            ArrayView.minimumLength(owner, operationContext))) return
+        const index = (range?.start ?? 0) + Number(key)
+        const borrowed = range?.borrowed
+        return borrowed && index < borrowed.length ? getOwnPlacementVersion(borrowed.record.producers, borrowed.start + index, operationContext) :
+            getOwnPlacementVersion(record?.producers, index, operationContext) ?? record?.region?.versionAt(index)
+    }
+
+    // An unfinished region uses the existing shared backing producer for
+    // established placements. A numeric selection creates only its own gate.
+    static attachRegion(backing, region, operationContext) {
+        const meta = metadata.requireMeta(backing, operationContext)
+        const record = meta.arrayBacking ??= new ArrayBacking(backing, operationContext)
+        record.region = region
+        ArrayView.linkRegionChildren(record, region, operationContext)
+        if (region.prefix) ArrayView.linkRegionChildren(record, region.prefix, operationContext)
+        return record.producers ??= new ArrayBackingProducers(record, operationContext)
+    }
+
+    static linkRegionChildren(record, region, operationContext) {
+        region.children(undefined, placement => addParent(placement.value, record, placement, operationContext))
+    }
+
+    static region(owner, operationContext) {
+        const meta = metadata.metaOf(owner, operationContext)
+        if (meta?.type !== metadata.TYPE.Array) return
+        return metadata.metaOf(meta.arrayRange?.backing ?? owner, operationContext)?.arrayBacking?.region
+    }
+
+    static mayHaveVirtualIndex(owner, key, operationContext) {
+        const index = Number(key)
+        return Number.isSafeInteger(index) && index >= 0xffffffff && String(index) === String(key) &&
+            metadata.metaOf(owner, operationContext)?.type === metadata.TYPE.Array &&
+            index < ArrayView.maximumLength(owner, operationContext)
+    }
+
+    static *regionKeys(owner, region, operationContext, start, end) {
+        const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
+        start = Math.max(start, region.start - offset)
+        const regionEnd = region.sequence?.widths?.maximum ?? region.end
+        end = Math.min(end ?? Infinity, ArrayView.maximumLength(owner, operationContext), regionEnd - offset)
+        if (start >= end || !region.implicit) return
+        if (region.layout) {
+            for (const index of region.keys(start + offset, end + offset)) yield String(index - offset)
+        } else yield* indexKeys(start, end)
+    }
+
+    // Capture the restriction and local point overrides, without reading any
+    // unknown numeric placement or retaining its former owner.
+    static implicitRanges(owner, operationContext) {
+        const region = ArrayView.region(owner, operationContext)
+        if (!region) return []
+        const suffix = ArrayView.implicitRange(owner, operationContext, region)
+        const prefix = region.prefix && ArrayView.implicitRange(owner, operationContext, region.prefix)
+        return prefix ? suffix ? [prefix, suffix] : [prefix] : suffix ? [suffix] : []
+    }
+
+    static regionKey(owner, index, operationContext) {
+        const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
+        const key = index - offset
+        if (key >= 0 && key < ArrayView.maximumLength(owner, operationContext) &&
+            !getOwnPlacementVersion(owner, key, operationContext)) return String(key)
+    }
+
+    static implicitRange(owner, operationContext, region = ArrayView.region(owner, operationContext)) {
+        if (!region?.implicit) return
+        const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
+        const first = Math.max(offset, region.start)
+        const regionEnd = region.sequence?.widths?.maximum ?? region.end
+        const end = Math.min(offset + ArrayView.maximumLength(owner, operationContext), regionEnd)
+        if (first >= end) return
+        const counts = region.layout && region.counts(first, end)
+        let masked, errors = counts?.poison ?? 0
+        for (const [key] of ownPlacementVersionEntries(owner, operationContext)) {
+            const index = offset + Number(key)
+            if (index < first || index >= end) continue
+            const member = region.layout && region.versionAt(index)
+            if (region.layout && !member) continue
+            ;(masked ??= new Set()).add(index)
+            if (!region.pending && (member?.ownFailure || errorUtils.isPoisonError(member?.value))) errors--
+        }
+        if (region.pending) for (const index of region.gates?.keys() ?? [])
+            if (index >= first && index < end) (masked ??= new Set()).add(index)
+        const count = (counts?.covered ?? end - first) - (masked?.size ?? 0)
+        if (count) return { region, first, end, offset, count, errors,
+            contains: index => index >= first && index < end && !masked?.has(index),
+            intervals(visit) {
+                let next = first
+                for (const index of masked ? [...masked].sort((a, b) => a - b) : []) {
+                    if (next < index) visit(next, index)
+                    next = index + 1
+                }
+                if (next < end) visit(next, end)
+            } }
+    }
+
+    static captureSkippedRuns(owner, operationContext) {
+        const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
+        let overrides
+        return index => {
+            let region = ArrayView.region(owner, operationContext)
+            const at = offset + index
+            if (region?.prefix && at < region.start) region = region.prefix
+            if (!region?.layout || at < region.start || at >= region.end || getOwnPlacementVersion(owner, index, operationContext)) return
+            const end = Math.min(region.end, offset + ArrayView.minimumLength(owner, operationContext))
+            const run = region.skippedRun(at, end)
+            if (!run) return
+            // Linear pulls only move forward on this protected logical version.
+            // Retain coordinates, never the values of overwritten slots.
+            overrides ??= ownPlacementVersionEntries(owner, operationContext).map(([key]) => Number(key)).reverse()
+            while (overrides.length && overrides.at(-1) <= index) overrides.pop()
+            const next = overrides.at(-1)
+            return next < index + run.length ? region.skippedRun(at, offset + next) : run
+        }
     }
 
     // Logical version consumers need only the selected range's maintained
@@ -228,19 +479,24 @@ class ArrayView {
         const meta = metadata.metaOf(owner, operationContext)
         const range = meta?.arrayRange
         if (meta?.type !== metadata.TYPE.Array || !range) return
-        const producers = metadata.metaOf(range.backing, operationContext)?.arrayBacking?.producers
-        const producerMeta = metadata.metaOf(producers, operationContext)
-        if (!producerMeta) return
-        const end = range.start + ArrayView.minimumLength(owner, operationContext)
-        start += range.start
-        if (start >= end) return
-        const keys = end - start <= producerMeta.outgoingPlacements.size
-            ? indexKeys(start, end) : producerMeta.outgoingPlacements.keys()
-        for (const key of keys) {
-            const index = Number(key)
-            if (index < start || index >= end) continue
-            const logical = String(index - range.start), version = getOwnPlacementVersion(producers, key, operationContext)
-            if (version && !getOwnPlacementVersion(owner, logical, operationContext)) yield [logical, version]
+        const record = metadata.metaOf(range.backing, operationContext)?.arrayBacking
+        const length = ArrayView.minimumLength(owner, operationContext)
+        const borrowed = range?.borrowed
+        if (borrowed) yield* versions(borrowed.record.producers, range.start + borrowed.start,
+            Math.min(length, borrowed.length - range.start))
+        yield* versions(record?.producers, range.start, length)
+
+        function* versions(producers, offset, extent) {
+            const table = metadata.metaOf(producers, operationContext)?.outgoingPlacements
+            if (!table || start >= extent) return
+            const first = offset + start, end = offset + extent
+            const keys = end - first <= table.size ? indexKeys(first, end) : table.keys()
+            for (const key of keys) {
+                const index = Number(key)
+                if (index < first || index >= end) continue
+                const logical = String(index - offset), version = getOwnPlacementVersion(producers, key, operationContext)
+                if (version && !getOwnPlacementVersion(owner, logical, operationContext)) yield [logical, version]
+            }
         }
     }
 
@@ -250,7 +506,7 @@ class ArrayView {
     static placementDestination(owner, key, operationContext) {
         const meta = metadata.metaOf(owner, operationContext)
         const range = meta?.arrayRange
-        if (meta?.type !== metadata.TYPE.Array || !range || range.backing === owner || meta.parents ||
+        if (meta?.type !== metadata.TYPE.Array || !range || range.backing === owner || meta.parents || ArrayView.region(owner, operationContext) ||
             !isArrayIndex(key) || getOwnPlacementVersion(owner, key, operationContext) ||
             Number(key) >= ArrayView.minimumLength(owner, operationContext) ||
             ArrayView.hasOtherStorageUse(owner, key, operationContext)) return
@@ -262,26 +518,26 @@ class ArrayView {
 
     // Freeze the source's logical bounds before creating an owner that can
     // extend shared storage. No additional identity is admitted for this range.
-    static tryShareStorage(source, operationContext) {
+    static tryShareStorage(source, operationContext, growing = false) {
         const range = metadata.metaOf(source, operationContext)?.arrayRange
         const backing = range?.backing ?? source
         if (metadata.isImported(source, operationContext) ||
             metadata.isImported(backing, operationContext)) return false
         const length = ArrayView.readyLength(source, operationContext)
-        if (length === undefined) return false
+        if (length === undefined || growing && range?.start > length) return false
         if (!range) ArrayView.#setState(source, length, operationContext)
         return true
     }
 
-    static tryExtendEnd(source, count, operationContext, populate) {
+    static tryExtendEnd(source, count, operationContext, populate, logicalLength) {
         let backing
         try {
             const range = metadata.metaOf(source, operationContext)?.arrayRange
             backing = range?.backing ?? source
             // Imported storage cannot be extended, regardless of its host descriptors.
-            if (metadata.isImported(source, operationContext) ||
+            if (ArrayView.region(source, operationContext) || metadata.isImported(source, operationContext) ||
                 metadata.isImported(backing, operationContext)) return
-            const logicalLength = ArrayView.readyLength(source, operationContext)
+            logicalLength ??= ArrayView.readyLength(source, operationContext)
             if (logicalLength === undefined) return
             // Repeated end growth on a moving window must not retain its whole
             // discarded prefix. Materialize the live range through the ordinary
@@ -291,7 +547,9 @@ class ArrayView {
             // An empty extension needs no physical write.
             let nextPhysicalLength
             if (count > 0) {
-                const length = ArrayView.#physicalLength(backing, operationContext)
+                const length = errorUtils.catchExternalAction(() => ArrayView.#physicalLength(backing, operationContext),
+                    () => undefined)
+                if (length === undefined) return
                 if (range && range.start + logicalLength !== length) return
                 // Only the native backing owner can reserve growth beyond physical
                 // storage: distinct views materialize or extend storage first.
@@ -299,37 +557,57 @@ class ArrayView {
                 const backingRange = metadata.requireMeta(backing, operationContext).arrayRange
                 if (backingRange && (backingRange.lengthState.maximum ?? backingRange.lengthState) > length) return
                 if (length + count > 0xffffffff) return
-                if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return
-                const descriptor = errorUtils.runExternalAction(operationContext, () =>
-                    Object.getOwnPropertyDescriptor(backing, "length"))
-                if (descriptor?.writable !== true) return
+                const writable = errorUtils.catchExternalAction(() => errorUtils.runExternalAction(operationContext, () =>
+                    Object.isExtensible(backing) && Object.getOwnPropertyDescriptor(backing, "length")?.writable), () => false)
+                if (!writable) return
                 nextPhysicalLength = length + count
             }
             // The checks above establish sharing eligibility. Pure storage
             // inspection cannot change this captured logical shape.
             if (!range) ArrayView.#setState(source, logicalLength, operationContext)
+            if (count > 0 && !errorUtils.catchExternalAction(() => {
+                errorUtils.runExternalAction(operationContext, () => { backing.length = nextPhysicalLength })
+                return true
+            }, () => false)) return
             const next = new ArrayView(source, operationContext, 0, logicalLength + count)
             return PlacementConstruction.initializeAndPublish(next, operationContext, next => {
                 copyArrayOverlays(source, next, operationContext)
-                if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length = nextPhysicalLength })
                 populate?.(next)
             })
         } finally { source = backing = populate = undefined }
     }
 
-    // Capture storage candidates now: broad ranges enumerate stored keys;
-    // bounded views inspect only their range.
-    static physicalKeyCandidates(array, operationContext, start = 0, end) {
+    // Capture sparse or broad key sets now, and stream narrow coordinates.
+    static physicalKeyCandidates(array, operationContext, start = 0, end, sparse = false) {
         let backing
         try {
             const range = metadata.metaOf(array, operationContext)?.arrayRange
             backing = range?.backing ?? array
-            const backingLength = ArrayView.#physicalLength(backing, operationContext)
+            const borrowed = range?.borrowed
             const offset = range?.start ?? 0
-            const extent = range ? ArrayView.minimumLength(array, operationContext) : backingLength
+            const extent = range ? ArrayView.minimumLength(array, operationContext) : undefined
+            if (borrowed) {
+                const cut = Math.max(0, borrowed.length - offset)
+                const prefix = start < cut ? ArrayView.#storageKeys(borrowed.record.array, borrowed.start + offset, Math.min(extent, cut),
+                    start, Math.min(end ?? extent, cut), sparse, operationContext) : []
+                const suffix = ArrayView.#storageKeys(backing, offset, extent, Math.max(start, cut), end, sparse, operationContext)
+                return (function* () { yield* prefix; yield* suffix })()
+            }
+            return ArrayView.#storageKeys(backing, offset, extent, start, end, sparse, operationContext)
+        } finally { backing = undefined }
+    }
+
+    static #storageKeys(backing, offset, extent, start, end, sparse, operationContext) {
+        try {
+            const backingLength = ArrayView.#physicalLength(backing, operationContext)
+            extent ??= backingLength
+            const meta = metadata.metaOf(backing, operationContext), record = meta?.arrayBacking
             start = offset + Math.max(0, start)
             end = offset + Math.min(extent, end ?? extent)
-            if (extent >= backingLength && offset === 0 && end - start >= extent / 2) {
+            const width = end - start
+            const stored = (meta?.storedIndexes ?? 0) + (metadata.metaOf(record?.producers, operationContext)?.outgoingPlacements?.size ?? 0)
+            if (sparse || meta?.placementsInitialized && width > 64 && width > 4 * stored || (record?.region ? end - start >= backingLength / 2 :
+                extent >= backingLength && offset === 0 && end - start >= extent / 2)) {
                 const ownKeys = errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(backing))
                 // Proxies may list indexes out of order; logical Arrays use index order.
                 const keys = Object.create(null)
@@ -337,7 +615,7 @@ class ArrayView {
                     if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
                     keys[String(Number(key) - offset)] = true
                 }
-                const producers = metadata.metaOf(backing, operationContext)?.arrayBacking?.producers
+                const producers = record?.producers
                 for (const [key] of ownPlacementVersionEntries(producers, operationContext)) {
                     if (Number(key) >= start && Number(key) < end) keys[String(Number(key) - offset)] = true
                 }
@@ -350,16 +628,22 @@ class ArrayView {
     }
 
     static descriptor(array, key, operationContext) {
-        let range
+        let backing
         try {
-            range = metadata.requireMeta(array, operationContext).arrayRange
             if (key === "length") return {
                 value: ArrayView.minimumLength(array, operationContext), enumerable: false, writable: true, configurable: false,
             }
-            const physical = ArrayView.#physicalKey(array, key, operationContext)
-            return physical === undefined ? undefined : errorUtils.runExternalAction(
-                operationContext, () => Object.getOwnPropertyDescriptor(range.backing, physical))
-        } finally { range = undefined }
+            let physical = ArrayView.#physicalKey(array, key, operationContext)
+            if (physical === undefined) return
+            const range = metadata.requireMeta(array, operationContext).arrayRange
+            backing = range.backing
+            const borrowed = range.borrowed
+            if (borrowed && Number(physical) < borrowed.length) {
+                physical = String(borrowed.start + Number(physical))
+                backing = borrowed.record.array
+            }
+            return errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(backing, physical))
+        } finally { backing = undefined }
     }
 
     static mutationTarget(array, key, operationContext, writing) {

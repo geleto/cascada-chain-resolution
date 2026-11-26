@@ -24,6 +24,24 @@ function inheritIdentity(source, copy, operationContext) {
     metadata.requireMeta(copy, operationContext).generation = captureIdentity(source, operationContext)
 }
 
+// The public view of an open entry and its final private receiver represent
+// the same value. Keep comparisons attached to a source-free cell until the
+// last issuer selects that receiver, including a nested pending publication.
+function reserveEntryIdentity(source, output, operationContext) {
+    const { domain } = captureIdentity(source, operationContext), cell = { state: PENDING, size: 1 }
+    metadata.requireMeta(output, operationContext).generation = { domain, cell }
+    return final => {
+        const work = []
+        finishIdentity(cell, final.cell, work)
+        resumeQueries(work)
+    }
+}
+
+function advanceEntryIdentity(source, output, operationContext) {
+    const { domain } = captureIdentity(source, operationContext)
+    metadata.requireMeta(output, operationContext).generation = { domain, cell: { state: SETTLED } }
+}
+
 // Snapshot freshness is independent of the captured mutation decision. Renew
 // each incoming domain once, preserving distinctions between older snapshots
 // which can share cells. The boundary discards this map after adopting its copies.
@@ -71,6 +89,14 @@ function finishIdentity(cell, target, work) {
         else (winner.queries ??= new Set()).add(query)
     }
     moving?.clear()
+}
+
+function resumeQueries(work) {
+    for (let index = 0; index < work.length; index++) {
+        const query = work[index]
+        work[index] = undefined
+        query.resume()
+    }
 }
 
 // A finite mutation path captures each affected occurrence. Before suspension
@@ -156,11 +182,7 @@ class IdentityPublication {
             }
             current = parent
         }
-        for (let index = 0; index < work.length; index++) {
-            const query = work[index]
-            work[index] = undefined
-            query.resume()
-        }
+        resumeQueries(work)
     }
 }
 
@@ -252,6 +274,6 @@ function visitRepresentation(value, identity, visited) {
     return true
 }
 
-export { createIdentity, captureIdentity, inheritIdentity, copyIdentity, compareIdentities,
+export { createIdentity, captureIdentity, inheritIdentity, reserveEntryIdentity, advanceEntryIdentity, copyIdentity, compareIdentities,
     groupCapturedIdentities, resolveCapturedIdentities,
     IdentityPublication, visitRepresentation }

@@ -31,8 +31,8 @@ export const receivingFaults = [
     } },
     { name: "poison", assertion: /complete exact poison membership/, edit: {
         file: "src/error.js",
-        find: "const leaves = flattenAndDeduplicateErrors(inputs)",
-        replace: `const leaves = flattenAndDeduplicateErrors(inputs)
+        find: "if (!leaves) return first",
+        replace: `if (!leaves) return first
     if (leaves.length > 1 && leaves.every(leaf => leaf.errorContext === "receive failures")) {
         ${receipt("poison")}; leaves.pop()
     }`,

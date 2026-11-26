@@ -3,7 +3,6 @@ import { poison } from "./support.js"
 import { rejected as rejectedInput } from "./ordered-thenable.js"
 import * as arrayViews from "../src/array-view.js"
 import * as languageValues from "../src/language-values.js"
-import * as propertyVersions from "../src/property-versions.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
     Chain,
@@ -111,7 +110,7 @@ describe("run", () => {
             { repair: false },
         )).to.be(String.prototype.concat.call("ab", scalar))
         expect(run(
-            new Chain([1, 2], testContext),
+            new Chain([1, 2], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "slice",
             [scalar],
@@ -713,7 +712,7 @@ describe("run", () => {
         const flatDepth = deferred()
         const separator = deferred()
         const sliced = run(
-            new Chain([1, 2, 3], testContext),
+            new Chain([1, 2, 3], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "slice",
             [
@@ -723,7 +722,7 @@ describe("run", () => {
             { ...testContext, errorContext: "test run" },
             { repair: false },
         )
-        const copiedChain = new Chain([1, 2, 3], testContext)
+        const copiedChain = new Chain([1, 2, 3], testContext, runtime.CHAIN_MODE.Complete)
         const copied = run(
             copiedChain,
             [],
@@ -737,7 +736,7 @@ describe("run", () => {
             { repair: false, mutationScopeDepth: 0 },
         )
         const flattened = run(
-            new Chain([[1], [2]], testContext),
+            new Chain([[1], [2]], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "flat",
             [flatDepth.promise],
@@ -762,8 +761,8 @@ describe("run", () => {
             1, 2, 3,
         ])
         expect(await copied).to.be(copiedChain._state.value)
-        expect(copiedChain._state.value).to.eql([1, 1, 2])
-        expect(await flattened).to.eql([1, 2])
+        expect(exportValue(copiedChain, [], testContext)).to.eql([1, 1, 2])
+        expect([...logicalArrayValues(await flattened, testContext)]).to.eql([1, 2])
         expect(await joined).to.be("1,2")
     })
 
@@ -801,7 +800,8 @@ describe("run", () => {
 
         const changed = new Chain(sliced, testContext)
         run(changed, [], "push", [5], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
-        expect(arrayViews.isArrayView(changed._state.value, testContext)).to.be(false)
+        expect(arrayBacking(changed._state.value, testContext) === source).to.be(false)
+        expect(exportValue(changed, [], testContext)).to.eql([1, 2, 3, 5])
         expect(exportValue(new Chain(source, testContext), [], testContext)).to.eql([0, 1, 2, 3, 4])
     })
 
@@ -823,12 +823,12 @@ describe("run", () => {
         expect(readPath(new Chain(sliced, testContext), ["0"], testContext)).to.be(imported)
     })
 
-    it("appends concat items to the receiver backing", () => {
+    for (const mode of Object.values(runtime.CHAIN_MODE)) it(`appends concat items to the receiver backing in mode ${mode}`, () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const left = [1, , 3]
         const right = [, 5]
         const concatenated = run(
-            new Chain(left, testContext),
+            new Chain(left, testContext, mode),
             [],
             "concat",
             [
@@ -862,7 +862,7 @@ describe("run", () => {
 
         const self = [1, , 3]
         const selfConcat = run(
-            new Chain(self, testContext),
+            new Chain(self, testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [self],
@@ -948,7 +948,7 @@ describe("run", () => {
         const concatSource = importValue([1, 2], testContext)
         const nestedSource = importValue({ values: [1, 2, 3] }, testContext)
         const middle = run(
-            new Chain([1, 2, 3], testContext),
+            new Chain([1, 2, 3], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "slice",
             [
@@ -959,7 +959,7 @@ describe("run", () => {
             { repair: false },
         )
         const sliced = run(
-            new Chain(slicedSource, testContext),
+            new Chain(slicedSource, testContext, runtime.CHAIN_MODE.Complete),
             [],
             "slice",
             [1],
@@ -967,7 +967,7 @@ describe("run", () => {
             { repair: false },
         )
         const concatenated = run(
-            new Chain(concatSource, testContext),
+            new Chain(concatSource, testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [[3]],
@@ -975,7 +975,7 @@ describe("run", () => {
             { repair: false },
         )
         const middleConcat = run(
-            new Chain(middle, testContext),
+            new Chain(middle, testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [[4]],
@@ -983,7 +983,7 @@ describe("run", () => {
             { repair: false },
         )
         const nestedSlice = run(
-            new Chain(nestedSource, testContext),
+            new Chain(nestedSource, testContext, runtime.CHAIN_MODE.Complete),
             ["values"],
             "slice",
             [1],
@@ -993,12 +993,12 @@ describe("run", () => {
 
         expect(Array.isArray(sliced)).to.be(true)
         expect(Array.isArray(concatenated)).to.be(true)
-        expect(Array.isArray(middleConcat)).to.be(true)
+        expect(arrayBacking(middleConcat, testContext)).not.to.be(arrayBacking(middle, testContext))
         expect(metaOf(nestedSource.values, testContext).imported).to.be(true)
         expect(Array.isArray(nestedSlice)).to.be(true)
         expect(sliced).to.eql([2, 3])
         expect(concatenated).to.eql([1, 2, 3])
-        expect(middleConcat).to.eql([1, 2, 4])
+        expect([...logicalArrayValues(middleConcat, testContext)]).to.eql([1, 2, 4])
         expect(nestedSlice).to.eql([2, 3])
         expect(slicedSource).to.eql([1, 2, 3])
         expect(concatSource).to.eql([1, 2])
@@ -1025,9 +1025,7 @@ describe("run", () => {
         const pending = deferred()
         const chain = new Chain([pending.promise, pending.promise], testContext)
         const source = chain._state.value
-        propertyVersions.getPropertyPlacement(source, "0", testContext).ensureCaptured()
         const source0 = getPromiseVersion(source, "0", testContext)
-        propertyVersions.getPropertyPlacement(source, "1", testContext).ensureCaptured()
         const source1 = getPromiseVersion(source, "1", testContext)
 
         expect(source0 === source1).to.be(false)
@@ -1205,7 +1203,7 @@ describe("run", () => {
         expect(promisedPush._state.value).not.to.be(rejected)
 
         expect(errorCause(run(
-            new Chain([direct], testContext),
+            new Chain([direct], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "includes",
             [direct],
@@ -1213,7 +1211,7 @@ describe("run", () => {
             { repair: false },
         ))).to.be(direct)
         expect(errorCause(run(
-            new Chain([direct], testContext),
+            new Chain([direct], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "indexOf",
             [direct],
@@ -1221,7 +1219,7 @@ describe("run", () => {
             { repair: false },
         ))).to.be(direct)
         expect(errorCause(run(
-            new Chain([direct], testContext),
+            new Chain([direct], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "lastIndexOf",
             [direct],
@@ -1230,7 +1228,7 @@ describe("run", () => {
         ))).to.be(direct)
 
         const concatenated = run(
-            new Chain([], testContext),
+            new Chain([], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [concatItem.promise],
@@ -1241,7 +1239,7 @@ describe("run", () => {
         expect(errorCause(await concatenated)).to.be(rejected)
 
         const delayed = run(
-            new Chain([1], testContext),
+            new Chain([1], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "slice",
             [pending.promise],
@@ -1251,7 +1249,7 @@ describe("run", () => {
         pending.reject(rejected)
         expect(errorCause(await delayed)).to.be(rejected)
 
-        const mutation = new Chain([1, 2], testContext)
+        const mutation = new Chain([1, 2], testContext, runtime.CHAIN_MODE.Complete)
         const mutationFailure = run(
             mutation,
             [],
@@ -1262,7 +1260,7 @@ describe("run", () => {
         )
         expect(errorCause(mutationFailure)).to.be(direct)
         expect(errorCause(run(
-            new Chain([], testContext),
+            new Chain([], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [direct],
@@ -1272,7 +1270,7 @@ describe("run", () => {
         expect(readPath(mutation, [], testContext)).to.be(mutationFailure)
 
         const mutationPending = deferred()
-        const delayedMutation = new Chain([1, 2], testContext)
+        const delayedMutation = new Chain([1, 2], testContext, runtime.CHAIN_MODE.Complete)
         const mutationResult = run(
             delayedMutation,
             [],
@@ -1321,7 +1319,7 @@ describe("run", () => {
         second.errors = [nested]
 
         const delayed = run(
-            new Chain([1, 2], testContext),
+            new Chain([1, 2], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "copyWithin",
             [
@@ -1343,7 +1341,7 @@ describe("run", () => {
         expect(errorCause(combined.errors.find(error => error.cause === second)).errors).to.eql([nested])
 
         const ready = run(
-            new Chain([1, 2], testContext),
+            new Chain([1, 2], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "copyWithin",
             [
@@ -1360,7 +1358,7 @@ describe("run", () => {
 
         const concatPending = deferred()
         const concatResult = run(
-            new Chain([], testContext),
+            new Chain([], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [
@@ -1481,7 +1479,7 @@ describe("run", () => {
             first.promise,
             second.promise,
             [retained.promise],
-        ], testContext)
+        ], testContext, runtime.CHAIN_MODE.Complete)
         const initial = [
             firstCount(),
             secondCount(),
@@ -1494,7 +1492,7 @@ describe("run", () => {
         first.resolve([1])
         second.resolve(2)
 
-        const flattened = await result
+        const flattened = [...logicalArrayValues(await result, testContext)]
         expect(flattened.slice(0, 2)).to.eql([1, 2])
         expect(flattened[2]).to.be(retained.promise)
         retained.resolve(3)
@@ -1560,7 +1558,7 @@ describe("run", () => {
         expect(requiresCopyOnWrite(removedValue, testContext)).to.be(false)
         assignPath(new Chain(removed, testContext), ["0", "value"], 3, testContext)
         expect(removedValue.value).to.be(3)
-        expect(chain._state.value).to.eql([2])
+        expect(exportValue(chain, [], testContext)).to.eql([2])
     })
 
     it("shares splice results retained by a copy-on-write source", () => {
@@ -1576,7 +1574,7 @@ describe("run", () => {
         expect(source[0]).to.be(removedValue)
         expect(removedValue.value).to.be(1)
         expect(removed[0]).to.eql({ value: 3 })
-        expect(chain._state.value).to.eql([2])
+        expect(exportValue(chain, [], testContext)).to.eql([2])
     })
 
     it("publishes removed ArrayView endpoints as retained values", () => {
@@ -1620,7 +1618,7 @@ describe("run", () => {
 
         expect([...logicalArrayValues(result, testContext)]).to.eql([1, 2, 3])
         expect(cleared).to.eql([undefined])
-        expect(spliced).to.eql([1, 9, 3])
+        expect([...logicalArrayValues(spliced, testContext)]).to.eql([1, 9, 3])
         expect(exportValue(chain, [], testContext)).to.eql([1, 2])
     })
 
@@ -1666,14 +1664,14 @@ describe("run", () => {
         expect(exportValue(sourceChain, [], testContext)).to.eql([2, 3])
     })
 
-    it("materializes when an endpoint no longer reaches a physical edge", () => {
+    it("gives a pushed endpoint its own tail when the physical slot is occupied", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const sourceChain = new Chain([1, 2, 3], testContext)
         const shorter = run(sourceChain, [], "pop", [], { ...testContext, errorContext: "test run" }, { repair: false })
         const extended = run(new Chain(shorter, testContext), [], "push", [4], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        expect(Array.isArray(extended)).to.be(true)
-        expect(extended).to.eql([1, 2, 4])
+        expect(arrayBacking(extended, testContext) === arrayBacking(shorter, testContext)).to.be(false)
+        expect([...logicalArrayValues(extended, testContext)]).to.eql([1, 2, 4])
         expect([...logicalArrayValues(shorter, testContext)]).to.eql([1, 2])
         expect(exportValue(sourceChain, [], testContext)).to.eql([1, 2, 3])
     })
@@ -1805,7 +1803,7 @@ describe("run", () => {
     it("rejects host conversion hooks without invoking them", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const slice = (...bounds) => run(
-            new Chain([1, 2], testContext),
+            new Chain([1, 2], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "slice",
             [...bounds],
@@ -1828,7 +1826,8 @@ describe("run", () => {
         }
 
         const result = slice(start, end)
-        expect(result.errors.length).to.be(2)
+        expect(result.kind).to.be(errorUtils.ERROR_KIND.ScalarConversionFailed)
+        expect(result.errors).to.be(undefined)
         expect(endConversions).to.be(0)
     })
 
@@ -1951,7 +1950,7 @@ describe("run", () => {
     it("gates delayed mutation preparation and returns its result separately", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
-        const chain = new Chain([1, 2, 3], testContext)
+        const chain = new Chain([1, 2, 3], testContext, runtime.CHAIN_MODE.Complete)
         const result = run(
             chain,
             [],
@@ -1978,7 +1977,7 @@ describe("run", () => {
         const start = deferred()
         const receiverCount = countPromiseRegistrations(receiver.promise)
         const startCount = countPromiseRegistrations(start.promise)
-        const chain = new Chain(receiver.promise, testContext)
+        const chain = new Chain(receiver.promise, testContext, runtime.CHAIN_MODE.Complete)
         const initialReceiverCount = receiverCount()
         const initialStartCount = startCount()
 
@@ -2023,8 +2022,8 @@ describe("run", () => {
 
         expect(payload.value).to.be(1)
         expect(payloadChain._state.value.value).to.be(2)
-        expect(chain._state.value[1]).to.be(payload)
-        expect(chain._state.value[2]).to.be(payload)
+        expect(lookupPath(chain, [1], testContext)).to.be(payload)
+        expect(lookupPath(chain, [2], testContext)).to.be(payload)
         expect(metaOf(payload, testContext).readLeaseCount).to.be(undefined)
     })
 
@@ -2033,7 +2032,7 @@ describe("run", () => {
         const start = deferred()
         const payload = { value: 1 }
         const payloadChain = new Chain(payload, testContext)
-        const receiver = new Chain([0], testContext)
+        const receiver = new Chain([0], testContext, runtime.CHAIN_MODE.Complete)
 
         const result = run(
             receiver,
@@ -2055,7 +2054,7 @@ describe("run", () => {
 
         expect(payload.value).to.be(1)
         expect(payloadChain._state.value.value).to.be(2)
-        expect(receiver._state.value[1]).to.be(payload)
+        expect(lookupPath(receiver, [1], testContext)).to.be(payload)
         expect(metaOf(payload, testContext).readLeaseCount).to.be(undefined)
     })
 
@@ -2088,7 +2087,7 @@ describe("run", () => {
         const start = deferred()
         const failure = new Error("invalid start")
         const payload = { value: 1 }
-        const receiver = new Chain([0], testContext)
+        const receiver = new Chain([0], testContext, runtime.CHAIN_MODE.Complete)
 
         const result = run(
             receiver,
@@ -2118,7 +2117,7 @@ describe("run", () => {
         const valueChain = new Chain(value, testContext)
 
         const result = run(
-            new Chain([], testContext),
+            new Chain([], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [
@@ -2149,7 +2148,7 @@ describe("run", () => {
         const itemChain = new Chain(item, testContext)
 
         const result = run(
-            new Chain([], testContext),
+            new Chain([], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [
@@ -2177,7 +2176,7 @@ describe("run", () => {
         const itemChain = new Chain(item, testContext)
 
         const result = run(
-            new Chain([], testContext),
+            new Chain([], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "concat",
             [
@@ -2218,7 +2217,7 @@ describe("run", () => {
     it("publishes a delayed receiver before its independent result", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
-        const chain = new Chain([1, 2, 3], testContext)
+        const chain = new Chain([1, 2, 3], testContext, runtime.CHAIN_MODE.Complete)
         const result = run(chain, [], "splice", [start.promise, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         const receiver = lookupPath(chain, [], testContext)
         const order = []
@@ -2234,7 +2233,7 @@ describe("run", () => {
     it("completes a delayed result after receiver supersession", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
-        const chain = new Chain({ values: [1, 2, 3] }, testContext)
+        const chain = new Chain({ values: [1, 2, 3] }, testContext, runtime.CHAIN_MODE.Complete)
         const result = run(
             chain,
             ["values"],
@@ -2463,14 +2462,14 @@ describe("run", () => {
             undefined,
             undefined,
         ])
-        expect(Object.keys(sorted)).to.eql(["0", "1", "2"])
+        expect(logicalKeys(sorted, testContext)).to.eql(["0", "1", "2"])
         expect([...logicalArrayValues(copied, testContext)]).to.eql([
             1,
             3,
             undefined,
             undefined,
         ])
-        expect(Object.keys(copied)).to.eql(["0", "1", "2", "3"])
+        expect(logicalKeys(copied, testContext)).to.eql(["0", "1", "2", "3"])
     })
 
     it("resolves a comparator binding before native sort", async () => {
@@ -2700,7 +2699,7 @@ describe("run", () => {
             [Symbol()],
             { ...testContext, errorContext: "test run" },
             { repair: false },
-        ) instanceof Error).to.be(true)
+        )).to.be("1")
 
         class External {
             toString() {
@@ -3259,7 +3258,7 @@ describe("run", () => {
         const failure = new Error("recursive flat preparation failed")
         const fatal = fatalFromOtherExecution(failure)
         const result = run(
-            new Chain([late.promise, failing.promise], testContext),
+            new Chain([late.promise, failing.promise], testContext, runtime.CHAIN_MODE.Complete),
             [],
             "flat",
             [],
@@ -3595,7 +3594,7 @@ describe("run", () => {
         const cyclic = [1]
         cyclic.push(cyclic)
         importValue(cyclic, testContext)
-        const chain = new Chain({ items: cyclic }, testContext)
+        const chain = new Chain({ items: cyclic }, testContext, runtime.CHAIN_MODE.Complete)
 
         const unlimited = run(chain, ["items"], "flat", [Infinity], { ...testContext, errorContext: "test run" }, { repair: false })
         const bounded = run(chain, ["items"], "flat", [2], { ...testContext, errorContext: "test run" }, { repair: false })
@@ -3604,9 +3603,10 @@ describe("run", () => {
             "Cannot flat an Array cycle to unlimited depth",
         )
         expect(bounded instanceof Error).to.be(false)
-        expect(bounded.length).to.be(4)
-        expect(bounded.slice(0, 3)).to.eql([1, 1, 1])
-        expect(bounded[3]).to.be(cyclic)
+        const values = [...logicalArrayValues(bounded, testContext)]
+        expect(values.length).to.be(4)
+        expect(values.slice(0, 3)).to.eql([1, 1, 1])
+        expect(values[3]).to.be(cyclic)
     })
 
     it("ignores inherited numeric accessors when remapping Array data", () => {

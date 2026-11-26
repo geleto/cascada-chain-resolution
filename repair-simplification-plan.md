@@ -1,6 +1,6 @@
 # Repair own-path poison without rollback
 
-**D01 implementation:** the current runtime uses exact-path status clearing, with failed managed native work still discarded before adoption. See [the implementation and evidence](docs/audit-report.md#d01---exact-path-status-repair-implemented). The streaming modes and positional policies below remain future work.
+**D01 implementation:** the current runtime uses exact-path status clearing, with failed managed native work still discarded before adoption. See [the implementation and evidence](docs/audit-report.md#d01---exact-path-status-repair-implemented). The kernel implements the streaming modes and positional status. Compiled loops must preserve them through ordered handoff and repair.
 
 Implementation contract for the [three Chain modes](poison-policy-plan.md), before open-entry streaming. Genuine own-path status is repairable under ordinary selection and mutation authority; ordinary Error data is not. This includes complete-mode failed mutation status, sequential-stream positional flags, and failed mutating sort's status in every mode, but excludes failed copying-result Errors, permanent structural poison, and missing-output markers. Production behavior changes with implementation and authoritative contract updates.
 
@@ -77,7 +77,7 @@ Repair is an ordinary ordered mutation of selected status. It has no host effect
 4. Publish the cleared managed own status and any selected canonical external own status in one protected transition. Preserve data and descendant status.
 5. Expose completion only after commit. A supported failure preserves the previous state and returns its causal Error.
 
-External clearing updates only the own field of the selected canonical location. Once its ordered selection and authority are established and the only unresolved fact being discarded is the old status, repair need not await the eventual diagnostic. A transition still able to change retained data or earlier observable effects must keep its ordering dependency. Install a clean successor while earlier captures retain the original future. This does not bypass a required path-selection or result dependency, clear local data poison, or suppress the failed operation's own result.
+Apply the same last dependency to managed and canonical external status. Once selection, authority, retained data and earlier conflicting effects are established, exact repair can publish its clean successor while the old diagnostic is pending. An earlier write that was certainly blocked has no data effect left to order. A write that might have committed still matters. Captured reads, issued steps and direct results keep their exact cause dependencies. Keep open coverage while the issuer can change retained data, prevent selection or introduce an effect whose order matters to this successor. An overwritten status can still supply an earlier query. Already-started native access retains its own reservation. At a canonical location clear only its own metadata. [Complete capacity and repair witness](iterate-plan.md#required-capacity-proofs)
 
 Late settlement may finish an earlier capture, but cannot reinstate cleared status or replace later data in the current version.
 
@@ -85,14 +85,14 @@ Late settlement may finish an earlier capture, but cannot reinstate cleared stat
 
 Preserve one combined ordered transition. Capture call inputs and reserve its position before suspension. Preflight the structural route, scope, and readonly capability; failure preserves the previous state and suppresses invocation.
 
-After successful repair, use ordinary receiver, dispatch, authority, argument, and invocation processing under the original ordering. Local poison remains an input dependency. A new call failure publishes against current state and cannot resurrect the cleared status.
+After successful repair, use ordinary receiver, dispatch, authority, argument, and invocation processing under the original ordering. Local poison remains an input dependency. A new call failure publishes against current state and cannot resurrect the cleared status. For `{a:[2,1],tag:0}` under root flag E0, repair the root and invoke `a!.sort(7)` in that same explicitly root-scoped operation. Complete publishes the new comparator failure E1 at the root and blocks a following `tag=9`. Root repair then reveals tag 0. Each stream publishes E1 on `a` under the sort rule, so `tag=9` commits and exact repair of `a` reveals `[2,1]`. A capture of the original root still reports E0 in all three modes. [Scope owner](poison-policy-plan.md#publishing-a-nested-mutation-at-its-owner)
 
 Do not implement this as an awaited public repair followed by newly issued public call. Parent repair does not reset descendant external status; a subsequent whole-resource call can remain blocked by it.
 
 ## 7. Implementation and verification
 
 - Replace repair-only recovery storage with current data plus own status, using common placement versions, COW, and publication.
-- Implement exact-own external clearing, including pending status; remove unconditional subtree reset and obsolete origin-based eligibility machinery.
+- Exercise the implemented exact-own external clearing through an Array loop and a computed canonical path. If `api.child` is already poisoned, repairing `api` preserves that child status and an ensuing call that requires the child makes no host invocation. Repairing the child at its own turn permits later use. Compare an earlier query and a later parent command. The [current boundary](docs/data-limitations.md#repair-transitions) governs this trace wherever older path or entry design notes describe clearing a subtree.
 - Integrate all three modes and ordinary path blocking. Preserve positional status separately from permanent structural poison, missing-output markers, and payload poison.
 - Verify repair after several continued writes, earlier captures, local/regional poison, absence, Array length, repeated failures, and replacement. Ready/pending own status with healthy, Error, or never-settling payloads returns undefined after successful status publication; ordinary local poison remains unchanged.
 - Preserve failed-repair atomicity, combined-call ordering, fixed external identities, aliases/cycles, retirement/re-entry, and source release.

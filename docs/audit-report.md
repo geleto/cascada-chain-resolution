@@ -238,7 +238,7 @@ also stops progressing at that depth. Unlimited shared empty DAGs of 5/9/13
 identities required 31/511/8,191 inspections for empty output. Finite shared DAGs
 and independent silent cycles exposed related repeated work.
 
-The old recursive preparation/native flat path is removed. [FlatCapture](../src/array-flat-capture.js)
+The old recursive preparation/native flat path is removed. [FlatCapture](../src/array-flat.js)
 captures each physical Array's placements once, discovers available siblings
 before joining pending input, and upgrades shared depth demand without cyclic
 Promise joins. [Flattening](../src/array-flat.js) uses captured per-node facts and
@@ -489,7 +489,7 @@ to the revisions above. Historical/future documents are not current contracts.
 | [poison-policy-plan.md](../poison-policy-plan.md) | C15 / documentation/configuration |
 | [repair-simplification-plan.md](../repair-simplification-plan.md) | C15 / documentation/configuration |
 | [simplifications.md](../simplifications.md) | C15 / documentation/configuration |
-| [src/array-flat-capture.js](../src/array-flat-capture.js) | C02,C12 |
+| `src/array-flat-capture.js` (now in [array-flat.js](../src/array-flat.js)) | C02,C12 |
 | [src/array-flat.js](../src/array-flat.js) | C12 |
 | [src/array-invocation.js](../src/array-invocation.js) | C11,C12 |
 | [src/array-length.js](../src/array-length.js) | C05,C12 |

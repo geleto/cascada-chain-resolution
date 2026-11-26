@@ -10,7 +10,7 @@ const functions = {
         "installPlacementGate", "installMutationVersion", "detachAbsentVersion", "copyPlacement", "installPlacementVersion", "detachPlacementVersion"],
     "language-properties.js": ["writeLanguageProperty", "deleteLanguageProperty", "readLanguagePlacement"],
     "mutations.js": ["shallowCopyPathContainer"],
-    "array-remap.js": ["createArrayFromRemap", "createRemap"],
+    "array-remap.js": ["createArrayFromRemap", "createRemap", "patchedRemap", "capturePhysicalArray"],
     "placement-structure.js": ["defineCopyProperty", "createEmptyContainer"],
     "export.js": ["exportValues"],
     "managed-capture.js": ["assembleCapturedGraph"],

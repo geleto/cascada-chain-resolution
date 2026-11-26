@@ -228,7 +228,6 @@ describe("ArrayView", () => {
         const pending = deferred()
         const source = [pending.promise, 2]
         new Chain(source, testContext)
-        propertyVersions.getPropertyPlacement(source, "0", testContext).ensureCaptured()
         const sourceVersion = getPromiseVersion(source, "0", testContext)
         const pushed = run(new Chain(source, testContext), [], "push", [3], testContext, { repair: false })
         const grownChain = new Chain(pushed, testContext)
@@ -553,7 +552,7 @@ describe("ArrayView", () => {
         expect([...logicalArrayValues(result, testContext)]).to.eql([1, 2])
     })
 
-    it("poisons mutation when an endpoint placement fails", () => {
+    it("publishes an endpoint when its physical cache refuses the placement", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("view element write failed")
         let failPlacement = false
@@ -570,8 +569,8 @@ describe("ArrayView", () => {
 
         const result = run(chain, [], "push", [3], testContext, { repair: false, mutationScopeDepth: 0 })
 
-        expect(errorCause(result)).to.be(failure)
-        expect(readPath(chain, [], testContext)).to.be(result)
+        expect(result).to.be(3)
+        expect(exportValue(chain, [], testContext)).to.eql([1, 2, 3])
         expect([...logicalArrayValues(view, testContext)]).to.eql([1, 2])
         expect(exportValue(source, [], testContext)).to.eql([1])
     })

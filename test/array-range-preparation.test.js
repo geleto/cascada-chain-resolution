@@ -42,7 +42,7 @@ describe("Array range argument relevance", () => {
                     JSON.stringify(initial)
             })
             for (const pending of [false, true]) {
-                const ctx = context(), chain = new r.Chain([...initial], ctx)
+                const ctx = context(), chain = new r.Chain([...initial], ctx, r.CHAIN_MODE.Complete)
                 const unavailable = pending ? new OrderedThenable() : poison("unknown control", ctx)
                 const args = controls.map(value => value === unknown ? unavailable : value)
                 const result = r.run(chain, [], method, method === "fill" ? [9, ...args] : args, ctx, {})
@@ -86,7 +86,7 @@ describe("Array range argument relevance", () => {
     for (const empty of [false, true]) for (const errorFirst of [false, true])
     for (const ordered of [false, true])
     it(`keeps ${method} failure conditional, mutation=${mutation}, empty=${empty}, errorFirst=${errorFirst}, ordered=${ordered}`, async () => {
-        const ctx = context(), chain = new r.Chain([1, 2], ctx)
+        const ctx = context(), chain = new r.Chain([1, 2], ctx, r.CHAIN_MODE.Complete)
         const first = ordered ? new OrderedThenable() : Promise.withResolvers()
         const end = ordered ? new OrderedThenable() : Promise.withResolvers()
         const failure = poison("conditional control", ctx)
@@ -129,7 +129,7 @@ describe("Array range argument relevance", () => {
 
     for (const created of [false, true])
     it(`waits for captured shape before deciding range failure, growth=${created}`, async () => {
-        const ctx = context(), chain = new r.Chain({ a: [] }, ctx), gate = Promise.withResolvers()
+        const ctx = context(), chain = new r.Chain({ a: [] }, ctx, r.CHAIN_MODE.Complete), gate = Promise.withResolvers()
         const entry = r.enter(chain, ["a", 1], ctx, true, inside => gate.promise.then(() => {
             if (created) r.assignPath(inside, [], 7, ctx)
         }))
@@ -149,7 +149,7 @@ describe("Array range argument relevance", () => {
 
     for (const method of ["fill", "copyWithin"]) for (const ordered of [false, true])
     it(`collects every required ${method} control failure, ordered=${ordered}`, async () => {
-        const ctx = context(), chain = new r.Chain([1, 2], ctx)
+        const ctx = context(), chain = new r.Chain([1, 2], ctx, r.CHAIN_MODE.Complete)
         const end = ordered ? new OrderedThenable() : Promise.withResolvers()
         const first = poison("first", ctx), last = poison("last", ctx)
         const result = r.run(chain, [], method,
@@ -171,7 +171,7 @@ describe("Array range argument relevance", () => {
     })
 
     it("does not infer equal starts from a shared failed argument", async () => {
-        const ctx = context(), chain = new r.Chain([1, 2], ctx), input = new OrderedThenable()
+        const ctx = context(), chain = new r.Chain([1, 2], ctx, r.CHAIN_MODE.Complete), input = new OrderedThenable()
         const result = r.run(chain, [], "copyWithin", [input, input, 2], ctx, {})
         const failure = poison("independent controls", ctx)
         input.resolve(failure)

@@ -17,7 +17,7 @@ const publication = new Set([
 const construction = new Set([
     "prepareInput", "assembleCapturedGraph", "snapshotExternalValue",
     "shallowCopyPathContainer", "createArrayFromRemap", "validateReceiver",
-    "createRemap", "exportValues", "fixture",
+    "createRemap", "patchedRemap", "capturePhysicalArray", "exportValues", "fixture",
 ])
 
 function receipt(event, name) {

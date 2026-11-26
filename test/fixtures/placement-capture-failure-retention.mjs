@@ -7,7 +7,7 @@ const rows = []
 const specifications = {
     at: { keys: ['1'], args: [1] },
     join: { keys: ['0', '1', '2'], args: [] },
-    includes: { keys: ['0', '1', '2'], args: [42], captureRead: 1 },
+    includes: { keys: ['0', '1', '2'], args: [42] },
     indexOf: { keys: ['0', '1', '2'], args: [42] },
     lastIndexOf: { keys: ['0', '1', '2'], args: [42] },
     slice: { keys: ['0', '1', '2'], args: [] },
@@ -23,12 +23,12 @@ const specifications = {
     copyWithin: { keys: ['2'], args: [1, 0, 1] },
 }
 
-function makeHandler(key, captureRead, fresh, failing) {
+function makeHandler(key, fresh, failing) {
     return {
-        armed: false, reads: 0, hits: 0,
+        armed: false, hits: 0,
         cause: fresh ? undefined : new Error('prebuilt placement capture failure'),
         getOwnPropertyDescriptor(target, selected) {
-            if (this.armed && selected === key && ++this.reads === captureRead && failing) {
+            if (this.armed && selected === key && failing && !this.hits) {
                 this.hits++
                 this.cause ??= new Error('fresh placement capture failure')
                 throw this.cause
@@ -49,12 +49,12 @@ async function issue(method, key, fresh, delivery, control = 'failure', nested =
     const label = `${method}/${key}/${fresh}/${delivery}/${control}/${nested}`
     const ctx = { execution: new r.Execution(), errorContext: label }
     const spec = specifications[method], raw = [{ n: 2 }, { n: 1 }, { n: 3 }]
-    const handler = makeHandler(key, spec.captureRead ?? 2, fresh, control === 'failure')
+    const handler = makeHandler(key, fresh, control === 'failure')
     const source = new Proxy(raw, handler)
     r.import(source, ctx)
     const signal = delivery === 'native' ? Promise.withResolvers() : delivery === 'custom' ? customSignal() : undefined
     const input = delivery === 'ready' ? source : delivery === 'synchronous' ? ready(source) : signal.promise ?? signal
-    const chain = new r.Chain(nested ? { nested: input } : input, ctx)
+    const chain = new r.Chain(nested ? { nested: input } : input, ctx, r.CHAIN_MODE.Complete)
     const weak = [source, raw, ...raw].map(value => new WeakRef(value))
     handler.armed = true
     const result = r.run(chain, nested ? ['nested'] : [], method, spec.args.slice(), ctx, {})
@@ -98,7 +98,7 @@ for (const method of ['slice', 'toReversed', 'fill', 'copyWithin', 'flat', 'toSo
 for (const delivery of ['native', 'ordered']) for (const present of [false, true]) {
     const ctx = { execution: new r.Execution(), errorContext: `presence/${method}/${delivery}/${present}` }
     const signal = delivery === 'native' ? Promise.withResolvers() : new OrderedThenable()
-    const chain = new r.Chain([4, , 8], ctx), expected = [4, , 8]
+    const chain = new r.Chain([4, , 8], ctx, r.CHAIN_MODE.Complete), expected = [4, , 8]
     const entry = r.enter(chain, [1], ctx, true, selected => {
         if (present) r.assignPath(selected, [], 3, ctx)
         return signal.promise ?? signal
@@ -121,7 +121,7 @@ for (const method of ['join', 'flat', 'sort', 'toSorted']) {
     const ctx = { execution: new r.Execution(), errorContext: `collection/${method}` }
     const causes = [new Error('earlier poison'), new Error('later poison')]
     const later = Promise.withResolvers()
-    const handler = makeHandler('1', 2, true, true)
+    const handler = makeHandler('1', true, true)
     const nested = cause => new Proxy([1], {
         ownKeys(target) { if (handler.armed) throw cause; return Reflect.ownKeys(target) },
     })
@@ -129,7 +129,7 @@ for (const method of ['join', 'flat', 'sort', 'toSorted']) {
     const firstValue = method === 'flat' ? nested(causes[0])
         : r.createPoisonError(causes[0], ctx, r.ERROR_KIND.OperationInputFailed)
     const source = new Proxy([firstValue, 0, later.promise], handler)
-    const chain = new r.Chain(r.import(source, ctx), ctx)
+    const chain = new r.Chain(r.import(source, ctx), ctx, r.CHAIN_MODE.Complete)
     handler.armed = true
     const result = r.run(chain, [], method, method === 'flat' ? [1] : [], ctx, {})
     let complete = false

@@ -1,6 +1,14 @@
-import { Chain, export as exportValue, Execution } from "../src/index.js"
+import { Chain, export as exportValue, Execution, run } from "../src/index.js"
 import assert from "node:assert/strict"
 import { inspect } from "node:util"
+
+// Retain a proper prefix and append the original last slot. The spare
+// physical slot forces an independent suffix while preserving holes.
+export function concatFromInterior(array, ctx) {
+    const source = new Chain(array, ctx)
+    const prefix = new Chain(run(source, [], "slice", [0, -1], ctx, {}), ctx)
+    return run(prefix, [], "concat", [array.slice(-1)], ctx, {})
+}
 
 const VALUES = [
     undefined,

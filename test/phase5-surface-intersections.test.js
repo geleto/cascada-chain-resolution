@@ -93,11 +93,15 @@ describe("Phase 5 surface intersections", () => {
         it(`settles shared indexed data after a search closes locally: ${delivery}, failed=${failed}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: "short-circuit source" }
             const gate = delivery === "native" ? Promise.withResolvers() : new OrderedThenable()
-            const chain = new r.Chain([gate.promise ?? gate, 1], ctx)
+            const match = Promise.withResolvers()
+            const chain = new r.Chain([gate.promise ?? gate, match.promise], ctx)
             const subscriptions = gate.subscriptions
-            assert.equal(r.run(chain, [], "includes", [1], ctx, {}), true)
+            const search = r.run(chain, [], "includes", [1], ctx, {})
+            assert(r.isPending(search, ctx))
             if (delivery === "ordered") assert(gate.subscriptions > subscriptions,
                 "the search subscribed to an earlier pending comparison before the later match")
+            match.resolve(1)
+            assert.equal(await search, true)
             const collection = r.getErrors(chain, [], ctx)
             assert(r.isPending(collection, ctx), "live sibling builds/consumes the pending graph index")
             const cause = new Error("late shared failure")

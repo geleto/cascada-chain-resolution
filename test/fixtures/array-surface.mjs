@@ -13,7 +13,8 @@ const argsByMethod = {
 }
 assert.deepEqual(Object.keys(argsByMethod).sort(), Object.keys(ARRAY_METHODS).sort(), 'Catalogue drift')
 const mutators = new Set(['copyWithin','fill','pop','push','reverse','shift','sort','splice','unshift'])
-const ignoresArguments = new Set(['pop','reverse','shift','toReversed','toString'])
+// Every present input here is a healthy scalar, so every flat depth has the same result.
+const ignoresArguments = new Set(['pop','reverse','shift','toReversed','toString','flat'])
 const prebuilt = r.validationError("prebuilt", {}, r.ERROR_KIND.OperationInputFailed)
 const rows = []
 const faults = []
@@ -25,10 +26,10 @@ async function execute(method, mutation, shape, mode, failure) {
   let payload = { marker: label }
   let source = { array, payload }
   const weak = [new WeakRef(array), new WeakRef(payload), new WeakRef(source)]
-  let root = new r.Chain(shape === 'view' ? source : r.import(source, ctx), ctx)
+  let root = new r.Chain(shape === 'view' ? source : r.import(source, ctx), ctx, r.CHAIN_MODE.Complete)
   let holder = root, path = ['array']
   if (shape === 'view') {
-    holder = new r.Chain(r.run(root, path, 'slice', [], ctx, {}), ctx)
+    holder = new r.Chain(r.run(root, path, 'slice', [], ctx, {}), ctx, r.CHAIN_MODE.Complete)
     path = []
     assert(r.lookupPath(holder, [], ctx) instanceof ArrayView, label)
     views++

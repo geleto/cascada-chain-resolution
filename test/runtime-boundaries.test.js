@@ -78,12 +78,12 @@ describe("runtime boundary completion", () => {
     })
 
     for (const method of ["includes", "indexOf", "lastIndexOf"]) {
-        it(`${method} skips known-empty bounds but consumes its needle`, async () => {
+        it(`${method} skips both inputs on a known-empty receiver`, async () => {
             const ctx = context(), chain = new r.Chain([], ctx), bound = new OrderedThenable()
             for (const input of [bound, Symbol("unused"), new Error("unused")])
                 assert.equal(r.run(chain, [], method, ["needle", input], ctx, {}), method === "includes" ? false : -1)
             assert.equal(bound.subscriptions, 0)
-            assert(r.isPoisonError(r.run(chain, [], method, [poison("required"), bound], ctx, {})))
+            assert.equal(r.run(chain, [], method, [poison("unused"), bound], ctx, {}), method === "includes" ? false : -1)
             assert.equal(bound.subscriptions, 0)
             const pending = Promise.withResolvers(), source = new r.Chain(pending.promise, ctx)
             const result = r.run(source, [], method, ["needle", bound], ctx, {})
@@ -141,7 +141,7 @@ describe("runtime boundary completion", () => {
 
     it("releases a failed invocation's receiver while complete Error collection continues", async () => {
         const ctx = context(), first = new Error("first"), second = new Error("second"), pending = Promise.withResolvers()
-        const root = [{ unrelated: 1 }], chain = new r.Chain(root, ctx)
+        const root = [{ unrelated: 1 }], chain = new r.Chain(root, ctx, r.CHAIN_MODE.Complete)
         const result = r.run(chain, [], "slice", [[rejected(first), pending.promise]], ctx, {})
         r.assignPath(chain, [], null, ctx)
         assert.equal(metaOf(root, ctx).readLeaseCount ?? 0, 0)

@@ -17,6 +17,22 @@ function input(delivery, value) {
 }
 
 describe("repair-and-call receiver recovery", () => {
+    it("exposes the existing child guard after repairing an enclosing scope", async () => {
+        for (const value of [v => v, ready, v => Promise.resolve(v)]) {
+            const ctx = context(), inner = r.validationError("inner", ctx, r.ERROR_KIND.OperationInputFailed)
+            const outer = r.validationError("outer", ctx, r.ERROR_KIND.OperationInputFailed)
+            let calls = 0
+            const owner = new r.Chain({ a: value({ b: { m() { return ++calls } } }) }, ctx)
+            r.poisonPath(owner, ["a", "b"], inner, ctx)
+            r.poisonPath(owner, ["a"], outer, ctx)
+            assert.equal(await repairCall(owner, ["a", "b"], "m", ctx, [], { mutationScopeDepth: 1 }), inner)
+            assert.equal(calls, 0)
+            assert.equal(await r.isPoisoned(owner, ["a"], ctx), false)
+            assert.equal(await r.lookupPath(owner, ["a", "b"], ctx), inner)
+            await r.repairPath(owner, ["a", "b"], ctx)
+            assert.equal(await r.run(owner, ["a", "b"], "m", [], ctx, {}), 1)
+        }
+    })
     const deliveries = ["ready", "synchronous", "fulfilled", "native", "ordered", "ordered fulfilled"]
     const routes = [
         { name: "plain static" },

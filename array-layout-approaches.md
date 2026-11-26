@@ -6,7 +6,7 @@ Use **one queryable block layout integrated with the existing Array machinery**.
 
 Use **[Variant B: persistent sequence](docs/remap-structure-variant-B.md)** for retained block layouts: small flat leaves, a balanced tree of relative count measures when needed, exclusive-node reuse, and path copying for shared nodes. Variant A remains a comparison baseline, not a second implementation to deliver.
 
-The architecture and storage variant are selected; production implementation and work bounds are not yet validated. Balancing details, leaf capacity, cache policy, and materialization thresholds remain implementation choices. [iterate-plan.md](iterate-plan.md) owns the method contracts, iterator API, effect/failure rules, and rollout. [Data limitations](docs/data-limitations.md) remains authoritative for current production behavior. The [Chain modes and failure contract](poison-policy-plan.md) define complete, sequential-stream, and unordered-stream behavior, including fallback positions, missing-output markers, and [status-only repair](repair-simplification-plan.md). All modes order publication behind any earlier work that could poison the whole Array or its owning path. Complete consumption uses its strict captured-Array validity gate, and unordered mode avoids creating flags solely for positional uncertainty. Structural streaming requires the corresponding failure rules, not merely a new storage format.
+Balancing, leaf capacity and materialization thresholds are implementation choices. The kernel's [structural work tests](test/array-structural-work.test.js) cover ordinary, shared and partial layouts. [iterate-plan.md](iterate-plan.md) owns the method contracts, iterator API, effect/failure rules, and rollout. [Data limitations](docs/data-limitations.md) remains authoritative for current production behavior. The [Chain modes and failure contract](poison-policy-plan.md) define complete, sequential-stream, and unordered-stream behavior, including fallback positions, missing-output markers, and [status-only repair](repair-simplification-plan.md). All modes order publication behind any earlier work that could poison the whole Array or its owning path. Complete consumption uses its strict captured-Array validity gate, and unordered mode avoids creating flags solely for positional uncertainty.
 
 The design must preserve sequential equivalence, captured versions, ownership, and deterministic poisoning. The plan's supported dependency rules define which facts must be available and survive failure. Conservative internal bounds cannot override those rules. Representation choices change computation cost, not required dependencies, command effects, or poison presence.
 
@@ -49,17 +49,11 @@ The result's shape is ready; its first slot follows `pendingA`. If a later comma
 
 Finishing an unknown layout needs more than the payload Promise: it retains the required method arguments, captured source placements and shape, and a continuation. The [partial splice example](#35-partial-splice) shows these dependencies.
 
-### 2.2 Existing implementation and required changes
+### 2.2 Kernel representations
 
-The runtime already has captured length/`inRange(i)` questions, primarily for uncertain indexed growth; pending property versions; ArrayViews; point overrides; source captures; and ownership protection.
+Each method determines its selected source placements, destination positions and prescribed writes. A shared ArrayView can represent a contiguous capture. A determined dense copy can place each required slot directly in its final private Array. A retained block layout serves compressed runs or queries across unresolved regions. Each representation preserves captured versions, holes, failure scope and publication identity. [Array views](docs/array-view.md) and [work and release bounds](docs/array-method-specification.md#12-work-and-release-bounds)
 
-Current remaps are ordinary sparse Arrays of placement references or inserted values. They are built explicitly, not by Proxy tracing. Many methods apply native Array operations to those references and then publish through common placement machinery. Pending values and presence can survive this process; generic promised layout indexes/counts are not implemented.
-
-General partial publication through pending structural arguments and the public managed iterator are planned work. Many current methods still prepare required arguments and exact length before building their output.
-
-A compressed block list needs runtime range operations: native Array methods would treat a block as one element. No compiler range analysis is required. Adapted methods must use the same semantic mapping/write evaluator for ready and pending inputs; native assembly may materialize determined layouts.
-
-Relevant sources: [array-remap.js](src/array-remap.js), [array-invocation.js](src/array-invocation.js), [array-length.js](src/array-length.js), [array-view.js](src/array-view.js), and [property-versions.js](src/property-versions.js). See also [ArrayView documentation](docs/array-view.md).
+Point reads, searches and the public iterator consume the shape and placements determined by the capture. A prefix, suffix or independent occurrence can be available while another region's width is pending. [Partial sequences](src/array-sequence.js) and [iteration](src/iterate.js)
 
 ## 3. Blocks and partial mappings
 
@@ -212,13 +206,13 @@ The [complete-mode validity rule](poison-policy-plan.md#tracking-complete-mode-v
 
 1. Capture the Array version through the common property boundary.
 2. Ask whether the next position exists and which final occurrence supplies it.
-3. If membership, source selection, and the intended numeric position are established, capture the payload version and issue it. The payload may be pending or ordinary data poison.
+3. Once membership, source selection, clear slot status and the numeric position in this capture are established, capture the payload version and issue it. The payload may be pending or ordinary data poison.
 4. If out of range, finish. If a required structural fact is pending, retain the question. If it fails, report structural failure without issuing a guessed occurrence, positional flag, or missing-output marker as a healthy item.
 5. Resume at that position when relevant facts change.
 
 Pending payloads in delivered elem Chains settle independently. Their settlement need not restart the cursor. Required errors and completion retain the [iterator contract](iterate-plan.md#7-ordered-iterator-api).
 
-The [future unordered iterator](iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. Implement occurrence discovery in the unordered stage; ordinary payloads can already settle out of order.
+The [unordered iterator](iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors) discovers guaranteed surviving occurrences through the same captured layout. It may deliver them before their indexes are known and accepts the selected positional fallback on failure. It still excludes potentially deleted or overwritten occurrences. The embedding connects this occurrence discovery to its indexed branches.
 
 The following [bounded-window phase](iterate-plan.md#bounded-window-iteration) restricts demand to [f,r), where Cascada owns both boundaries and positive integer B bounds unfinished positions. Initially r=B, capped by capacity. Each newly finalized position extends r once: either its body completed or a proved structural skip retained its failure obligation. Pending indexes do not delay a credit backed by containment. Advancing f across the finalized prefix earns no second credit. Before source/capacity clipping, (r-f) minus finalized positions inside the window equals B. Kernel skip proofs must advance demand during a pending pull; they are not delivered iterations. Batch failed spans without per-slot bookkeeping, and never clip to a merely available prefix.
 
@@ -271,7 +265,7 @@ Release each region once earlier issued work and the remaining capabilities esta
 
 ### 4.6 Follow-up: open append regions in enter
 
-A declared push-only mode on an entered reference supplies the append guarantee. Extend the existing entry capability to distinguish read-only, push-only, and unrestricted mutation; the compiler selects the mode and contained commands enforce it. This extends entry publication after captured-Array iteration, partial-layout integration, and the Chain policy/status foundation. It is planned behavior, not a capability of today's path-only `enter()` API.
+The [kernel entry API](docs/enter.md) accepts a push-only reference with a contribution bound and a possible scope-failure declaration. Use this capability when lowering append contributions in the embedding. Ordinary read-only and unrestricted references retain their own authority.
 
 #### Push-only capability
 
@@ -343,7 +337,7 @@ Use the [common missing-output contract](poison-policy-plan.md#6-missing-output-
 
 Apply the output channel's failure policy at the reserved, enabled contribution. In a stream this places the missing marker between A and B. On a complete target the same failure flags the data contributed through A and blocks B's push until an ordered repair. A disabled contribution adds no failure publication. A failed remainder with no narrower place uses the boundary after its committed prefix. Terminal reporting follows the [target and marker rule](poison-policy-plan.md#marker-position-and-ordinary-array-behavior).
 
-Keep source representation distinct from consumer-loop propagation. A capacity-safe missing contribution uses its marker, not an additional source-own flag. Reuse Cascada's declared loop poison targets and ordered command insertion, but adapt publication at the Phase 8/9 boundary: today's generic chain poison replaces the whole target value and does not implement retained Array data, regional markers or ordered repair. Map the declared cause and target through the selected kernel failure policy; do not claim that the current ErrorCommand transport already preserves the new state. Existing break lowering is unaffected.
+Keep source representation distinct from consumer-loop propagation. A capacity-safe missing contribution uses its marker, not an additional source-own flag. Reuse Cascada's declared loop poison targets and ordered command insertion, but adapt publication at the Phase 8/9 boundary: today's generic chain poison replaces the whole target value and does not implement retained Array data, regional markers or ordered repair. Map the declared cause and target through the selected kernel failure policy; do not claim that the current ErrorCommand transport already preserves the new state. The future compiler lowers `break` through its ordered control channel.
 
 The marker is ordinary Array storage with a structural failure role. Array methods move, overwrite, or remove it normally; iteration reports it as structural failure rather than a healthy occurrence. Do not add a zero-sized side channel or permanent error-history ledger. Preserve that role through capture and materialization without confusing ordinary payload Errors with markers.
 
@@ -364,13 +358,13 @@ Apply capacity at each issued append incrementally. Streaming overflow creates a
 | Concern | Required integration |
 | --- | --- |
 | Foundation | Captured iteration, partial layouts, and the selected mode/failure primitives precede open-entry streaming. |
-| Publication | Structural membership and payload source are final; sequential delivery also needs the intended numeric position. |
+| Publication | Membership and payload source are final. Ordered delivery also needs a clear slot at the current numeric position, including in an accepted fallback. |
 | Failure | Distinguish payload Errors, positional fallback, uncertain survival, missing output, and genuine scope flags. |
 | Capacity | Prove each insertion and possible fallback safe, using broader bounds where available. |
 | Activation | Reserve earlier open contributions and retain later pushes before their indexes are known. |
 | Closure | Seal after all relevant issuers close; retain issued data/effect obligations independently. |
 
-Finalize entry encoding, overlap handling, contribution reservation, marker publication, and closure as implementation work. Use the [common policy contract](poison-policy-plan.md); compact diagnostic refinements are a later stage.
+Verify the kernel capability, contribution reservation and marker publication together with overlapping compiler references and nested closure. Use the [common policy contract](poison-policy-plan.md); compact diagnostic refinements are a later stage.
 
 ## 5. Composition and optimization
 
@@ -383,6 +377,8 @@ The method supplies semantic mapping and write rules. Common machinery applies a
 Ready and pending controls use the same rules. Do not replay the original command or introduce a separate semantic implementation for pending inputs.
 
 ### 5.2 Remap composition
+
+Use a determined front or back mapping immediately. Reversal toggles orientation and endpoint restrictions follow retained ranges. A genuinely conditional point can cross many command boundaries. Resolve that chain with a worklist, including after a deferred control settles. Compare source settlement and point consumption at production history depths. [Production work bounds](docs/work-bounds.md#controlled-array-work)
 
 Reduce lookup depth and retained intermediate storage by replacing:
 
@@ -405,14 +401,7 @@ Composition must retain the [loss and causal Error spans introduced by each oper
 
 #### Shared conditions in nested selections
 
-Repeated selections that already share one internal captured control must preserve the branch conditions established by their enclosing selection. For example, when both fills below share that fact and normalize against the same unchanged length:
-
-```js
-a!.fill("X", s)
-a!.fill("Y", s)
-```
-
-For position `j`, let `C` mean `j >= normalizedStart(s)`. The composed contents are:
+Splitting a layout can copy a selector while preserving its internal captured condition. If composition encounters the same captured predicate `C` inside its own false arm, the contents reduce as follows.
 
 ```text
 C ? Y : (C ? X : original[j])
@@ -420,7 +409,7 @@ C ? Y : (C ? X : original[j])
 C ? Y : original[j]
 ```
 
-Inside the outer false branch, C is already false; X cannot survive there. Retain this condition while evaluating or simplifying nested selectors rather than treating repeated uses as independent alternatives. This uses captured condition identity, not enumeration or a general solver. Different captures or normalizations do not gain equivalence from equal variable names. Recovering shared provenance across separate lookup/Promise wrappers is not required; do not add an API or registry solely for that optimization. Resolved normalized arguments can be compared directly.
+Inside the outer false branch, C is already false; X cannot survive there. Retain this condition while evaluating or simplifying nested selectors rather than treating repeated uses as independent alternatives. This uses captured condition identity, not enumeration or a general solver. Two issued calls `a!.fill(X,s)` and `a!.fill(Y,s)` each capture their own argument, even when `s` is the same thenable. Each required reception and conversion follows its own operation context. Only the resulting established normalized values can then be compared across those captures. [Argument capture](iterate-plan.md#captured-control-identity-at-the-api-boundary)
 
 The proof concerns the successor's contents. Earlier captures, call results, prescribed writes, identity, and required completion work retain their contracts.
 
@@ -486,7 +475,7 @@ A waiting query cannot always watch only one deferred region. With two adjacent 
 
 Keep one existence registration per cursor on the captured layout's semantic shape summary, updating the next undecided index as the cursor advances. That summary includes region constraints and indexed growth, not just a length interval. Registration consumes current state; relevant failure changes must notify it even without narrower bounds. Optional cache dirtiness alone does not wake the cursor. Retain the required shape facts, not a payload-owning root solely to keep this registration alive; [consumed-region release](#advancing-consumers-release-consumed-regions) remains required.
 
-Remove the registration at completion or early stop. Slot-value selection keeps its own dependencies. Subscribing each position's existence question to every candidate could otherwise create `O(K²)` registrations for `K` pending regions. Both storage variants use this rule; a tree root is not required.
+Release the registration at its last use. If a pending pull still needs it when the cursor closes, that pull keeps the existing registration until its own selection finishes. For a pending zero-or-one contribution, an already issued pull must still distinguish an item from exhaustion after close. No future pull can use that registration. [Step lifetime](iterate-plan.md#completion-and-early-stop) Subscribing each position's existence question to every candidate could otherwise create `O(K²)` registrations for `K` pending regions. Both storage variants use this rule; a tree root is not required.
 
 Reuse shared control settlement and maintain affected uses incrementally. One root notification may wake several cursors; count waiter deliveries and query evaluation separately from summary propagation. Registration reuse alone does not bound that work. General widths and correlated totals require semantic shape facts, not only empty/nonempty counters.
 
@@ -598,6 +587,8 @@ A controlled push onto an ordinary Array or simple ArrayView with determined len
 Thus an append-only `results!.push(fetch(x))` loop starting from a compact known-shape Array requires no block allocation or tree traversal merely because fetch results are pending. Iteration captures each final selected payload through the same property boundary into its delivered elem Chain. This is a specialization of the shared mapping/write rules, not a second method implementation.
 
 Pushing onto an already fragmented layout need not flatten it first. Extend a compatible tail run through append storage, preserving earlier captured bounds. One uncertain region followed by such appends can stay `[R] + [X1 ... Xn]`; payload count alone must not create one remap entry per push.
+
+The implementation may path-copy a balanced tail of captured placements. Charge each inserted payload once and share retained subtrees and their protection. Publishing a superseded, inactive version must preserve its forward data without subscribing anew to every pending tail item. The production regression holds the cut and the payloads simultaneously. [Depth and transfer checks](test/fixtures/array-history-depth.mjs)
 
 #### Returning to compact storage
 

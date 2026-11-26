@@ -420,6 +420,7 @@ describe("public external paths", () => {
                     await release.promise
                     fail = true
                 }) : undefined
+                const snapshot = r.capturePath(chain, [], ctx)
                 if (!gated) fail = true
                 const result = action === "call"
                     ? r.run(chain, ["group", "api"], "write", [], ctx, { mutationScopeDepth: 2, repair: false })
@@ -427,6 +428,7 @@ describe("public external paths", () => {
                         : r.deletePath(chain, ["group", "api", "value"], ctx)
                 const observed = r.lookupPath(chain, ["group"], ctx)
                 r.assignPath(chain, ["other"], 3, ctx)
+                assert.equal(r.lookupPath(chain, ["other"], ctx), 3)
                 release.resolve()
                 await entry
                 await result
@@ -434,6 +436,7 @@ describe("public external paths", () => {
                 fail = false
                 assert.equal(failure.kind, r.ERROR_KIND.PropertyMutationFailed)
                 assert.equal(failure.cause, cause)
+                assert.equal(await r.lookupPath(snapshot, ["group"], ctx), group)
                 assert.equal(await r.getErrors(chain, [], ctx), failure)
                 assert.equal(await r.lookupPath(chain, ["other"], ctx), 3)
                 assert.equal(original.group, group)

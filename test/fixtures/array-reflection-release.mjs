@@ -7,12 +7,14 @@ const cause=new Error('prebuilt Array reflection failure')
 const cases={at:[0],concat:[],copyWithin:[0,1],fill:[8,1,2],flat:[1],includes:[3],indexOf:[3],join:[],lastIndexOf:[3],pop:[],push:[8],reverse:[],shift:[],slice:[0,2],sort:[],splice:[0,1],toReversed:[],toSorted:[],toSpliced:[1,1],toString:[],unshift:[8],with:[1,8]}
 const mutators=new Set(['copyWithin','fill','pop','push','reverse','shift','sort','splice','unshift'])
 const rows=[]
-async function execute(method,view,mutation){
- const label=`${method}/${view}/${mutation}`,ctx={execution:new r.Execution(),errorContext:label}
+async function execute(method,view,mutation,mode=r.CHAIN_MODE.Unordered){
+ const label=`${method}/${view}/${mutation}/${mode}`,ctx={execution:new r.Execution(),errorContext:label}
  let armed=false, hits=0, target=[3,,1,2]
- let source=new Proxy(target,{getOwnPropertyDescriptor(owner,key){if(armed&&key==='0'){hits++;throw cause}return Reflect.getOwnPropertyDescriptor(owner,key)}})
- let root={array:source,payload:{}},chain=new r.Chain(root,ctx),holder=chain,path=['array']
- if(view){holder=new r.Chain(r.run(chain,path,'slice',[],ctx,{}),ctx);path=[];assert(r.lookupPath(holder,[],ctx) instanceof ArrayView)}
+ // Exercise a consumed source descriptor even when the destination is fully overwritten.
+ const selected=method==='copyWithin'||method==='splice'&&!mutation?'2':'0'
+ let source=new Proxy(target,{getOwnPropertyDescriptor(owner,key){if(armed&&key===selected){hits++;throw cause}return Reflect.getOwnPropertyDescriptor(owner,key)}})
+ let root={array:source,payload:{}},chain=new r.Chain(root,ctx,mode),holder=chain,path=['array']
+ if(view){holder=new r.Chain(r.run(chain,path,'slice',[],ctx,{}),ctx,mode);path=[];assert(r.lookupPath(holder,[],ctx) instanceof ArrayView)}
  const weak=[new WeakRef(target),new WeakRef(source),new WeakRef(root.payload)]
  armed=true
  let result=await r.run(holder,path,method,cases[method],ctx,mutation?{mutationScopeDepth:path.length}:{})
@@ -28,6 +30,7 @@ async function execute(method,view,mutation){
 }
 for(const method of Object.keys(cases))for(const view of [false,true]){
  await execute(method,view,false)
+ if(method==='flat')await execute(method,view,false,r.CHAIN_MODE.Complete)
  if(mutators.has(method))await execute(method,view,true)
 }
 for(const method of ['indexOf','lastIndexOf'])for(const view of [false,true])for(const mode of ['native','ordered']){
@@ -50,6 +53,6 @@ for(const method of ['indexOf','lastIndexOf'])for(const view of [false,true])for
 }
 for(let i=0;i<30;i++){await new Promise(setImmediate);global.gc()}
 const retained=rows.filter(row=>row.weak.some(ref=>ref.deref())).map(row=>row.label)
-assert.equal(rows.filter(row=>row.hits).length,64,'Reflection coverage changed')
+assert.equal(rows.filter(row=>row.hits).length,66,'Reflection coverage changed')
 console.log(JSON.stringify({cases:rows.length,reflectionCases:rows.filter(row=>row.hits).length,retained},null,2))
 assert.deepEqual(retained,[],'Failed Array reflection retains source storage')

@@ -189,7 +189,7 @@ a!.splice(-1, p2)
 
 With normalized counts `p1` in `[0, 2]` and `p2` in `[0, 1]`, `M` is always present. Its front index lies in `[0, 2]`, and its back index in `[0, 1]`. `includes("M")` can succeed without inventing a numeric index for streaming.
 
-Ordered iteration issues the structurally published prefix: membership, intended position, and final payload source must be established. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
+Ordered iteration issues the structurally published prefix: membership, current numeric position, clear slot status and final payload source must be established. The producer's accepted fallback supplies current coordinates. The payload itself can remain pending or ordinary poison. A pending-bound fill does not authorize four steps merely because length is four; unresolved source selection remains a structural prerequisite. Preserve cursor progress without rescanning issued positions. See the [common publication rules](../array-layout-approaches.md#42-position-certainty-and-value-readiness).
 
 A future iterator delivers guaranteed surviving occurrences before their numeric indexes are known, carrying index futures as specified in the [iteration plan](../iterate-plan.md#out-of-order-stream-mode-guaranteed-survivors). Numeric queries remain useful, but occurrence discovery and delivery require their own final-phase integration over the same layout.
 

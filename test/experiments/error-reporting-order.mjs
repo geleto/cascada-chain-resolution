@@ -18,7 +18,7 @@ registerHooks({ load(url, context, next) {
     const result = next(url, context)
     if (url !== target) return result
     const source = String(result.source)
-    const marker = "function buildRefIndex(value, operationContext) {"
+    const marker = "function buildRefIndex(value, operationContext, canIndex) {"
     assert(source.includes(marker), "Update the indexing fault anchor")
     return { ...result, source: source.replace(marker,
         marker + " globalThis.reportingOrderFault(operationContext);") }

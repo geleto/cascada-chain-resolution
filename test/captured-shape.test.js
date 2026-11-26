@@ -3,6 +3,7 @@ import * as r from "../src/index.js"
 import { OrderedThenable } from "./ordered-thenable.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { metaOf } from "../src/meta.js"
+import { ArrayView } from "../src/array-view.js"
 import { lengthNotificationCount } from "./support.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: "captured shape" })
@@ -11,13 +12,33 @@ const readers = {
     export: (source, ctx) => r.export(source, ["b"], ctx),
     join: (source, ctx) => r.run(source, ["b"], "join", [], ctx, {}),
     toString: (source, ctx) => r.run(source, ["b"], "toString", [], ctx, {}),
-    sort: (source, ctx) => r.run(source, ["b"], "sort", [], ctx, {}),
-    toSorted: (source, ctx) => r.run(source, ["b"], "toSorted", [], ctx, {}),
+    sort: (source, ctx) => r.export(new r.Chain(r.run(source, ["b"], "sort", [], ctx, {}), ctx), [], ctx),
+    toSorted: (source, ctx) => r.export(new r.Chain(r.run(source, ["b"], "toSorted", [], ctx, {}), ctx), [], ctx),
     receiver: (source, ctx) => r.run(new r.Chain({ data: r.lookupPath(source, ["b"], ctx),
         read() { return this.data } }, ctx), [], "read", [], ctx, {}),
 }
 
 describe("captured Array shape", () => {
+    for (const method of ["concat", "toReversed", "slice"])
+    it(`reads a captured prefix once while ${method} waits for growth`, async () => {
+        const ctx = context(), gate = Promise.withResolvers()
+        let reads = 0
+        const raw = new Proxy([3, 2, 1], { getOwnPropertyDescriptor(target, key) {
+            if (key === "0") reads++
+            return Reflect.getOwnPropertyDescriptor(target, key)
+        } })
+        const source = new r.Chain({ b: raw }, ctx)
+        const entry = r.enter(source, ["b", 5], ctx, true, inside => gate.promise.then(() => r.assignPath(inside, [], 9, ctx)))
+        reads = 0
+        const output = new r.Chain(r.run(source, ["b"], method, method === "concat" ? [[7]] : [], ctx, {}), ctx)
+        assert.equal(reads, 1)
+        gate.resolve()
+        await entry
+        const expected = [3, 2, 1, , , 9]
+        assert.deepEqual(await r.export(output, [], ctx), expected[method](...(method === "concat" ? [[7]] : [])))
+        assert.equal(reads, 1)
+    })
+
     for (const matched of [false, true]) for (const created of [false, true])
     it(`keeps unresolved forward growth after a pending comparison: matched=${matched}, created=${created}`, async () => {
         const ctx = context(), value = Promise.withResolvers(), growth = Promise.withResolvers()
@@ -82,8 +103,20 @@ describe("captured Array shape", () => {
 
     for (const mode of ["native", "ordered"]) for (const scope of [0, 1])
     for (const created of [false, true]) for (const [reader, read] of Object.entries(readers))
-    it(`finishes deleted growth independently: ${reader}, ${mode}, scope=${scope}, created=${created}`, async () => {
-        const ctx = context(), source = new r.Chain({ b: [1, , 3] }, ctx)
+    for (const regional of reader === "sort" || reader === "toSorted" ? [false, true] : [false])
+    it(`finishes deleted growth independently: ${reader}, ${mode}, scope=${scope}, created=${created}, regional=${regional}`, async () => {
+        const ctx = context()
+        let array = [1, , 3]
+        if (regional) {
+            const tail = Promise.withResolvers(), input = new r.Chain(array, ctx, r.CHAIN_MODE.Unordered)
+            const holder = new r.Chain(r.run(input, [], "concat", [tail.promise], ctx, {}), ctx)
+            tail.resolve([])
+            await tick()
+            array = r.lookupPath(holder, [], ctx)
+            const region = ArrayView.region(array, ctx)
+            assert(region && !region.pending)
+        }
+        const source = new r.Chain({ b: array }, ctx)
         const signal = mode === "native" ? Promise.withResolvers() : new OrderedThenable()
         const gate = signal.promise ?? signal
         // The deleted payload never settles. Only creation affects final shape.

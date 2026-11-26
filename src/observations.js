@@ -9,15 +9,21 @@ import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
+import { ArrayView, isArrayView } from "./array-view.js"
+import { consumeArrayValue, MAX_ARRAY_LENGTH } from "./array-layout.js"
+import { chainFromPlacement } from "./chain.js"
+
+const SHALLOW = 0, ANY = 1, COLLECT = 2
 
 class ErrorQueryWork extends PathOperation {
     // The initial part keeps synchronous discovery open while pending children
     // register. Each completed part discovers its descendants before retiring.
     pendingParts = 1
 
-    constructor(chain, path, operationContext, firstDynamicSegment, collect = false) {
+    constructor(chain, path, operationContext, firstDynamicSegment, kind) {
         super(chain, path, operationContext, undefined, false, firstDynamicSegment, path.length, true)
-        if (collect) this.errors = new Set()
+        this.deep = kind !== SHALLOW
+        if (kind === COLLECT) this.errors = new Set()
     }
     release() {
         super.release()
@@ -30,17 +36,20 @@ class ErrorQueryWork extends PathOperation {
             if (errorUtils.isPoisonError(value) && (depth !== this.route.path.length || !this.errors)) return this.settle(value)
             const selected = this.metadataNode()
             if (!selected) return this.inspectValue(value)
-            const captured = this.metadata.collect(selected, error => this.found(error))
+            const captured = this.metadata.collect(selected, error => this.found(error), true, this.deep)
             this.wait(captured)
             this.completeExternalEffect()
             return this.open ? this.inspectValue(value) : this.result
         }
         const result = this.observe(inspect,
             access => {
-                if (!access.boundary && access.start < access.end) return access.read(false, value => {
-                    this.completeExternalEffect()
-                    return this.inspectValue(value)
-                })
+                if (!access.boundary && access.start < access.end) {
+                    const inspect = value => {
+                        this.completeExternalEffect()
+                        return this.inspectValue(value)
+                    }
+                    return this.deep ? access.read(false, inspect) : access.readValue(inspect)
+                }
                 return this.inspectValue(undefined)
             },
             error => this.settle(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
@@ -50,14 +59,15 @@ class ErrorQueryWork extends PathOperation {
     inspectValue(value) {
         if (errorUtils.isPoisonError(value)) this.found(value)
         if (!this.open) return this.result
-        if (languageValues.isTraversable(value, this.operationContext)) collectFencedErrors(value, this)
+        if (this.deep && languageValues.isTraversable(value, this.operationContext)) collectFencedErrors(value, this)
         this.completePart()
         return this.open ? new Promise(resolve => { this.resolveOutcome = resolve }) : this.result
     }
     found(error) {
         if (!this.open) return
-        if (this.errors) this.errors.add(error)
-        else this.settle(true)
+        // A virtual slot can prove poison while the exact cause is pending.
+        if (!this.errors) return this.settle(true)
+        if (error) this.errors.add(error)
     }
     settle(result) {
         if (!this.open) return this.result
@@ -84,7 +94,7 @@ class ErrorQueryWork extends PathOperation {
     }
     completePart() {
         if (!this.open || --this.pendingParts) return
-        this.settle(this.errors ? this.errors.size ? errorUtils.combineErrors(this.errors) : null : false)
+        this.settle(this.errors ? this.errors.size ? errorUtils.combineErrors(this.errors, this.operationContext) : null : false)
     }
 }
 
@@ -96,6 +106,28 @@ function lookupPath(chain, path, operationContext, firstDynamicSegment = path.le
     }
     return operation.finish(operation.observe(retain, access =>
         access.read(false, value => delivery ? delivery.capture(value) : value)))
+}
+
+function capturePath(chain, path, ctx, mode = chain._mode, firstDynamicSegment = path.length) {
+    const operation = new PathOperation(chain, path, ctx, undefined, false, firstDynamicSegment)
+    let gate
+    const receive = placement => {
+        if (!gate) return chainFromPlacement(placement, ctx, mode)
+        const destination = gate
+        gate = undefined
+        return propertyVersions.consumePlacementTransition(placement, ctx, ready =>
+            propertyVersions.completePlacementGate(destination, ready, ctx))
+    }
+    const value = result => receive({ value: result, present: true })
+    const selected = operation.finish(operation.observe(value, access => access.read(false, value),
+        undefined, errorUtils.ERROR_KIND.LookupReflectionFailed, receive))
+    if (!languageValues.isPending(selected, ctx)) return errorUtils.isPoisonError(selected) ? value(selected) : selected
+    const empty = { value: undefined, present: true }, holder = chainFromPlacement(empty, ctx, mode)
+    gate = propertyVersions.installPlacementGate(holder._state, "value", ctx, empty)
+    markPromiseHandled(internalSteps.continueGraphTransition(selected, ctx, result => {
+        if (errorUtils.isPoisonError(result)) value(result)
+    }), ctx)
+    return holder
 }
 
 function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
@@ -130,46 +162,57 @@ function exportPath(chain, path, operationContext, firstDynamicSegment = path.le
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment).run()
+    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, ANY).run()
+}
+
+function isPoisoned(chain, path, operationContext, firstDynamicSegment = path.length) {
+    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, SHALLOW).run()
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, true).run()
+    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, COLLECT).run()
 }
 
 // The fenced walk follows only nodes whose counters contain relevant
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
 function collectFencedErrors(value, queryWork) {
-    try {
-        errorUtils.catchExternalThrow(
-            () => {
-                refcounts.buildRefIndex(value, queryWork.operationContext)
-                queryWork.visited ??= new WeakMap()
-                walk(value)
-            },
-            queryWork.operationContext,
-            errorUtils.ERROR_KIND.QueryReflectionFailed,
-            failure => queryWork.settle(failure),
-        )
-    } finally { value = undefined }
+    const ctx = queryWork.operationContext
+    let unindexed = false
+    queryWork.visited ??= new WeakMap()
+    try { walk(value) } finally { value = undefined }
 
     function walk(node) {
         const identity = captureIdentity(node, queryWork.operationContext)
         if (!queryWork.open || !visitRepresentation(node, identity, queryWork.visited)) return
 
-        const counter = refcounts.getRequiredRefCounter(node, queryWork.operationContext)
+        if (queryWork.errors)
+            queryWork.wait(consumeArrayValue(node, queryWork, inspect, error => queryWork.found(error)))
+        else if (isArrayView(node, ctx) && ArrayView.minimumLength(node, ctx) > MAX_ARRAY_LENGTH) queryWork.found()
+        else inspect(node)
+    }
+
+    function inspect(node) {
+        try {
+            return errorUtils.catchExternalThrow(() => scan(node), ctx, errorUtils.ERROR_KIND.QueryReflectionFailed,
+                failure => queryWork.settle(failure))
+        } finally { node = undefined }
+    }
+
+    function scan(node) {
+        if (!unindexed) unindexed = refcounts.buildRefIndex(node, ctx, withinLimit) === false
+        const counter = unindexed ? refcounts.getRefCounter(node, ctx) : refcounts.getRequiredRefCounter(node, ctx)
         // hasError needs only this proof; getErrors needs Error identities.
-        if (queryWork.errors === undefined && counter.errorCount > 0) {
+        if (queryWork.errors === undefined && counter?.errorCount > 0) {
             queryWork.found()
             return
         }
-        if (!hasErrorSearchWork(counter)) return
+        if (counter && !hasErrorSearchWork(counter)) return
 
         for (const key of languageProperties.enumerableLanguageKeys(
             node,
-            queryWork.operationContext,
+            queryWork.operationContext, 0, undefined, undefined, true,
         )) {
             if (!queryWork.open) break
             const placement = languageProperties.readLanguagePlacement(
@@ -177,22 +220,30 @@ function collectFencedErrors(value, queryWork) {
                 key,
                 queryWork.operationContext,
             )
-            const child = propertyVersions.placementValue(placement)
+            visit(placement)
+        }
+        for (const range of ArrayView.implicitRanges(node, queryWork.operationContext)) {
+            if (!queryWork.open) break
+            queryWork.wait(range.region.visit(range, queryWork, visit, error => queryWork.found(error)))
+        }
+    }
 
-            if (errorUtils.isPoisonError(child)) {
-                queryWork.found(child)
-            } else if (languageValues.isPending(child, queryWork.operationContext)) {
-                collectPromiseErrors(placement)
-            } else if (languageValues.isTraversable(child, queryWork.operationContext)) {
-                walk(child)
-            }
+    function withinLimit(child) {
+        return !isArrayView(child, ctx) || ArrayView.maximumLength(child, ctx) <= MAX_ARRAY_LENGTH
+    }
+
+    function visit(placement) {
+        const child = propertyVersions.placementValue(placement)
+        if (errorUtils.isPoisonError(child)) queryWork.found(child)
+        else if (languageValues.isPending(child, queryWork.operationContext)) collectPromiseErrors(placement)
+        else if (languageValues.isTraversable(child, queryWork.operationContext)) {
+            walk(child)
         }
     }
 
     function collectPromiseErrors(placement) {
-        const wait = propertyVersions.observePromiseVersion(
-            placement.value,
-            placement.sourceVersion,
+        const wait = propertyVersions.observePlacement(
+            placement,
             queryWork.operationContext,
             value => {
                 if (!queryWork.open) return undefined
@@ -217,9 +268,11 @@ function hasErrorSearchWork(counter) {
 }
 
 export {
+    capturePath,
     exportPath,
     getErrors,
     hasError,
+    isPoisoned,
     lookupPath,
     lookupPathForExpression,
 }

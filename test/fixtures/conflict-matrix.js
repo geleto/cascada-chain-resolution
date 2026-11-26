@@ -1,3 +1,4 @@
+import { concatFromInterior } from "../native-equivalence-support.js"
 import { readShard } from "../generated-settings.js"
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
@@ -46,6 +47,9 @@ class Model {
         if (op === "set") this.put(key, value)
         else if (op === "del") this.put(key, ABSENT)
         else if (op === "rej") this.put(key, { error: true })
+        else if (op === "poison") {
+            if (!current?.poison) this.put(key, { poison: true, baseline: current })
+        }
         else if (op === "prefix") {
             if (current?.error || current?.poison) return
             if (current !== ABSENT && typeof current === "object") this.put(key, { ...current, x: value })
@@ -93,6 +97,7 @@ const PREDECESSORS = [
     operation("pending-set", "set", "set-pending", 52),
     operation("failed-prefix-entry", "prefix", "enter-prefix", 53),
     operation("rejected-entry", "rej", "enter-reject"),
+    operation("pending-cause", "poison", "poison"),
 ]
 const QUEUED = [
     operation("set", "set", "set", 60),
@@ -141,6 +146,8 @@ function issue(command, chain, ctx, hold, key) {
         case "prefix": return r.assignPath(chain, [...path, "x"], command.value, ctx)
         case "repair": return r.repairPath(chain, path, ctx)
         case "reject": return r.assignPath(chain, path, rejection(), ctx)
+        case "poison": return r.poisonPath(chain, path, hold().then(() =>
+            r.validationError("flag", ctx, r.ERROR_KIND.OperationInputFailed)), ctx)
         case "enter-set-now": return r.enter(chain, path, ctx, true, inside => r.assignPath(inside, [], command.value, ctx))
         case "enter-delete-now": return r.enter(chain, path, ctx, true, inside => r.deletePath(inside, [], ctx))
         case "enter-noop-now": return r.enter(chain, path, ctx, true, () => undefined)
@@ -171,10 +178,12 @@ function display({ result, error, blocked }) {
     return typeof result === "object" ? `{x:${result.x}}` : String(result)
 }
 
-function observe(chain, ctx, keys, array) {
+function observe(chain, ctx, keys, array, captured = false) {
     // Issue every read synchronously at this program position.
-    const reads = keys.map(key => outcome(r.lookupPath(chain, ["a", key], ctx)))
-    if (array) reads.push(outcome(r.lookupPath(chain, ["a", "length"], ctx)))
+    const source = captured ? r.capturePath(chain, ["a"], ctx) : chain
+    const path = key => captured ? [key] : ["a", key]
+    const reads = keys.map(key => outcome(r.lookupPath(source, path(key), ctx)))
+    if (array) reads.push(outcome(r.lookupPath(source, path("length"), ctx)))
     return Promise.all(reads).then(results => {
         const values = results.slice(0, keys.length).map(display).join(" ")
         return array ? `${values} len=${display(results.at(-1))}` : values
@@ -183,14 +192,15 @@ function observe(chain, ctx, keys, array) {
 
 // A stale fact can exist only between microtasks and be gone by the next
 // macrotask, so stepwise runs verify after every microtask turn.
-async function runCase({ array, target, predecessor, first, second, sibling, release, mode, stepwise }) {
+async function runCase({ array, target, predecessor, first, second, sibling, release, mode, chainMode, stepwise }) {
     const observed = mode === "observed", instrumented = mode !== "bare"
     const initial = array ? [0, { x: 1 }, 2] : { k0: 0, k1: { x: 1 } }
     const keys = array ? ["0", "1", "2", "3", "4", "5"] : ["k0", "k1", "k2", "k3"]
     const siblingKey = array ? "5" : "k3"
     const model = new Model(initial, array)
     const ctx = { execution: new r.Execution(), errorContext: {} }
-    const chain = new r.Chain({ a: structuredClone(initial) }, ctx)
+    const data = structuredClone(initial)
+    const chain = new r.Chain({ a: array && target === "1" && sibling === 1 ? concatFromInterior(data, ctx) : data }, ctx, chainMode)
     if (instrumented) r.hasError(chain, [], ctx)
     const verify = () => { if (instrumented) verifyRefCounts(ctx, chain._state) }
     const holds = []
@@ -209,7 +219,7 @@ async function runCase({ array, target, predecessor, first, second, sibling, rel
             const key = role === "sibling" ? siblingKey : target
             model.apply(command.op, key, command.value)
             handled(issue(command, chain, ctx, hold, key))
-            if (observed && role === "first") intermediate.push({ want: expected(), got: observe(chain, ctx, keys, array) })
+            if (observed && role === "first") intermediate.push({ want: expected(), got: observe(chain, ctx, keys, array, true) })
             verify()
         }
         // Release the predecessor first or last; holds created by callbacks follow in FIFO order.
@@ -297,10 +307,12 @@ const failures = []
 let position = 0
 for (const testCase of full ? completeCases() : sampledCases()) {
     if (position++ % partCount !== partIndex) continue
+    const [policy, chainMode] = Object.entries(r.CHAIN_MODE)[(position - 1) % 3]
+    coverage.dimensions.add(`policy:${policy}`)
     const modes = testCase.paired ? ["observed", "verified", "bare"] : [testCase.observed ? "observed" : "verified"]
     const finals = []
     for (const mode of modes) {
-        const { errors, final } = await runCase({ ...testCase, mode, stepwise: full || testCase.stepwise })
+        const { errors, final } = await runCase({ ...testCase, mode, chainMode, stepwise: full || testCase.stepwise })
         coverage.runs++
         coverage.dimensions.add(`harness:${mode}`)
         coverage.dimensions.add(`observed:${mode === "observed"}`)

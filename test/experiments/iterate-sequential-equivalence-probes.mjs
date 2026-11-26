@@ -218,4 +218,4 @@ assert.notDeepEqual(wholeCopy, ['A', 'B'].copyWithin(1, 0, 2).concat(['C', 'D'])
 console.log(JSON.stringify({ controlledNames: new Set(cases.map(c => c[0])).size,
     executions, snapshotChecks, pendingMembershipChecks,
     openPrefixCompletions: extensions.length, prefixEditMappings,
-    coverage: 'Current runtime successful mappings and captures; future partial-layout/iterator integration remains untested' }))
+    coverage: 'Successful method mappings, snapshots, pending membership and prefix restrictions exercised by this probe' }))

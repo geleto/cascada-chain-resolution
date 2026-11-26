@@ -24,7 +24,7 @@ Evaluate the question the consumer actually asks:
 | Length or membership | Exact count, sound bounds, or the remaining structural dependency. |
 | Presence | Present, absent, or the selection that can still change it. A hole is not an unknown placement. |
 | Payload source | Captured source version, inserted payload, prescribed literal, or hole. A pending payload differs from pending source selection. |
-| Occurrence | Guaranteed survival and final payload source; intended index is an additional sequential requirement. |
+| Occurrence | Guaranteed retained membership, clear slot status and final payload source. Ordered delivery also needs the current captured index, including an accepted fallback index. |
 | Failure membership | Actual retained Errors/statuses and unresolved output-relevant selections, not every retained input. |
 | Effect/completion | Prescribed writes, identity, validation, and direct-result work independent of payload readiness. |
 
@@ -39,7 +39,7 @@ Apply the same rules to ready and deferred inputs:
 | Rule | Example or consequence |
 | --- | --- |
 | Exact facts select a branch; bounds exclude impossible branches. | A known insertion boundary releases its preceding prefix. |
-| Identical source selectors eliminate a conditional dependency. | `choose(P, sourceSlot, sourceSlot)` forwards the slot. This is not a scan for equal old payloads. |
+| Identical source selectors eliminate a conditional dependency. | `choose(P, sourceSlot, sourceSlot)` forwards the slot. For `copyWithin`, each selector names a predecessor position. Distinct occupied positions keep their control dependency. |
 | A repeated internal guard keeps its established branch condition. | `C ? Y : (C ? X : A)` reduces to `C ? Y : A`. No cross-lookup provenance registry is required. |
 | Joins and reversal preserve endpoint relationships. | The first item of `reverse(S + [Z])` is Z, independently of S's count, after publication prerequisites. |
 | Range restriction removes excluded content dependencies. | An overwritten or excluded source contributes neither payload poison nor a retained content use; required shape/effect facts remain. |
@@ -81,10 +81,10 @@ No narrower range follows from a failed application's intended calculation. Inte
 
 Let source length be L, inserted count k, normalized start bounds `[sLo,sHi]`, and nonnegative deletion-count bounds `[cLo,cHi]` before clamping to `L-s`. These formulas accept projections of captured method facts, not arbitrary annotations on failed arguments. A raw failed start has bounds [0,L]; a raw failed deletion count can use [0,L] before the final clamp. Ready normalized arguments are singleton ranges. The runtime does not infer bounds from the later live Array.
 
-The following rule is closed for this case:
+Form the mapping before the ordinary capacity projection and logical count clip:
 
 1. Use `sHi` and `d = min(cLo,L-sHi)` to construct a fallback arrangement of slots. This is an internal layout rule, not execution with fabricated application arguments.
-2. Keep every guaranteed surviving source occurrence and every inserted occurrence.
+2. Include each source occurrence guaranteed to survive deletion and each inserted argument in that mapping.
 3. Replace a selected source occurrence that might have been deleted with permanent structural poison. Do not retain its payload for repair.
 4. In sequential mode, flag a surviving occurrence if its intended position varies. In unordered mode, retain it without positional poison.
 5. If the reductions prove all relevant effects/results independent of a failed argument, that argument creates no failure. The fallback machinery is not a reason to consume it.
@@ -96,7 +96,9 @@ minimum output length = L - min(cHi, L-sLo) + k
 maximum output length = L - min(cLo, L-sHi) + k
 ```
 
-The selected fallback has the maximum permitted length. It preserves fixed prefix/suffix positions and every guaranteed survivor. Uncertain candidates occupy structural Error slots only where the chosen layout has an output slot; it does not allocate one slot for every hypothetical candidate plus all survivors.
+These bounds and survivor proofs describe the mapping before capacity projection. In a stream, take its first K positions, where K is the maximum logical count, and apply the structural tail rule to the retained positions at or beyond MAX. Only a retained occurrence with preserved payload can reach a body. At length K, `splice(failedStart,0,X)` selects the end as the fallback insertion point. X is outside the retained sequence, including for unordered discovery and back-relative access. The mutating call still owes the failed start and requested growth. Calculate bounds with the same difference-first arithmetic as a determined splice. [Capacity projection and exact count](../iterate-plan.md#maximum-logical-count)
+
+Within the mapped extent the selected fallback has the maximum permitted length. Uncertain candidates occupy structural Error slots only where the chosen arrangement has an output slot. Shared ranges can represent them without allocating each candidate.
 
 Examples:
 
@@ -157,7 +159,7 @@ The standard async-iterator interface requires a Promise from every valid `next(
 return Promise.resolve({ done: false, value: elemChain });
 ```
 
-The source occurrence must first pass structural publication checks. Receive the captured placement in an ordinary holder before raw extraction. A healthy hole binds a present `undefined` root and leaves the source hole intact. A sparse structural copy preserves the source absence. A structural selection failure rejects the step; a rejection of the established payload becomes poison inside the elem Chain. Raw lookup's registration/authority checks are not the item-transfer boundary; apply the [inert item contract](../iterate-plan.md#item-boundaries).
+The source occurrence must first pass structural publication checks. Receive the captured placement in an ordinary holder before raw extraction. A healthy hole binds a present `undefined` root and leaves the source hole intact. A sparse structural copy preserves the source absence. Failure to select or inspect the source for a step rejects that step. A captured blocked slot ends ordered enumeration there. Unordered enumeration skips that position, delivers independent guaranteed occurrences and reports the skipped causes at natural termination. Rejection of an established ordinary payload publishes poison inside the elem Chain. Raw lookup's registration/authority checks are not the item-transfer boundary; apply the [inert item contract](../iterate-plan.md#item-boundaries).
 
 The trusted Cascada consumer binds that exact Chain. It does not import it as language data or wrap it in another Chain. `for await` awaits the step, not the holder's root. Cascada must recognize this managed-item transport; a generic value-stream adapter cannot assume the item is the underlying JavaScript value.
 
@@ -165,7 +167,7 @@ For unordered delivery, this is a [trusted scheduling interface](../iterate-plan
 
 Use the ordinary loop binding's operation context and construction mode, supplied as compiler facts. Source mode selects enumeration behavior; it does not silently override the destination binding's mode or clear contained poison. Keep runtime/diagnostic context construction at its existing boundary.
 
-After handoff, the loop binding owns its lifetime and is cleared through ordinary scope cleanup. Cursor closure never clears a delivered binding. The cursor protects unread inputs through its captured source; eager creation of all bindings is unnecessary. The fixed-layout probe uses a captured Array holder; Variant B can later release consumed source ranges independently.
+After handoff, the loop binding owns its lifetime and is cleared through ordinary scope cleanup. Each delivered binding, index and requested metadata projection keeps its own required captured facts through cursor closure and source replacement. The cursor protects unread inputs through its captured source; eager creation of all bindings is unnecessary. The fixed-layout probe uses a captured Array holder; Variant B can later release consumed source ranges independently.
 
 ## 8. Close the cursor, not an issued step
 
@@ -174,14 +176,15 @@ There is at most one outstanding `next()` under the trusted consumer contract. G
 | Event | Required outcome |
 | --- | --- |
 | `next()` establishes an item | Receive its elem Chain, release step-only captures, deliver the step. |
-| `next()` reaches end | Close enumeration synchronously and fulfill the step Promise with `{ done: true }`. |
+| `next()` reaches a healthy end | Close enumeration synchronously and fulfill the step Promise with `{ done: true }`. |
+| Unordered enumeration reaches the end after structural skips | Reject with the collected visible causes. Preserve all previously delivered bindings and metadata. |
 | Ordered structural failure | Reject that step with the existing poison and close future enumeration. Payload poison remains item data. |
 | `return()` with no pending step | Close future enumeration, release unread cursor state immediately and fulfill the close Promise with `{ done: true }`. |
 | `return()` with a pending step | Close future enumeration and release cursor-only state immediately. The issued step retains exactly what it still needs and finishes with its original result/failure. |
 | Repeated close or `next()` after local termination | Return a fulfilled done Promise. Earlier stop/failure retains its loop-control meaning. |
 | Execution fatality | Reject outstanding public results through the common fatal boundary; subsequent entry observes the fatal. |
 
-`return()` does not mean that the previously issued request, body work, or shared production has finished. A required never-settling input can keep that one request pending. The caller remains responsible for receiving or discarding its result, including normal binding cleanup. This is consistent with the runtime's existing no-timeout/no-cancellation contract. Under [mode-specific validity and completion](../iterate-plan.md#mode-specific-validity-and-completion), complete establishes source validity before its first successful step. Cascada's logical break and function return use ordinary control channels and conditionals at every affected scope; neither is equivalent to this low-level cursor return. Preserve existing scope/loop dependencies when optimizing that lowering. Cursor closure itself adds no whole-producer wait to either stream.
+`return()` does not mean that the previously issued request, body work, or shared production has finished. A required never-settling input can keep that one request pending. The caller remains responsible for receiving or discarding its result, including normal binding cleanup. This is consistent with the runtime's existing no-timeout/no-cancellation contract. Under [mode-specific validity and completion](../iterate-plan.md#mode-specific-validity-and-completion), complete establishes source validity before its first successful step. The compiler rewrite will lower `break` through an ordered control Chain and preserve `return` ordering at every affected scope. Each lowered guard keeps its scope and loop dependencies independently of cursor closure. Cursor closure itself adds no whole-producer wait to either stream.
 
 For a bounded request this lifetime includes the demand updates it still needs from previously admitted bodies and proved skips. A closed cursor can release the rest of its traversal immediately. Source selection that already started live native work keeps its existing native completion reservation. [Issued-step and close witnesses](../iterate-plan.md#completion-and-early-stop)
 

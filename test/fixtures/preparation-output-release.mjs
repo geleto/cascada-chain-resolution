@@ -21,11 +21,11 @@ function arrayPreparation(method, ordered, mutation, failed, comparator = false)
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        chain = new r.Chain(source, ctx)
+        chain = new r.Chain(source, ctx, r.CHAIN_MODE.Complete)
         armed = failed
         args = comparator ? [() => 0] : []
     } else {
-        chain = new r.Chain([1, 2], ctx)
+        chain = new r.Chain([1, 2], ctx, r.CHAIN_MODE.Complete)
         const start = failed ? r.createPoisonError(causes[0], ctx, r.ERROR_KIND.OperationInputFailed) : 0
         args = method === "fill" ? [payload, start, gate.promise ?? gate] : [start, gate.promise ?? gate, payload]
     }
@@ -39,20 +39,20 @@ function arrayPreparation(method, ordered, mutation, failed, comparator = false)
     } }
 }
 
-async function completedRange(method, ordered, mutation, live) {
+async function completedRange(method, ordered, mutation, live, mode) {
     const ctx = { execution: new r.Execution(), errorContext: "completed range release" }
     let payload = { payload: new Array(10000).fill(3) }
-    const weak = new WeakRef(payload), source = new r.Chain([payload], ctx)
+    const weak = new WeakRef(payload), source = new r.Chain([payload], ctx, mode)
     const start = ordered ? new OrderedThenable() : Promise.withResolvers(), end = new OrderedThenable()
     let result = r.run(source, [], method, method === "fill"
         ? [payload, start.promise ?? start, end] : [start.promise ?? start, 0, end],
         ctx, mutation ? { mutationScopeDepth: 0 } : {})
     start.resolve(method === "fill" ? 1 : 0)
-    const output = new r.Chain(await result, ctx)
+    const output = new r.Chain(await result, ctx, mode)
     result = payload = undefined
     r.assignPath(output, [], null, ctx)
     if (!live) r.assignPath(source, [], null, ctx)
-    return { ctx, source, end, weak, live, name: `${method}/${ordered}/${mutation}/${live}` }
+    return { ctx, source, end, weak, live, name: `${method}/${ordered}/${mutation}/${live}/${mode}` }
 }
 
 function pendingCall(mutation, retained, diagnostic = false) {
@@ -69,7 +69,7 @@ function pendingCall(mutation, retained, diagnostic = false) {
         report(input)
         return wait()
     }
-    const chain = new r.Chain({ call }, ctx)
+    const chain = new r.Chain({ call }, ctx, r.CHAIN_MODE.Complete)
     const result = r.run(chain, [], "call", [value => {
         weak = new WeakRef(value)
         if (retained) held = value
@@ -83,12 +83,12 @@ function searchPreparation(method, ordered, failed) {
     const gate = ordered ? new OrderedThenable() : Promise.withResolvers()
     const causes = [new Error("needle"), new Error("bound")]
     let payload = { payload: new Array(10000).fill(1) }
-    const weak = new WeakRef(payload), chain = new r.Chain([payload], ctx)
+    const weak = new WeakRef(payload), chain = new r.Chain([payload], ctx, r.CHAIN_MODE.Complete)
     const result = r.run(chain, [], method,
         [failed ? r.createPoisonError(causes[0], ctx, r.ERROR_KIND.OperationInputFailed) : payload, gate.promise ?? gate], ctx, {})
     r.assignPath(chain, [], undefined, ctx)
     payload = undefined
-    return { ctx, chain, result, weak, failed, causes, settle() {
+    return { ctx, chain, result, weak, failed, causes, comparisonCaptured: true, settle() {
         if (failed) gate.reject(causes[1])
         else gate.resolve(0)
     } }
@@ -96,7 +96,7 @@ function searchPreparation(method, ordered, failed) {
 
 function failedComparator() {
     const ctx = { execution: new r.Execution(), errorContext: "comparator failure" }, weak = []
-    const chain = new r.Chain([{ payload: [1] }, { payload: [2] }], ctx)
+    const chain = new r.Chain([{ payload: [1] }, { payload: [2] }], ctx, r.CHAIN_MODE.Complete)
     const cause = new Error("comparator failed")
     const result = r.run(chain, [], "toSorted", [(left, right) => {
         weak.push(new WeakRef(left), new WeakRef(right))
@@ -129,7 +129,7 @@ function comparatorLifetime(method, outcome, pendingPreparation) {
     const weak = bundle.weak
     const chain = new r.Chain(pendingPreparation
         ? [outcome === "poison" ? r.createPoisonError(cause, ctx, r.ERROR_KIND.OperationInputFailed) : 2, gate.promise]
-        : [2, 1], ctx)
+        : [2, 1], ctx, r.CHAIN_MODE.Complete)
     const result = r.run(chain, [], method, [bundle.comparator], ctx, {})
     bundle = undefined
     if (!pendingPreparation) assert.equal(r.isPoisonError(result), outcome !== "healthy")
@@ -146,8 +146,8 @@ function comparatorLifetime(method, outcome, pendingPreparation) {
 const arrays = [], calls = []
 const ranges = []
 for (const method of ["fill", "copyWithin"]) for (const ordered of [false, true])
-for (const mutation of [false, true]) for (const live of [false, true])
-    ranges.push(await completedRange(method, ordered, mutation, live))
+for (const mutation of [false, true]) for (const live of [false, true]) for (const mode of Object.values(r.CHAIN_MODE))
+    ranges.push(await completedRange(method, ordered, mutation, live, mode))
 const comparators = []
 for (const method of ["sort", "toSorted"]) {
     for (const outcome of ["throw", "object", "promise", "healthy"])
@@ -174,8 +174,8 @@ for (const state of comparators) for (const weak of state.weak)
     assert.equal(weak.deref() !== undefined, state.retained, `Only unfinished successful sorting needs its comparator: ${state.name}`)
 for (const weak of comparison.weak) assert.equal(weak.deref(), undefined, "Comparator diagnostics release exported copies")
 for (const state of arrays) {
-    assert.equal(state.weak.deref() !== undefined, !state.failed,
-        "Known failure discards output while healthy preparation protects its inputs")
+    assert.equal(state.weak.deref() !== undefined, !state.failed && !state.comparisonCaptured,
+        "Only unfinished preparation that still needs its source retains it")
     if (state.failed && state.sourceRef) assert.equal(state.sourceRef.deref(), undefined)
 }
 for (const state of calls) {

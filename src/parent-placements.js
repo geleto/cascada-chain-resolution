@@ -87,13 +87,25 @@ function initializePlacements(owner, operationContext, entries) {
     const array = meta.type === metadata.TYPE.Array
     meta.placementsInitialized = true
     meta.outgoingPlacements ??= new Map()
-    if (array) ArrayView.registerOwner(owner, operationContext)
-    if (!isArrayView(owner, operationContext)) {
-        for (const [key, value] of entries ?? Object.entries(owner)) {
-            if (array) {
-                if (isArrayIndex(key)) ArrayView.recordBackingPlacement(owner, key, undefined, value, operationContext)
-            } else if (!getOwnPlacementVersion(owner, key, operationContext)) addParent(value, owner, key, operationContext)
+    if (array) {
+        ArrayView.registerOwner(owner, operationContext)
+        if (!isArrayView(owner, operationContext)) {
+            let indexes = 0, end = 0
+            if (entries) for (const [key, value] of entries) record(key, value)
+            else for (const key of Object.keys(owner)) record(key, owner[key])
+            meta.storedIndexes = indexes
+            meta.storedEnd = end
+
+            function record(key, value) {
+                if (!isArrayIndex(key)) return
+                indexes++
+                end = Math.max(end, Number(key) + 1)
+                if (metadata.isObjectLike(value)) ArrayView.recordBackingPlacement(owner, key, undefined, value, operationContext)
+            }
         }
+    } else {
+        for (const [key, value] of entries ?? Object.entries(owner))
+            if (!getOwnPlacementVersion(owner, key, operationContext)) addParent(value, owner, key, operationContext)
     }
     activateRelationships(owner, operationContext)
 }
@@ -178,6 +190,27 @@ function activatePlacement(owner, key, placement, operationContext) {
     linkParent(placement.value, owner, key, operationContext)
 }
 
+// Borrowed storage belongs to the view. Its pending suffix can finish
+// after the last owner retires without retaining the old physical Array.
+function updateBackingOwners(owner, meta, operationContext) {
+    if (!meta.backingRecord) return
+    update(meta.backingRecord)
+    if (meta.arrayRange?.borrowed) update(meta.arrayRange.borrowed.record)
+    function update(record) {
+        if (meta.relationshipsActive) {
+            record.owners.add(owner)
+            activateRelationships(record, operationContext)
+            activateRelationships(record.producers, operationContext)
+            record.region?.resumeLayout?.()
+        } else {
+            record.owners.delete(owner)
+            if (!record.owners.size) record.region?.releaseLayout?.()
+            reconsider(record, operationContext)
+            if (record.producers) reconsider(record.producers, operationContext)
+        }
+    }
+}
+
 function activateRelationships(owner, operationContext) {
     const meta = metadata.metaOf(owner, operationContext)
     if (!meta?.placementsInitialized || meta.relationshipsActive) return
@@ -186,12 +219,7 @@ function activateRelationships(owner, operationContext) {
     meta.arrayRange?.lengthState?.retain?.()
     reconsider(owner, operationContext)
     if (meta.destination) meta.destination.owner = owner
-    if (meta.backingRecord) {
-        const record = meta.backingRecord
-        record.owners.add(owner)
-        activateRelationships(record, operationContext)
-        activateRelationships(record.producers, operationContext)
-    }
+    updateBackingOwners(owner, meta, operationContext)
     for (const [key, placement] of meta.outgoingPlacements ?? [])
         activatePlacement(owner, key, placement, operationContext)
 }
@@ -201,11 +229,7 @@ function retireRelationships(owner, operationContext) {
     meta.relationshipsActive = false
     meta.arrayRange?.lengthState?.release?.()
     if (meta.destination) meta.destination.owner = undefined
-    if (meta.backingRecord) {
-        meta.backingRecord.owners.delete(owner)
-        reconsider(meta.backingRecord, operationContext)
-        if (meta.backingRecord.producers) reconsider(meta.backingRecord.producers, operationContext)
-    }
+    updateBackingOwners(owner, meta, operationContext)
     for (const [key, placement] of meta.outgoingPlacements ?? []) {
         releaseCopiedDelivery(placement, true)
         if (placement.present !== false) unlinkParent(placement.value, owner, key, operationContext)
@@ -225,4 +249,4 @@ function visitRetentionParents(value, operationContext, visit) {
 
 export { addParent, removeParent, visitParentPlacements, getParentPlacements,
     CONSTRUCTION_STATE, PlacementConstruction, initializePlacements, recordLogicalPlacement, initializeHolder,
-    activateRelationships, retireRelationships, visitRetentionParents, destinationOf }
+    updateBackingOwners, activateRelationships, retireRelationships, visitRetentionParents, destinationOf }

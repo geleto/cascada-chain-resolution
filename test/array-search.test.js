@@ -9,7 +9,25 @@ const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 describe("Array searches with unfinished growth", () => {
-    it("reads each immediate includes value once, including holes", () => {
+    for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
+        it(`uses the eligible occurrence of a shared run after a deferred search bound in mode ${mode}`, async () => {
+            const ctx = context(), gate = Promise.withResolvers(), start = Promise.withResolvers()
+            const leaf = [1, NaN, 2], twice = [leaf, leaf], expected = [twice, [3], twice].flat(Infinity)
+            const source = new r.Chain([twice, gate.promise, twice], ctx, mode)
+            const result = new r.Chain(r.run(source, [], "flat", [Infinity], ctx, {}), ctx, mode)
+            const checks = []
+            for (const method of ["includes", "indexOf", "lastIndexOf"]) for (const threshold of [3, 7, 9, -4])
+                for (const needle of [1, 2, 3, NaN, "absent"]) {
+                    const bound = start.promise.then(() => threshold)
+                    checks.push([r.run(result, [], method, [needle, bound], ctx, {}), expected[method](needle, threshold)])
+                }
+            start.resolve()
+            await tick()
+            gate.resolve([3])
+            for (const [actual, wanted] of checks) assert.equal(await actual, wanted)
+        })
+
+    it("reads each immediate includes value once and accounts for holes from sparse keys", () => {
         const ctx = context(), reads = new Map()
         const source = new Proxy([0, , 2], {
             getOwnPropertyDescriptor(target, key) {
@@ -20,7 +38,8 @@ describe("Array searches with unfinished growth", () => {
         const chain = new r.Chain(source, ctx)
         reads.clear()
         assert.equal(r.run(chain, [], "includes", [9], ctx, {}), false)
-        for (const key of ["0", "1", "2"]) assert.equal(reads.get(key), 1)
+        for (const key of ["0", "2"]) assert.equal(reads.get(key), 1)
+        assert.equal(reads.has("1"), false)
         assert.equal(r.run(chain, [], "includes", [undefined], ctx, {}), true)
         verifyRefCounts(ctx, chain._state)
     })

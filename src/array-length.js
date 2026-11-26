@@ -4,8 +4,9 @@ import { releaseOnClose } from "./operation-lifecycle.js"
 // Contributions and questions share program order. A source outcome can feed
 // several captured sequences, but later additions belong to only one sequence.
 class LengthState {
-    constructor(baseline) {
+    constructor(baseline, widths) {
         this.baseline = baseline
+        this.widths = widths
         // Outcomes invalidate only retained sequences that contain them. The
         // counter has no reference back to the sequence or its Array.
         this.outcomes = { revision: 0 }
@@ -14,7 +15,7 @@ class LengthState {
     }
 
     retain() {
-        if (this.retentions++ !== 0) return
+        if (this.retentions++ !== 0 || this.widths) return
         this.outcomes.revision++ // An inactive sequence may have missed outcomes.
         this.refresh()
         for (let node = this.head; node; node = node.next)
@@ -27,24 +28,34 @@ class LengthState {
             node.source?.consumers.delete(this.outcomes)
     }
 
-    get minimum() { this.refresh(); return this.tail?.minimum ?? this.baseline }
-    get maximum() { this.refresh(); return this.tail?.maximum ?? this.baseline }
+    get minimum() { if (this.widths) return this.widths.minimum; this.refresh(); return this.tail?.minimum ?? this.baseline }
+    get maximum() { if (this.widths) return this.widths.maximum; this.refresh(); return this.tail?.maximum ?? this.baseline }
 
-    currentAnswer(index) {
-        return LengthState.lengthAnswer(this.tail?.minimum ?? this.baseline, this.tail?.maximum ?? this.baseline, index)
+    observeWidths() {
+        const widths = this.widths
+        if (!widths) return
+        this.widths = undefined
+        this.baseline = widths.minimum
+        const source = this.add(widths.maximum)
+        if (source) widths.watch((lo, hi) => source.refine(lo, hi))
     }
 
-    answer(index) {
+    currentAnswer(index, limit) {
+        if (this.widths) return LengthState.lengthAnswer(this.widths.minimum, this.widths.maximum, index, limit)
+        return LengthState.lengthAnswer(this.tail?.minimum ?? this.baseline, this.tail?.maximum ?? this.baseline, index, limit)
+    }
+
+    answer(index, limit) {
         // Outcomes only tighten these bounds. An already conclusive answer
         // needs neither fresh outcomes nor a scan of the captured sequence.
-        const answer = this.currentAnswer(index)
+        const answer = this.currentAnswer(index, limit)
         if (answer !== undefined) return answer
         this.refresh()
-        return this.currentAnswer(index)
+        return this.currentAnswer(index, limit)
     }
 
-    static lengthAnswer(minimum, maximum, index) {
-        if (index === undefined) return minimum === maximum ? minimum : undefined
+    static lengthAnswer(minimum, maximum, index, limit) {
+        if (index === undefined) return minimum >= limit ? limit : minimum === maximum ? minimum : undefined
         return index < minimum ? true : index >= maximum ? false : undefined
     }
 
@@ -57,7 +68,7 @@ class LengthState {
         this.tail = node
         const minimum = node.previous?.minimum ?? this.baseline
         const maximum = node.previous?.maximum ?? this.baseline
-        node.minimum = Math.max(minimum, node.value ?? 0)
+        node.minimum = Math.max(minimum, node.value ?? node.source?.minimum ?? 0)
         node.maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
         if (node.source && this.retentions) node.source.consumers.set(this.outcomes, undefined)
         if (node.deliver) {
@@ -95,28 +106,40 @@ class LengthState {
     }
 
     grow(length) {
+        this.observeWidths()
         if (length <= this.minimum) return
         const node = this.append({ value: length })
         this.compact(node)
     }
 
     add(bound) {
+        this.observeWidths()
         if (bound <= this.minimum) return undefined
         const source = {
             // One contribution per sequence: its counter always invalidates,
             // and an optional node requests active notification of its prefix.
-            bound, consumers: new Map(),
-            complete(created) {
+            bound, minimum: 0, consumers: new Map(),
+            complete(length) {
                 if (source.value !== undefined) return
-                source.value = created ? bound : 0
-                const notify = []
-                for (const [counter, node] of source.consumers) {
-                    counter.revision++
-                    if (node) notify.push(node)
-                }
-                source.consumers.clear()
-                for (const node of notify) node.state?.refresh(node)
+                source.value = length
+                notify(true)
             },
+            refine(minimum, maximum) {
+                if (source.value !== undefined || source.minimum === minimum && source.bound === maximum) return
+                if (minimum === maximum) return source.complete(minimum)
+                source.minimum = minimum
+                source.bound = maximum
+                notify(false)
+            },
+        }
+        function notify(complete) {
+            const active = []
+            for (const [counter, node] of source.consumers) {
+                counter.revision++
+                if (node) active.push(node)
+            }
+            if (complete) source.consumers.clear()
+            for (const node of active) node.state?.refresh(node)
         }
         this.append({ source })
         return source
@@ -142,12 +165,12 @@ class LengthState {
                 node.source.consumers.delete(this.outcomes)
                 node.source = undefined
             }
-            minimum = Math.max(minimum, node.value ?? 0)
+            minimum = Math.max(minimum, node.value ?? node.source?.minimum ?? 0)
             maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
             node.minimum = minimum
             node.maximum = maximum
             if (node.deliver) {
-                const answer = LengthState.lengthAnswer(minimum, maximum, node.index)
+                const answer = LengthState.lengthAnswer(minimum, maximum, node.index, node.limit)
                 if (answer !== undefined) {
                     const deliver = node.deliver
                     ready.push(() => deliver(answer))
@@ -184,12 +207,13 @@ class LengthState {
     // Shape has its own completion: deletion can remove a pending placement
     // without deciding whether its preceding entry grew the Array. Capture one
     // ordered question; later contributions cannot change its answer.
-    capture(owner, index) {
-        let answer = this.answer(index)
+    capture(owner, index, limit) {
+        let answer = this.answer(index, limit)
         if (answer !== undefined) return answer
+        this.observeWidths()
         const { promise, resolve } = Promise.withResolvers()
         let unregister
-        const node = this.append({ index, deliver(value) {
+        const node = this.append({ index, limit, deliver(value) {
             answer = value
             release()
             resolve(value)
@@ -205,6 +229,7 @@ class LengthState {
 
     fork() {
         if (this.minimum === this.maximum) return this.minimum
+        if (this.widths) return new LengthState(this.minimum, this.widths)
         const copy = new LengthState(this.baseline)
         for (let node = this.head; node; node = node.next) {
             if (node.source) copy.append({ source: node.source })

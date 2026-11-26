@@ -141,6 +141,38 @@ describe("broader native binding repair", () => {
     })
 })
 
+describe("nested Array mutation at a selected owner", () => {
+    for (const depth of [0, 1]) for (const delivery of ["ready", "synchronous", "deferred"])
+    for (const scenario of ["new failure", "stored Error", "blocked prefix", "removed Error"]) {
+        it(`${scenario} preserves the ordered scope and repair: depth=${depth}/${delivery}`, async () => {
+            const ctx = context()
+            const error = r.validationError("array control", ctx, r.ERROR_KIND.OperationInputFailed)
+            const source = Promise.withResolvers()
+            const input = value => delivery === "ready" ? value : delivery === "synchronous" ? ready(value) : source.promise
+            const fresh = scenario === "new failure", removed = scenario === "removed Error"
+            const data = { a: fresh ? [2, 1] : removed ? [2, error] : input(error), tag: 0 }
+            const owner = depth ? ["nested"] : []
+            const chain = new r.Chain(depth ? { nested: data, other: 4 } : data, ctx, r.CHAIN_MODE.Complete)
+            const path = [...owner, "a"]
+            if (scenario === "blocked prefix") path.push("nested")
+            const tag = [...owner, "tag"]
+            const result = mutate(chain, path, fresh ? "splice" : removed ? "pop" : "push", ctx,
+                fresh ? [0, input(error)] : [], depth)
+            const observed = r.lookupPath(chain, tag, ctx)
+            r.assignPath(chain, tag, 9, ctx)
+            const repair = r.repairPath(chain, owner, ctx)
+            const after = r.lookupPath(chain, tag, ctx)
+            if (depth) assert.equal(r.lookupPath(chain, ["other"], ctx), 4)
+            source.resolve(error)
+            assert.equal(await result, error)
+            assert.equal(await observed, fresh ? error : 0)
+            assert.equal(await repair, undefined)
+            assert.equal(await after, fresh ? 0 : 9)
+            assert.equal(await r.lookupPath(chain, [...owner, "a", 0], ctx), fresh || removed ? 2 : error)
+        })
+    }
+})
+
 describe("hierarchical scopes and placement recovery", () => {
     for (const pending of [false, true]) for (const call of [false, true])
     it(`a rejected duplicate leaves canonical repair and calls valid: pending=${pending}, call=${call}`, async () => {

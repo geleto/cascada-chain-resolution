@@ -25,7 +25,7 @@ describe("Array consumption across suspension", () => {
         const gate = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
         const input = delivery === "ready" ? first : delivery === "synchronous" ? ready(first) : gate.promise ?? gate
         const sorting = method === "sort" || method === "toSorted"
-        const root = new r.Chain(method === "slice" ? [0, 1, 2] : sorting ? [[input], [second]] : [input, second], ctx)
+        const root = new r.Chain(method === "slice" ? [0, 1, 2] : sorting ? [[input], [second]] : [input, second], ctx, r.CHAIN_MODE.Complete)
         const result = r.run(root, [], method, method === "slice" ? [[input], second] : [], ctx,
             mutation ? { mutationScopeDepth: 0 } : {})
         const pending = delivery === "native" || delivery === "ordered"
@@ -83,14 +83,17 @@ describe("Array consumption across suspension", () => {
             const pause = Promise.withResolvers(), later = Promise.withResolvers()
             const causes = [new Error("first"), new Error("reflection"), new Error("last")]
             let armed = false
-            const unreadableArray = cause => r.lookupPath(new r.Chain(new Proxy([], {
-                ownKeys() { if (armed) throw cause; return ["length"] },
+            const unreadableArray = cause => r.lookupPath(new r.Chain(new Proxy([1], {
+                getOwnPropertyDescriptor(target, key) {
+                    if (armed && key === "0") throw cause
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
             }), ctx), [], ctx)
             const unreadable = unreadableArray(causes[1])
             const first = method === "flat" ? unreadableArray(causes[0]) : undefined
             const last = method === "flat" ? unreadableArray(causes[2]) : undefined
             const inputs = [pause.promise, unreadable, later.promise]
-            const root = new r.Chain(method === "toSorted" ? inputs.map(value => [value]) : inputs, ctx)
+            const root = new r.Chain(method === "toSorted" ? inputs.map(value => [value]) : inputs, ctx, r.CHAIN_MODE.Complete)
             armed = true
             const result = r.run(root, [], method, [], ctx, {})
             if (method === "flat") { later.resolve(last); pause.resolve(first) }

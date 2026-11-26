@@ -1,5 +1,5 @@
 import { returnOperationResult, returnExpressionResult, runManagedOperation, runOperation } from "./operation-result.js"
-import { Chain, ContextChain } from "./chain.js"
+import { Chain, ContextChain, CHAIN_MODE } from "./chain.js"
 import {
     CompoundPoisonError,
     ERROR_KIND,
@@ -11,9 +11,11 @@ import {
 import { Execution } from "./execution.js"
 import { enter as enterCore } from "./enter.js"
 import {
+    capturePath as capturePathCore,
     exportPath,
     getErrors as getErrorsCore,
     hasError as hasErrorCore,
+    isPoisoned as isPoisonedCore,
     lookupPath as lookupPathCore,
     lookupPathForExpression as lookupPathForExpressionCore,
 } from "./observations.js"
@@ -23,12 +25,13 @@ import {
     deletePath as deletePathCore,
 } from "./mutate-property.js"
 import { run as runCore } from "./run.js"
-import { repairPath as repairPathCore } from "./path-operation.js"
+import { poisonPath as poisonPathCore, repairPath as repairPathCore } from "./path-operation.js"
 import {
     externalState,
     managedState,
     managedStateClass,
 } from "./data-declarations.js"
+import { runReceivingCommand } from "./ownership.js"
 
 // Public commands share the receiving boundary and its input-release rule.
 // Pass inputs directly, without closures retaining the wrapper's source bindings.
@@ -38,6 +41,10 @@ function importValue(value, operationContext) {
 
 function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length) {
     return runManagedOperation(operationContext, lookupPathCore, [chain, path, operationContext, firstDynamicSegment])
+}
+
+function capturePath(chain, path, operationContext, mode, firstDynamicSegment = path.length) {
+    return runReceivingCommand(operationContext, () => capturePathCore(chain, path, operationContext, mode, firstDynamicSegment))
 }
 
 function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
@@ -55,6 +62,10 @@ function exportValue(chain, path, operationContext, firstDynamicSegment = path.l
 
 function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
     return runOperation(operationContext, hasErrorCore, [chain, path, operationContext, firstDynamicSegment])
+}
+
+function isPoisoned(chain, path, operationContext, firstDynamicSegment = path.length) {
+    return runOperation(operationContext, isPoisonedCore, [chain, path, operationContext, firstDynamicSegment])
 }
 
 function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
@@ -97,9 +108,20 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
     return runOperation(operationContext, repairPathCore, [chain, path, operationContext, firstDynamicSegment])
 }
 
+function poisonPath(chain, path, cause, operationContext, firstDynamicSegment = path.length) {
+    return runOperation(operationContext, poisonPathCore, [chain, path, cause, operationContext, firstDynamicSegment])
+}
+
+function appendMissingOutput(chain, cause, operationContext, markers) {
+    return run(chain, [], "push", markers ? [] : [cause], operationContext, { mutationScopeDepth: 0, missingOutput: markers ?? true })
+}
+
 export {
+    appendMissingOutput,
     assignPath,
+    capturePath,
     Chain,
+    CHAIN_MODE,
     CompoundPoisonError,
     ContextChain,
     deletePath,
@@ -115,11 +137,13 @@ export {
     importMethodResult,
     isFatalError,
     isPoisonError,
+    isPoisoned,
     lookupPath,
     lookupPathForExpression,
     managedState,
     managedStateClass,
     PoisonError,
+    poisonPath,
     run,
     repairPath,
     returnOperationResult,
@@ -129,3 +153,4 @@ export { createPoisonedValue, isPoisonedValue } from "./poisoned-value.js"
 export { createPoisonError, validationError, combineErrors, failExecution, runExternalBoundary } from "./error.js"
 export { runInternalStep, continueOperation } from "./internal-step.js"
 export { isPending } from "./language-values.js"
+export { iterate } from "./iterate.js"

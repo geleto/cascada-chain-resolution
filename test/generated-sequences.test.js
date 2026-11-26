@@ -101,12 +101,13 @@ describe("generated operation sequences", () => {
         const full = process.env.CASCADA_CONFLICT_MATRIX === "full"
         this.timeout(full ? 7200000 : 60000)
         const coverage = runFixture("conflict-matrix.js", full ? 7100000 : 55000)
-        assert.equal(coverage.triples, 9 * 17 * 17)
+        assert.equal(coverage.triples, 10 * 17 * 17)
         assert.equal(coverage.absentTriples, coverage.triples)
         assert(coverage.paired > 0, "compare runs with and without intermediate reads")
         for (const dimension of product(["container"], ["array", "record"])
             .concat(product(["target"], ["absent", "present"]), product(["sibling"], [1, 2, 3]),
-                product(["release"], ["predecessor-first", "predecessor-last"]), product(["observed"], [false, true]), harnessModes))
+                product(["release"], ["predecessor-first", "predecessor-last"]), product(["observed"], [false, true]),
+                product(["policy"], ["Complete", "Sequential", "Unordered"]), harnessModes))
             assert(coverage.dimensions.includes(dimension), `missing ${dimension}`)
     })
 
@@ -117,13 +118,15 @@ describe("generated operation sequences", () => {
         assert.equal(runs, programs * 3)
         const required = [
             ...harnessModes,
+            ...product(["policy"], ["Complete", "Sequential", "Unordered"]),
             ...product(["entry"], ["set", "delete", "noop", "pending", "prefix", "repair", "reject"], ["delayed", "ready"]),
-            ...product(["direct"], ["set", "pending", "delete", "prefix", "repair", "reject"]),
+            ...product(["direct"], ["set", "pending", "delete", "prefix", "repair", "reject", "poison"]),
             ...product(["structural"], ["reverse", "shift", "pop", "push", "unshift", "splice-remove", "splice-insert"], ["direct", "entry"]),
             ...product(["observe"], ["includes", "indexOf", "lastIndexOf", "at", "slice", "with", "concat"], ["direct", "entry", "snapshot"]),
             ...product(["observe"], ["direct", "entry", "snapshot"], ["before-release", "after-release", "after-settle"]),
             ...product(["delivery"], ["native", "ordered"]),
             "length", "read", "settle", "owners:1", "owners:2", "owner:0", "owner:1", "multi-owner:pending-mutation",
+            "iterator:skipped", "iterator:done",
             ...product(["keys"], ["ready", "synchronous", "native", "ordered"]),
         ]
         for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)

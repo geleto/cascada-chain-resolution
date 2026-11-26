@@ -115,7 +115,7 @@ describe("finite cyclic Array flattening", function () {
             r.import(sibling, ctx)
             const signal = mode === "native" ? Promise.withResolvers() : mode === "ordered" ? new OrderedThenable() : undefined
             const input = signal?.promise ?? signal ?? (mode === "sync" ? ready(sibling) : sibling)
-            const source = new r.Chain(failureFirst ? [input, cycle] : [cycle, input], ctx)
+            const source = new r.Chain(failureFirst ? [input, cycle] : [cycle, input], ctx, r.CHAIN_MODE.Complete)
             broken = true
             const result = r.run(source, [], "flat", [Infinity], ctx, {})
             signal?.resolve(sibling)

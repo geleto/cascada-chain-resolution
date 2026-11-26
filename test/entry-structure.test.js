@@ -9,6 +9,7 @@ import { ArrayView } from "../src/array-view.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { createRandom, randomInteger } from "./native-equivalence-support.js"
 import { captureIdentity, compareIdentities } from "../src/captured-identity.js"
+import { OrderedThenable } from "./ordered-thenable.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -40,34 +41,34 @@ describe("entry structural publication", () => {
     })
 
     for (const deleting of [false, true])
-    it(`protects newly adopted host storage through nested entries: deleting=${deleting}`, async () => {
-        const ctx = context(), gates = [], entries = []
-        let original
-        const source = new r.Chain({ make() {
-            original = Object.freeze({ k: 1 })
-            this.item = original
-        } }, ctx)
-        r.run(source, [], "make", [], ctx, { mutationScopeDepth: 0 })
-        let inner = source
-        for (let index = 0; index < 64; index++) {
-            const gate = Promise.withResolvers()
-            gates.push(gate)
-            entries.push(r.enter(inner, index ? [] : ["item", "k"], ctx, true, entered => {
-                inner = entered
-                return gate.promise
-            }))
-        }
-        const result = deleting ? r.deletePath(inner, [], ctx) : r.assignPath(inner, [], 2, ctx)
-        assert.equal(result, undefined)
-        for (let index = gates.length - 1; index >= 0; index--) {
-            gates[index].resolve()
-            await entries[index]
-        }
-        assert.equal(await r.lookupPath(source, ["item", "k"], ctx), deleting ? undefined : 2)
-        assert.deepEqual(original, { k: 1 })
-        assert.equal(ctx.execution.fatalError, null)
-        verifyRefCounts(ctx, source._state)
-    })
+        it(`protects newly adopted host storage through nested entries: deleting=${deleting}`, async () => {
+            const ctx = context(), gates = [], entries = []
+            let original
+            const source = new r.Chain({ make() {
+                original = Object.freeze({ k: 1 })
+                this.item = original
+            } }, ctx)
+            r.run(source, [], "make", [], ctx, { mutationScopeDepth: 0 })
+            let inner = source
+            for (let index = 0; index < 64; index++) {
+                const gate = Promise.withResolvers()
+                gates.push(gate)
+                entries.push(r.enter(inner, index ? [] : ["item", "k"], ctx, true, entered => {
+                    inner = entered
+                    return gate.promise
+                }))
+            }
+            const result = deleting ? r.deletePath(inner, [], ctx) : r.assignPath(inner, [], 2, ctx)
+            assert.equal(result, undefined)
+            for (let index = gates.length - 1; index >= 0; index--) {
+                gates[index].resolve()
+                await entries[index]
+            }
+            assert.equal(await r.lookupPath(source, ["item", "k"], ctx), deleting ? undefined : 2)
+            assert.deepEqual(original, { k: 1 })
+            assert.equal(ctx.execution.fatalError, null)
+            verifyRefCounts(ctx, source._state)
+        })
 
     for (const siblingBefore of [false, true]) {
         it(`keeps a queued mutation's predecessor creation before its sibling, sibling first=${siblingBefore}`, async () => {
@@ -213,34 +214,23 @@ describe("entry structural publication", () => {
     }
 
     for (const method of ["slice", "includes", "indexOf", "lastIndexOf"]) {
-        for (const rejects of [false, true]) {
-            it(`${method} processes pending inputs before its empty range, rejects=${rejects}`, async () => {
-                const ctx = context(), hold = Promise.withResolvers(), argument = Promise.withResolvers()
-                const chain = new r.Chain([1], ctx), cause = new Error("argument rejection")
+            it(`${method} completes an empty range while an unrelated entry is open`, async () => {
+                const ctx = context(), hold = Promise.withResolvers(), argument = new OrderedThenable()
+                const chain = new r.Chain([1], ctx)
                 const entry = r.enter(chain, [5], ctx, true, () => hold.promise)
-                const args = method === "slice" ? [Infinity, argument.promise]
-                    : [argument.promise, method === "lastIndexOf" ? -Infinity : Infinity]
+                const args = method === "slice" ? [Infinity, argument]
+                    : [argument, method === "lastIndexOf" ? -Infinity : Infinity]
                 const result = r.run(chain, [], method, args, ctx, {})
-                assert(result instanceof Promise)
-                let outcome
-                result.then(value => { outcome = value })
-                if (rejects) argument.reject(cause)
-                else argument.resolve(1)
                 try {
-                    await tick()
-                    if (rejects) {
-                        assert.equal(outcome?.cause, cause, "argument failure must finish while entry is still open")
-                        assert.equal(outcome.errorContext, ctx.errorContext)
-                    } else if (method === "slice") {
-                        assert.notEqual(outcome, undefined, "empty result must finish while entry is still open")
-                        assert.deepEqual(r.export(new r.Chain(outcome, ctx), [], ctx), [])
-                    } else assert.equal(outcome, method === "includes" ? false : -1)
+                    assert(!r.isPending(result, ctx))
+                    if (method === "slice") assert.deepEqual(r.export(new r.Chain(result, ctx), [], ctx), [])
+                    else assert.equal(result, method === "includes" ? false : -1)
+                    assert.equal(argument.subscriptions, 0)
                 } finally { hold.resolve() }
                 await entry
                 assert.equal(ctx.execution.fatalError, null)
                 verifyRefCounts(ctx, chain._state)
             })
-        }
     }
 
     for (const reverse of [false, true]) {
@@ -433,7 +423,10 @@ describe("entry structural publication", () => {
         const invalid = r.run(chain, [], "with", [6, 9], ctx, {})
         assert.equal(invalid.kind, r.ERROR_KIND.InvalidArrayOperation)
         const exact = r.run(chain, [], "with", [0, 9], ctx, {})
-        assert(exact instanceof Promise)
+        assert(!(exact instanceof Promise))
+        const updated = new r.Chain(exact, ctx)
+        assert.equal(r.lookupPath(updated, [0], ctx), 9)
+        assert(r.lookupPath(updated, ["length"], ctx) instanceof Promise)
         hold.resolve()
         await entry
         assert.deepEqual(r.export(new r.Chain(await exact, ctx), [], ctx), [9, 2])

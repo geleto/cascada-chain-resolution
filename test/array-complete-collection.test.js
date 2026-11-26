@@ -26,7 +26,7 @@ describe("complete Array preparation", () => {
             const signal = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
             const needle = delivery === "ready" ? poison : delivery === "synchronous" ? ready(poison) : signal.promise ?? signal
             const bound = Promise.withResolvers()
-            const chain = new runtime.Chain(empty ? [] : [1], ctx)
+            const chain = new runtime.Chain(empty ? [] : [1], ctx, runtime.CHAIN_MODE.Complete)
             const result = runtime.run(chain, [], method, [needle, bound.promise], ctx, {})
             if (delivery === "native" || delivery === "ordered") signal.resolve(poison)
             let settled = false
@@ -35,7 +35,8 @@ describe("complete Array preparation", () => {
             assert.equal(settled, empty, "Only an empty receiver can omit the bound")
             if (empty) bound.resolve(0)
             else bound.reject(causes[1])
-            assertCauses(await result, empty ? [causes[0]] : causes)
+            if (empty) assert.equal(await result, method === "includes" ? false : -1)
+            else assertCauses(await result, causes)
             verifyRefCounts(ctx, chain._state)
             assert.equal(ctx.execution.fatalError, null)
         })
@@ -46,7 +47,7 @@ describe("complete Array preparation", () => {
         it(`${method} captures an unsettled length before discarding its receiver: created=${created}`, async () => {
             const ctx = context(), causes = [new Error("needle"), new Error("bound")]
             const gate = Promise.withResolvers(), bound = Promise.withResolvers()
-            const chain = new runtime.Chain([], ctx)
+            const chain = new runtime.Chain([], ctx, runtime.CHAIN_MODE.Complete)
             const entry = runtime.enter(chain, [0], ctx, true, entered => {
                 if (created) runtime.assignPath(entered, [], 1, ctx)
                 return gate.promise
@@ -57,7 +58,8 @@ describe("complete Array preparation", () => {
             await entry
             if (created) bound.reject(causes[1])
             else bound.resolve(0)
-            assertCauses(await result, created ? causes : [causes[0]])
+            if (created) assertCauses(await result, causes)
+            else assert.equal(await result, method === "includes" ? false : -1)
             assert.equal(ctx.execution.fatalError, null)
         })
     }
@@ -83,7 +85,7 @@ describe("complete Array preparation", () => {
                         },
                     })
                     runtime.import(source, introduced)
-                    const chain = new runtime.Chain(source, ctx)
+                    const chain = new runtime.Chain(source, ctx, runtime.CHAIN_MODE.Complete)
                     fail = true
                     const work = runtime.run(
                         chain, [], route === "toSorted" ? route : "sort",
@@ -119,7 +121,7 @@ describe("complete Array preparation", () => {
     }
 
     for (const method of ["sort", "toSorted"]) {
-        it(`${method} continues value preparation after a captured placement becomes unreadable`, async () => {
+        it(`${method} captures each descriptor once and continues after a failed capture`, async () => {
             const ctx = context()
             const first = new Error("nested first")
             const last = new Error("nested last")
@@ -129,17 +131,18 @@ describe("complete Array preparation", () => {
             let fail = false
             const source = new Proxy([[runtime.createPoisonError(first, ctx, runtime.ERROR_KIND.OperationInputFailed)], 0, later.promise], {
                 getOwnPropertyDescriptor(target, key) {
-                    if (fail && key === "1" && ++reads === 2) throw reflection
+                    if (fail && key === "1") { reads++; throw reflection }
                     return Reflect.getOwnPropertyDescriptor(target, key)
                 },
             })
             runtime.import(source, ctx)
-            const chain = new runtime.Chain(source, ctx)
+            const chain = new runtime.Chain(source, ctx, runtime.CHAIN_MODE.Complete)
             fail = true
             const work = runtime.run(chain, [], method, [], ctx, {})
             assert(work instanceof Promise)
             later.resolve([runtime.createPoisonError(last, ctx, runtime.ERROR_KIND.OperationInputFailed)])
             assertCauses(await work, [first, reflection, last])
+            assert.equal(reads, 1)
             assert.equal(ctx.execution.fatalError, null)
             fail = false
             verifyRefCounts(ctx, source)
@@ -175,7 +178,7 @@ describe("complete Array preparation", () => {
                         return Reflect.getOwnPropertyDescriptor(target, key)
                     },
                 })
-                const chain = new runtime.Chain(source, ctx)
+                const chain = new runtime.Chain(source, ctx, runtime.CHAIN_MODE.Complete)
                 fail = true
                 const work = runtime.run(chain, [], "flat", [depth], ctx, {})
                 if (depth && delivery === "pending") {
@@ -218,7 +221,7 @@ describe("complete Array preparation", () => {
             })
             const view = runtime.run(new runtime.Chain(source, ctx), [], "slice", [1, 5], ctx, {})
             fail = true
-            const failure = runtime.run(new runtime.Chain(view, ctx), [], method, [], ctx, {})
+            const failure = runtime.run(new runtime.Chain(view, ctx, runtime.CHAIN_MODE.Complete), [], method, [], ctx, {})
             assertCauses(failure, [first, reflection, last])
             assert.equal(ctx.execution.fatalError, null)
         })

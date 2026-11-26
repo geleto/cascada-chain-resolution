@@ -28,32 +28,44 @@ const specs = {
     toSpliced: [1, 1], sort: [], toSorted: [], flat: [1],
 }
 const rows = []
-function issue(method, fresh, failKey, live = false, position = 'receiver') {
-    const label = `${method}/${fresh}/${failKey ?? 'healthy'}/${live}/${position}`
+function issue(method, fresh, failKey, live = false, route = 'receiver') {
+    const label = `${method}/${fresh}/${failKey ?? 'healthy'}/${live}/${route}`
     const ctx = { execution: new r.Execution(), errorContext: label }
     const raw = [{ selected: 0 }, { selected: 1 }, { selected: 2 }]
+    const mutation = route === 'mutation'
+    const pending = mutation ? new Promise(() => {}) : undefined
+    if (pending) raw.splice(1, 0, pending)
     const handler = handlerFor(fresh, failKey), source = new Proxy(raw, handler)
     const admitted = r.import(source, ctx)
-    const chain = new r.Chain(position === 'argument' ? [7] : admitted, ctx)
-    const weak = [raw, source, ...raw].map(value => new WeakRef(value))
+    const chain = new r.Chain(route === 'argument' ? [7] : admitted, ctx, r.CHAIN_MODE.Complete)
+    const weak = [raw, source, ...raw.filter(value => value !== pending)].map(value => new WeakRef(value))
     handler.armed = true
-    const args = position === 'argument' ? [admitted] : specs[method].slice()
-    if (method === 'splice' || method === 'toSpliced') args.push({ inserted: true })
-    let result = r.run(chain, [], method, args, ctx, {})
+    const args = route === 'argument' ? [admitted] : specs[method].slice()
+    if (method === 'splice' || method === 'toSpliced') {
+        // The retained prefix must reach sparse key enumeration for this fault.
+        if (failKey === 'keys') args[0] = 2
+        if (mutation) args[1] = 2
+        else args.push({ inserted: true })
+    }
+    let result = r.run(chain, [], method, args, ctx, mutation ? { mutationScopeDepth: 0 } : {})
     handler.armed = false
     if (failKey) {
         assert(r.isPoisonError(result), label)
         assert.equal(result.cause, handler.cause, label)
-        assert.equal(result.kind, r.ERROR_KIND.InvocationFailed, label)
+        assert.equal(result.kind, mutation ? r.ERROR_KIND.PropertyMutationFailed : r.ERROR_KIND.InvocationFailed, label)
         assert.equal(result.errorContext, label)
         assert(handler.hits > 0, label)
+        if (mutation) {
+            r.repairPath(chain, [], ctx)
+            assert.equal(r.lookupPath(chain, [3, 'selected'], ctx), 2)
+        }
     }
     let retained
-    if (live) retained = new r.Chain(result, ctx)
+    if (live) retained = new r.Chain(result, ctx, r.CHAIN_MODE.Complete)
     if (!failKey) result = undefined
     r.assignPath(chain, [], null, ctx)
     assert.equal(ctx.execution.fatalError, null)
-    rows.push({ label, ctx, chain, retained, poison: result, weak, live })
+    rows.push({ label, ctx, chain, retained, poison: result, weak, live, pending })
 }
 for (const method of Object.keys(specs)) {
     for (const fresh of [false, true]) for (const failKey of ['keys', '0', '2']) issue(method, fresh, failKey)
@@ -65,6 +77,8 @@ for (const method of Object.keys(specs)) {
         issue(method, false, undefined, true, 'argument')
     }
 }
+// A late failure follows a surviving child and two removed slots, one pending.
+for (const fresh of [false, true]) issue('splice', fresh, '3', false, 'mutation')
 for (let turn = 0; turn < 30; turn++) { await new Promise(setImmediate); globalThis.gc() }
 const retained = rows.filter(row => !row.live && row.weak.some(value => value.deref()))
     .map(row => ({ label: row.label, live: row.weak.map(value => !!value.deref()) }))

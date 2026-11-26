@@ -45,7 +45,7 @@ The probe checks 180,000 count outcomes and composes 20,000 append/trim operatio
 
 ### Shape captures have their own versions
 
-A shape-only capture must reference count facts, not content-tree nodes. A content node being exclusively owned does not imply its count fact is exclusive: an earlier length query may still hold that fact. Later edits create or reuse the appropriate successor shape while preserving those captures. Settlement only refines the same captured fact.
+A shape-only capture references the count producer. That producer may need an input value for classification, as when `[p].flat(1).length` distinguishes a scalar from an empty Array. Release its classification use when the needed shape is captured. An unrelated content tree has no such use. [Source retention](array-method-specification.md#restrict-source-retention-through-the-mapping) A content node being exclusively owned does not imply its count fact is exclusive: an earlier length query may still hold that fact. Later edits create or reuse the appropriate successor shape while preserving those captures. Settlement only refines the same captured fact.
 
 Thus a loop capturing pending length before each push can retain small `base + offset` facts while the exclusive content tail continues to grow. It need not copy the content tree or create a linked length-history chain just to protect those queries.
 
@@ -88,6 +88,8 @@ adapter for that index is retired, so it supplies no current integration evidenc
 Use each live restricted source span as the ownership record for its captured candidates. The layout owner keeps the forward use. While active, that use participates in retention-parent traversal and protects its captured data in the ordinary COW decision. Share the span across overlapping uses and release its source at last use. Keep numeric-parent enumeration and output counters restricted to established placements. Retirement unlinks the active use and reconsiders its source. Re-entry restores the use from the owner's forward selection. A cycle `Array → deferred input → Array` can then retire after its last outside holder or independent work releases it. [Retention parents](../src/parent-placements.js) · [COW decision](../src/meta.js) · [Retirement](../src/ownership.js)
 
 ### Publication baseline
+
+The prototype measurements below concern the prototype's representation. Production verification counts placement copies and leases with both a structural cut and a growing pending tail outstanding. A copied range shares its unchanged subtree and its captured producer. A fixed-coordinate copy publishes the parent of a delivered managed child while another payload remains unresolved. Test an earlier capture, an indexed reader and a later nested mutation of the copy. [Runtime depth and transfer fixture](../test/fixtures/array-history-depth.mjs) · [Parent and counter checks](../test/array-structural-work.test.js)
 
 For the initial integration, publish established changed placements through existing property versions and parent updates. Retain the current simple Array backing projection where it already applies. Defer arbitrary multi-span/reversed backing projection until a measured workload justifies that additional mechanism.
 
@@ -173,12 +175,14 @@ The expanded [method probe](../test/experiments/array-method-specification-probe
 | --- | --- |
 | Coupled copying | 63,264 selector queries and 44,328 sparse-placement checks against native copyWithin. |
 | Coordinates | 238,383 normalization/length witnesses, plus an arithmetic distinction between independent argument positions and shared internal facts. Artificial bounds do not model supported failed run inputs; production evaluator acceptance remains required. |
-| Sorting | 1,386 permutation cases with fixed undefined/hole suffixes under the earlier fallback proposal. Healthy failure fallback/early-suffix witnesses must be replaced for the selected whole-sort failure boundary. |
+| Sorting | 1,386 successful permutations preserve the private undefined/hole partition. The [kernel iteration tests](../test/array-iteration.test.js) hold a required comparator pending and check both suffix placements, body effects and data after repair in all modes. The [sort boundary tests](../test/array-sort-boundaries.test.js) cover comparator failure in mutating and copying calls. |
 | Flattening | 70 depth domains, including holes and repeated aliases. |
 | Runtime integration | Four fulfillment/rejection and pre-delivery-detachment cases: indexed publication before callbacks, captured queries, alias/cycle export, retirement, and re-entry without resubscription. |
 | History work | Exact-sum and fixed-width mixed-transform counter tests at 32/128/512 versions. |
 
 The focused existing Chain, refcount, and boundary-lifetime suite also passes 129 tests. These checks validate the reused mechanisms and specification algorithms. They do not claim that the future production layout has already passed end-to-end tests.
+
+A range can answer a skip question while its cause and repair outcome still depend on selection. Use the range’s existing membership, obstruction and captured placements to answer those questions independently. A pending terminal collection retains its required causes. A live repairable capture also retains its underlying data. An output that received only a permanent marker needs its visible cause. Verify that closing, overwriting or repairing one consumer releases its spent source use while an independently issued result remains pending. [Captured skip and repair](array-method-specification.md#copywithins-coupled-coordinates)
 
 At implementation, run the same witnesses through actual layouts and the repository's required sequence/conflict/consistency/lifetime suites, including the plan's added boundary combinations and updated sort failure/repair cases. Preserve restricted captures, forward-state restoration, role-aware queries, and the measured work assertions. Balancing/leaf constants, optional cache thresholds, generalized projection, and materialization thresholds remain implementation measurements under the selected contract.
 

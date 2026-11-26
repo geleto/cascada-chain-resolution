@@ -1,16 +1,18 @@
 import { createMutationOutcome } from "./mutations.js"
 import * as internalSteps from "./internal-step.js"
-import * as arrayRemaps from "./array-remap.js"
 import * as errorUtils from "./error.js"
-import { inheritIdentity, IdentityPublication } from "./captured-identity.js"
+import { isPending } from "./language-values.js"
+import { advanceEntryIdentity, inheritIdentity, IdentityPublication } from "./captured-identity.js"
 import { assembleExternalSnapshot } from "./external-snapshot.js"
+import { fixed } from "./array-sequence.js"
+import { span, missingOutputMarker } from "./array-layout.js"
+import { CHAIN_MODE } from "./chain.js"
+import { PendingFailure, resolvePlacementTransition, structuralFailure } from "./property-versions.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
     PASS_AS_PAYLOAD,
     runArrayStep,
-    searchFromIndex,
-    resolveArrayLength,
     resolveArrayInRange,
 } from "./array-methods.js"
 
@@ -33,6 +35,8 @@ function selectArrayMethodDescription(invocationWork) {
     }
     if (invocationWork.receiverCapture)
         invocationWork.arrayLength = invocationWork.receiverCapture.roots[0].shape.length
+    invocationWork.controlledArray = true
+    if (invocationWork.receiverOwnsFailure) invocationWork.narrowScope?.()
     return {
         receiverToLease: mutation ? undefined : invocationWork.receiver,
         leaseInputsThroughResult: !mutation &&
@@ -40,15 +44,16 @@ function selectArrayMethodDescription(invocationWork) {
         prepareArguments: () => runArrayStep(invocationWork, () => internalSteps.continueGraphTransition(
             prepareArrayMethodArguments(methodDefinition, invocationWork),
             invocationWork.operationContext, args => {
-                if (errorUtils.isPoisonError(args)) return args
+                if (errorUtils.isPoisonError(args) || args instanceof PendingFailure) return args
                 const prepared = methodDefinition.prepare ? methodDefinition.prepare(args, invocationWork) : args
                 return internalSteps.continueGraphTransition(prepared, invocationWork.operationContext,
-                    args => errorUtils.isPoisonError(args) ? args :
-                        prepareArrayReceiver(methodDefinition, args, invocationWork),
+                    args => errorUtils.isPoisonError(args) || args instanceof PendingFailure || !invocationWork.receiverCapture ? args :
+                        prepareArrayReceiver(args, invocationWork),
                     undefined, invocationWork)
             },
             undefined, invocationWork)),
         invoke(preparedArguments) {
+            if (preparedArguments instanceof PendingFailure) return preparedArguments.outcome(invocationWork.mutation)
             try {
                 return runArrayStep(invocationWork, () =>
                     invokeArrayMethod(methodDefinition, preparedArguments, invocationWork))
@@ -57,42 +62,60 @@ function selectArrayMethodDescription(invocationWork) {
     }
 }
 
-// Intrinsics require an exact remap length. Controlled algorithms prepare
-// their own bounds or capture shape alongside their required placements.
-function prepareArrayReceiver(methodDefinition, args, work) {
-    return runArrayStep(work, () => methodDefinition.intrinsic
-        ? resolveArrayLength(work, length => { work.arrayLength = length; return finish() })
-        : finish())
-
-    function finish() {
-        const failure = validateArrayOperation(args, work)
-        if (failure || !work.receiverCapture) {
-            try { return failure ?? args }
-            finally { args = undefined }
-        }
-        return internalSteps.continueGraphTransition(assembleExternalSnapshot(work.receiverCapture),
-            work.operationContext, receiver => {
-                try {
-                    work.receiverCapture = undefined
-                    work.setReceiver(receiver, true)
-                    work.leaseReceiver(receiver)
-                    return args
-                } finally { args = undefined }
-            }, undefined, work)
-    }
+function prepareArrayReceiver(args, work) {
+    return runArrayStep(work, () => internalSteps.continueGraphTransition(assembleExternalSnapshot(work.receiverCapture),
+        work.operationContext, receiver => {
+            try {
+                work.receiverCapture = undefined
+                work.setReceiver(receiver, true)
+                work.leaseReceiver(receiver)
+                return args
+            } finally { args = undefined }
+        }, undefined, work))
 }
 
 function prepareArrayMethodArguments(methodDefinition, invocationWork) {
+    const markers = invocationWork.missingOutput
+    if (markers) {
+        // The first owed cause blocks a Complete Array. Streaming Arrays
+        // append every owed position, including repeated causes.
+        if (invocationWork.mode === CHAIN_MODE.Complete) {
+            const ctx = invocationWork.operationContext
+            const cause = markers === true ? invocationWork.prepareArgument(0) :
+                resolvePlacementTransition(markers.point(0, false), ctx, structuralFailure)
+            return isPending(cause, ctx) ? new PendingFailure(cause, ctx) : cause
+        }
+        return markers === true ? fixed(span(1, missingOutputMarker(invocationWork.prepareArgument(0), invocationWork.operationContext))) : markers
+    }
     if (methodDefinition.prepareArguments) return methodDefinition.prepareArguments(invocationWork)
-    let { args } = invocationWork
+    const { operationContext } = invocationWork
+    let args = invocationWork.args
+    const { argumentIndex } = methodDefinition
+    // A separator needs a second occurrence; a search or index needs a first.
+    // A ready absolute at() already names its placement without reading length.
+    if (args.length && argumentIndex !== undefined &&
+        !(methodDefinition === ARRAY_METHODS.at && typeof args[0] === "number" && args[0] >= 0)) {
+        const needed = runArrayStep(invocationWork, () => resolveArrayInRange(argumentIndex, invocationWork, present => present))
+        if (isPending(needed, operationContext))
+            invocationWork.prepareArgumentFrontier(methodDefinition.inputs.length, args)
+        return internalSteps.continueGraphTransition(needed, operationContext, present => {
+            try {
+                if (present === false) {
+                    invocationWork.prepareArgumentFrontier(0, args)
+                    return []
+                }
+                // A shape probe for at() is optional until its index is known.
+                if (errorUtils.isPoisonError(present) && methodDefinition !== ARRAY_METHODS.at) return present
+                return prepareConversions(methodDefinition, invocationWork, args)
+            } finally { args = undefined }
+        }, undefined, invocationWork)
+    }
+    return prepareConversions(methodDefinition, invocationWork, args)
+}
+
+function prepareConversions(methodDefinition, invocationWork, args) {
     const inputs = methodDefinition.inputs ?? []
-    // Capture the bound's shape dependency before any converted input can
-    // discard the receiver. Its pending question retains no receiver data.
-    if (inputs[1] === searchFromIndex && args.length > 1)
-        invocationWork.searchHasElements = resolveArrayInRange(0, invocationWork, present => present)
-    const count = inputs[1] === searchFromIndex && invocationWork.searchHasElements === false
-        ? 1 : methodDefinition.restInput ? args.length : inputs.length
-    invocationWork.prepareArgumentFrontier(count)
+    invocationWork.prepareArgumentFrontier(methodDefinition.restInput ? args.length : inputs.length, args)
     // The prepared length preserves omission and every remaining argument.
     let prepared = new Array(methodDefinition.restInput
         ? args.length
@@ -113,9 +136,8 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
         }
         const result = input(args[index], invocationWork)
         // Scalar, identity and executable conversion capture their source on
-        // reception. Concat retains payloads; a search bound first awaits shape.
-        if (methodDefinition !== ARRAY_METHODS.concat && input !== searchFromIndex)
-            invocationWork.releaseArgument(index)
+        // reception. A search bound first awaits shape.
+        invocationWork.releaseArgument(index)
         readiness.push(
             internalSteps.continueGraphTransition(
                 result,
@@ -145,49 +167,24 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     )
 }
 
-// Views and range writes build their output directly. Other structural methods
-// materialize one remap. Both routes share result retention and publication.
 function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) {
     const { mutation, operationContext } = invocationWork
     let published = true
-    const reportWrites = writes => { published = writes }
-    if (methodDefinition.output) {
-        const output = methodDefinition.output(preparedArguments, invocationWork, reportWrites)
-        if (output !== undefined || published === false) return finish(output, () => methodDefinition.methodResult(
-            methodDefinition.outputResult(output, invocationWork), invocationWork))
-    }
-    if (methodDefinition.observe) return methodDefinition.observe(preparedArguments, invocationWork)
+    return methodDefinition.apply(preparedArguments, invocationWork, finish, reportWrites)
 
-    let remap, nativeResult
-    if (methodDefinition.remap) {
-        remap = methodDefinition.remap(preparedArguments, invocationWork, reportWrites)
-    } else {
-        remap = arrayRemaps.createRemap(invocationWork.receiver, operationContext, 0, invocationWork.arrayLength)
-        nativeResult = Reflect.apply(methodDefinition.intrinsic, remap, preparedArguments)
-        // Dense observations consume only the placements selected by the native
-        // mapping. Removed inputs create no presence dependency.
-        if (methodDefinition.methodResult === undefined)
-            remap = arrayRemaps.resolveDenseRemapPresence(nativeResult, invocationWork)
+    function reportWrites(writes) {
+        if (isPending(writes, operationContext)) {
+            published = new IdentityPublication(operationContext)
+            published.addPending(writes)
+        } else published = writes
     }
-    return internalSteps.continueGraphTransition(remap, operationContext,
-        remap => {
-            try { return runArrayStep(invocationWork, () => {
-                if (errorUtils.isPoisonError(remap)) return remap
-                if (mutation && !published) return finish()
-                // Only intrinsic mutators have a separate native result. Capture
-                // removed placements before materializing the new receiver.
-                const result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
-                    ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
-                const output = runArrayStep(invocationWork, () =>
-                    arrayRemaps.createArrayFromRemap(remap, operationContext))
-                return finish(output, () => result)
-            }) } finally { remap = nativeResult = undefined }
-        }, undefined, invocationWork)
 
-    function finish(output, readResult) {
+    function finish(output, readResult, directFailure) {
         if (!mutation) return invocationWork.retainOutput(output)
-        if (!published) return createMutationOutcome(invocationWork.receiver,
-            invocationWork.retainOutput(invocationWork.receiver), operationContext, false)
+        if (!published) {
+            const receiver = invocationWork.receiver
+            return createMutationOutcome(receiver, directFailure ?? invocationWork.retainOutput(receiver), operationContext, false)
+        }
         // A range write may reuse its receiver. Its captured old identity
         // still belongs to earlier searches and the recovery snapshot.
         if (output === invocationWork.receiver && published === true) {
@@ -202,13 +199,19 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
                 published.finish()
             }
             published = published.outcome()
-        }
+        } else if (invocationWork.appendOnly && published && !errorUtils.isPoisonError(output))
+            advanceEntryIdentity(invocationWork.receiver, output, operationContext)
         // Publication owns the output before consuming an independent removed
         // element; that consumption can remain pending or fail during capture.
         const outcome = createMutationOutcome(output, undefined, operationContext, published)
         try {
-            let result = methodDefinition.methodResult === RETURN_RECEIVER
-                ? invocationWork.retainOutput(output) : readResult()
+            // A later command can mutate the published receiver while the
+            // independent direct-failure decision is still pending.
+            const returnsReceiver = methodDefinition.methodResult === RETURN_RECEIVER
+            if (returnsReceiver && !errorUtils.isPoisonError(directFailure)) invocationWork.retainOutput(output)
+            const success = () => returnsReceiver ? output : readResult()
+            let result = directFailure === undefined ? success() : internalSteps.continueGraphTransition(
+                directFailure, operationContext, failure => failure ?? runArrayStep(invocationWork, success))
             if (methodDefinition.methodResult !== RETURN_RECEIVER && errorUtils.isPoisonError(output)) {
                 // Publish receiver failure now; only the independent result waits.
                 result = internalSteps.continueGraphTransition(result, operationContext,
@@ -222,35 +225,6 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
             outcome.releasePublication()
             throw failure
         }
-    }
-}
-
-function validateArrayOperation(args, { arrayLength: length, method, operationContext }) {
-    const appends = method === "push" || method === "unshift"
-    const splices = method === "splice" || method === "toSpliced"
-    if (!appends && !splices) return
-    let nextLength = length
-    if (appends) nextLength += args.length
-    else if (splices) {
-        const relativeStart = args[0] ?? 0
-        const start =
-            relativeStart < 0
-                ? Math.max(length + relativeStart, 0)
-                : Math.min(relativeStart, length)
-        const removed =
-            args.length === 0
-                ? 0
-                : args.length === 1
-                  ? length - start
-                  : Math.min(Math.max(args[1] ?? 0, 0), length - start)
-        nextLength += Math.max(args.length - 2, 0) - removed
-    }
-    if (nextLength > 0xffffffff) {
-        return errorUtils.validationError(
-            "Invalid Array length",
-            operationContext,
-            errorUtils.ERROR_KIND.InvalidArrayLength,
-        )
     }
 }
 

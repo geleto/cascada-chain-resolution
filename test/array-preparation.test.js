@@ -37,10 +37,13 @@ describe("Array copy placement capture", () => {
         const invalid = runtime.run(chain, [], "with", [5, 7], ctx, {})
         assert.equal(invalid.kind, runtime.ERROR_KIND.InvalidArrayOperation)
         const result = runtime.run(chain, [], "with", [0, 7], ctx, {})
-        assert(result instanceof Promise, "Valid index alone does not determine output length")
+        assert(!(result instanceof Promise), "The valid position and bounded result establish a healthy Array")
+        const copy = new runtime.Chain(result, ctx)
+        assert.equal(runtime.lookupPath(copy, [0], ctx), 7)
+        assert(runtime.lookupPath(copy, ["length"], ctx) instanceof Promise)
         hold.resolve()
         await entry
-        assert.deepEqual(runtime.export(new runtime.Chain(await result, ctx), [], ctx), [7, 2])
+        assert.deepEqual(await runtime.export(copy, [], ctx), [7, 2])
     })
 
     for (const pending of [false, true]) it(`reads a nonnegative at placement without consuming length, pending=${pending}`, async () => {
@@ -82,15 +85,14 @@ describe("Array copy placement capture", () => {
             assert(!(imported instanceof Promise), "Nested pending work does not delay result import")
             const copy = new runtime.Chain(imported, ctx)
             const result = runtime.run(copy, [], method, args, ctx, {})
-            assert(result instanceof Promise, "Array copying needs the preceding entry's presence")
-            let output
-            const completed = Promise.resolve(result).then(value => { output = new runtime.Chain(value, ctx) })
+            assert(!(result instanceof Promise), "The pending slot leaves the independent copy accessible")
+            const output = new runtime.Chain(result, ctx)
+            assert.equal(runtime.lookupPath(output, [1], ctx), 2)
             hold.resolve()
             await entry
             await new Promise(setImmediate)
-            assert(output, "Publication must not wait for ordinary pending data")
+            assert.equal(runtime.lookupPath(output, ["length"], ctx), 3)
             data.resolve(8)
-            await completed
             const expected = [8, 2, 3]
             if (publication === "absent") delete expected[0]
             assert.deepStrictEqual(await runtime.export(output, [], ctx), expected[method](...args))
@@ -153,13 +155,12 @@ describe("Array copy placement capture", () => {
             const argument = new runtime.Chain(payload, ctx), chain = new runtime.Chain([1, 2], ctx)
             const entry = runtime.enter(chain, [0], ctx, true, () => hold.promise)
             const args = method === "with" ? [1, deliver(payload)] : [1, 1, deliver(payload)]
-            const result = runtime.run(chain, [], method, args, ctx, {})
+            const output = new runtime.Chain(runtime.run(chain, [], method, args, ctx, {}), ctx)
             await new Promise(setImmediate)
             runtime.assignPath(argument, ["n"], 9, ctx)
             hold.resolve()
             await entry
-            const output = new runtime.Chain(await result, ctx)
-            assert.deepStrictEqual(runtime.export(output, [], ctx), [1, { n: 2 }])
+            assert.deepStrictEqual(await runtime.export(output, [], ctx), [1, { n: 2 }])
             assert.deepStrictEqual(runtime.export(argument, [], ctx), { n: 9 })
             assert.equal(hasReadLease(payload, ctx), false)
             verifyRefCounts(ctx, chain._state.value, argument._state.value, output._state.value)
@@ -195,7 +196,7 @@ describe("Array preparation boundaries", () => {
                 const input = deliver(unreadableArray(cause, ctx))
                 const chain = new runtime.Chain(
                     method === "flat" ? [input] : [],
-                    ctx,
+                    ctx, runtime.CHAIN_MODE.Complete,
                 )
                 const result = runtime.run(
                     chain,
@@ -218,15 +219,15 @@ describe("Array preparation boundaries", () => {
             })
         }
 
-        it(`flat collects both cyclic branches with ${delivery} input`, async () => {
+        it(`flat shares its cycle diagnostic across both branches with ${delivery} input`, async () => {
             const ctx = context()
             const cycles = [[], []]
             for (const cycle of cycles) cycle.push(cycle)
-            const chain = new runtime.Chain(cycles.map(deliver), ctx)
+            const chain = new runtime.Chain(cycles.map(deliver), ctx, runtime.CHAIN_MODE.Complete)
             const result = runtime.run(chain, [], "flat", [Infinity], ctx, {})
             if (delivery !== "pending") assert(runtime.isPoisonError(result))
             const failure = await result
-            assert.equal(leaves(failure).length, 2)
+            assert.equal(leaves(failure).length, 1)
             for (const error of leaves(failure)) {
                 assert.equal(
                     error.kind,
@@ -284,7 +285,7 @@ describe("Array preparation boundaries", () => {
             const inputs = [unreadableArray(causes[0], ctx), later.promise]
             const chain = new runtime.Chain(
                 method === "flat" ? inputs : [],
-                ctx,
+                ctx, runtime.CHAIN_MODE.Complete,
             )
             let completed = false
             const result = runtime.run(

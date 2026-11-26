@@ -33,7 +33,7 @@ describe("identity lineage completion", () => {
         for (const pending of [false, true]) {
             const ctx = context(), hold = Promise.withResolvers()
             const host = []; host[0] = host; host[1] = 7
-            const source = new r.Chain(r.import({ array: host }, ctx), ctx)
+            const source = new r.Chain(r.import({ array: host }, ctx), ctx, r.CHAIN_MODE.Complete)
             const body = inside => { if (write) r.assignPath(inside, [], 8, ctx) }
             const entry = r.enter(source, ["array", 1], ctx, true,
                 pending ? inside => hold.promise.then(() => body(inside)) : body)

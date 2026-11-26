@@ -31,8 +31,6 @@ function handlerFor(fault, fresh) {
             return Reflect.getOwnPropertyDescriptor(target, key)
         },
         defineProperty(target, key, descriptor) {
-            // Runtime-owned storage must accept ordinary valid length changes.
-            // Element definitions retain their supported failure boundary.
             if (key !== "length") inspect(this, "indexDefine")
             return Reflect.defineProperty(target, key, descriptor)
         },
@@ -44,32 +42,41 @@ function issue(fault, fresh = true, live = false, readyPayload = false, method =
         `/readyPayload=${readyPayload}/${method}`
     const ctx = { execution: new r.Execution(), errorContext: label }
     const input = Promise.withResolvers(), handler = handlerFor(fault, fresh)
-    const raw = [0], source = new Proxy(raw, handler), chain = new r.Chain(source, ctx)
+    const raw = [0], source = new Proxy(raw, handler), chain = new r.Chain(source, ctx, r.CHAIN_MODE.Complete)
     const payload = readyPayload ? { n: 1 } : input.promise
     const weak = [new WeakRef(source), new WeakRef(raw), ...(readyPayload ? [new WeakRef(payload)] : [])]
     handler.armed = true
-    const result = r.run(chain, [], method, method === "concat" ? [[payload]] : [payload], ctx,
+    let result = r.run(chain, [], method, method === "concat" ? [[payload]] : [payload], ctx,
         method === "concat" ? {} : { mutationScopeDepth: 0 })
     const counts = { ...handler.counts }
     handler.armed = false
-    if (fault) {
-        assert(r.isPoisonError(result), `${label}: reached storage failure must stay recoverable`)
-        assert.equal(result.cause, handler.cause, `${label}: preserve the exact cause`)
-        assert.equal(result.kind, method === "concat" ? r.ERROR_KIND.InvocationFailed : r.ERROR_KIND.PropertyMutationFailed)
+    if (fault?.kind === "lengthRead" && fault.ordinal === 1) {
+        assert(r.isPoisonError(result), label)
+        assert.equal(result.cause, handler.cause, label)
+        assert.equal(result.kind, r.ERROR_KIND.PropertyMutationFailed)
         assert.equal(result.errorContext, label)
-    } else assert.equal(result, 2)
+    } else if (method === "concat") {
+        const held = new r.Chain(result, ctx)
+        assert.equal(r.lookupPath(held, ["length"], ctx), 2)
+        assert.equal(r.lookupPath(held, [1], ctx), payload)
+        r.assignPath(held, [], null, ctx)
+        result = undefined
+    } else {
+        assert.equal(result, 2, label)
+        assert.equal(r.lookupPath(chain, ["length"], ctx), 2)
+    }
     assert.equal(ctx.execution.fatalError, null)
     // Explicit replacement releases the failed mutation's recovery baseline too.
     if (!live) r.assignPath(chain, [], null, ctx)
     input.resolve(1)
-    return { label, ctx, chain, input, result, weak, counts }
+    return { label, ctx, chain, input, result, cause: fault && handler.cause, weak, counts }
 }
 
 function derive(method, ordinal, fresh = true) {
     const label = `${method}/lengthRead:${ordinal ?? "healthy"}/fresh=${fresh}`
     const ctx = { execution: new r.Execution(), errorContext: label }
     const handler = handlerFor(ordinal ? { kind: "lengthRead", ordinal } : undefined, fresh)
-    const raw = [0, 1, 2], source = new Proxy(raw, handler), chain = new r.Chain(source, ctx)
+    const raw = [0, 1, 2], source = new Proxy(raw, handler), chain = new r.Chain(source, ctx, r.CHAIN_MODE.Complete)
     const weak = [new WeakRef(source), new WeakRef(raw)]
     handler.armed = true
     let result = r.run(chain, [], method, [], ctx, method === "slice" ? {} : { mutationScopeDepth: 0 })
@@ -81,7 +88,7 @@ function derive(method, ordinal, fresh = true) {
         assert.equal(result.kind, method === "slice" ? r.ERROR_KIND.InvocationFailed : r.ERROR_KIND.PropertyMutationFailed)
         assert.equal(result.errorContext, label)
     } else if (method === "slice") {
-        const held = new r.Chain(result, ctx)
+        const held = new r.Chain(result, ctx, r.CHAIN_MODE.Complete)
         result = r.export(held, [], ctx)
         assert.deepEqual(result, [0, 1, 2])
         r.assignPath(held, [], null, ctx)
@@ -115,6 +122,17 @@ const derivedControls = ["slice", "pop", "shift"].map(method => {
 })
 const live = issue(undefined, true, true)
 
+function openPrefix(keep) {
+    const ctx = { execution: new r.Execution(), errorContext: "unsettled suffix" }
+    const backing = [1, 2], weak = new WeakRef(backing), suffix = Promise.withResolvers()
+    const source = new r.Chain(backing, ctx)
+    const result = new r.Chain(r.run(source, [], "concat", [suffix.promise], ctx, {}), ctx)
+    r.assignPath(source, [], null, ctx)
+    if (!keep) r.assignPath(result, [], null, ctx)
+    return { ctx, result, suffix, weak }
+}
+const heldPrefix = openPrefix(true), discardedPrefix = openPrefix(false)
+
 async function collect() {
     for (let turn = 0; turn < 30; turn++) {
         await new Promise(setImmediate)
@@ -123,6 +141,10 @@ async function collect() {
 }
 
 await collect()
+assert.equal(discardedPrefix.weak.deref(), undefined, "An abandoned open suffix retains no physical prefix")
+assert(heldPrefix.weak.deref())
+assert.equal(r.lookupPath(heldPrefix.result, [1], heldPrefix.ctx), 2)
+r.assignPath(heldPrefix.result, [], null, heldPrefix.ctx)
 assert.deepEqual(r.export(live.chain, [], live.ctx), [0, 1])
 assert(live.weak.every(ref => ref.deref()), "A live owner must retain its backing")
 const retained = [...cases, healthy, healthyPayload, ...derivedControls]
@@ -130,5 +152,6 @@ const retained = [...cases, healthy, healthyPayload, ...derivedControls]
 assert.deepEqual(retained, [], "Unformatted Array storage failures must release discarded backing")
 r.assignPath(live.chain, [], null, live.ctx)
 await collect()
+assert.equal(heldPrefix.weak.deref(), undefined, "The last prefix holder can release before suffix settlement")
 assert(live.weak.every(ref => ref.deref() === undefined), "Releasing the last healthy owner must release its backing")
-console.log(JSON.stringify({ failures: cases.length, controls: 4 + derivedControls.length, boundaries: healthy.counts }))
+console.log(JSON.stringify({ failures: cases.length, controls: 6 + derivedControls.length, boundaries: healthy.counts }))

@@ -92,7 +92,7 @@ describe("invocation preparation boundaries", () => {
             const { pair, gate, entry } = pendingAliasPair(ctx)
             if (method !== "with" && method !== "concat") pair.length = 0xffffffff
             const api = r.externalState({ pair, marker: 0 })
-            const chain = new r.ContextChain({ api }, ctx, { api: {} })
+            const chain = new r.ContextChain({ api }, ctx, { api: {} }, r.CHAIN_MODE.Complete)
             const unused = r.validationError("unused payload", ctx, r.ERROR_KIND.OperationInputFailed)
             const args = method === "with" ? [index, unused] : method === "concat" ? [new Array(0xffffffff)] :
                 method === "splice" || method === "toSpliced" ? [0, 0, unused] : [unused]

@@ -23,7 +23,7 @@ function classifyLanguageProperty(parent, key, operationContext) {
     }
     if (isLogicalArray(parent, operationContext)) {
         if (key === "length") return ARRAY_LENGTH
-        return isArrayIndex(key)
+        return isArrayIndex(key) || ArrayView.mayHaveVirtualIndex(parent, key, operationContext)
             ? ORDINARY_PROPERTY
             : INVALID_ARRAY_KEY
     }
@@ -175,7 +175,7 @@ function writeLanguageProperty(parent, key, value, operationContext, descriptor)
                 configurable: true,
             })
         })
-        if (isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, value, operationContext)
+        if (isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, value, operationContext, descriptor ? 0 : 1)
     } finally { parent = value = descriptor = undefined }
 }
 
@@ -220,7 +220,7 @@ function deleteLanguageProperty(parent, key, operationContext, descriptor) {
         }
         const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
         const removed = errorUtils.runExternalAction(operationContext, () => delete parent[key])
-        if (removed && isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, undefined, operationContext)
+        if (removed && isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, undefined, operationContext, isDataPlacement(descriptor) ? -1 : 0)
         return removed
     } finally { parent = undefined }
 }
@@ -228,13 +228,25 @@ function deleteLanguageProperty(parent, key, operationContext, descriptor) {
 // Capture candidates at the call, before descriptor checks, so one failing
 // Proxy descriptor cannot hide later siblings from complete Error collection.
 function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end,
-    type = metadata.metaOf(value, operationContext)?.type) {
+    type = metadata.metaOf(value, operationContext)?.type, separateRegion = false, sparse = false) {
     try {
         const array = type === metadata.TYPE.Array
-        const keys = array
-            ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
+        let keys = array
+            ? ArrayView.physicalKeyCandidates(value, operationContext, start, end, sparse)
             : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
         const meta = metadata.metaOf(value, operationContext)
+        const region = array && ArrayView.region(value, operationContext)
+        for (const part of region?.prefix ? [region.prefix, region] : region ? [region] : []) if (part.implicit) {
+            if (separateRegion) {
+                const offset = meta.arrayRange?.start ?? 0
+                keys = outsideRegion(keys, part, offset)
+                if (part.pending && part.gates) {
+                    const limit = end ?? ArrayView.maximumLength(value, operationContext)
+                    const points = Array.from(part.gates.keys(), i => i - offset).filter(i => i >= start && i < limit)
+                    keys = mergeArrayKeys(keys, points.sort((a, b) => a - b).map(String))
+                }
+            } else keys = mergeArrayKeys(keys, ArrayView.regionKeys(value, part, operationContext, start, end))
+        }
         const versions = ownPlacementVersionEntries(value, operationContext).map(([key]) => key)
         if (!versions.length) return array ? keys : keys.filter(key => typeof key === "string")
         if (array) return mergeArrayKeys(keys, versions.filter(
@@ -248,25 +260,39 @@ function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end
     } finally { value = undefined }
 }
 
+function* outsideRegion(keys, region, offset) {
+    for (const key of keys) {
+        const index = Number(key) + offset
+        if (index < region.start || index >= region.end || region.layout && !region.versionAt(index)) yield key
+    }
+}
+
 // Both lists are captured in numeric order. Merge overlays without expanding
 // a bounded sparse range into an intermediate set of every possible index.
 function* mergeArrayKeys(physical, overlays) {
-    let next = 0
+    const iterator = overlays[Symbol.iterator]()
+    let next = iterator.next()
     for (const key of physical) {
-        while (next < overlays.length && Number(overlays[next]) < Number(key)) yield overlays[next++]
-        if (overlays[next] === key) next++
+        while (!next.done && Number(next.value) < Number(key)) {
+            yield next.value
+            next = iterator.next()
+        }
+        if (next.value === key) next = iterator.next()
         yield key
     }
-    while (next < overlays.length) yield overlays[next++]
+    while (!next.done) {
+        yield next.value
+        next = iterator.next()
+    }
 }
 
 // Complete collectors guard both listing and each presence check. Keep the
 // keys captured before a listing failure and continue past failed descriptors.
-function enumerableLanguageKeys(value, operationContext, start = 0, end, inspect = action => action()) {
+function enumerableLanguageKeys(value, operationContext, start = 0, end, inspect = action => action(), separateRegion = false) {
     const placements = []
     try {
         inspect(() => {
-            for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end)) {
+            for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end, undefined, separateRegion)) {
                 if (inspect(() => hasLanguageProperty(value, key, operationContext)) === true) placements.push(key)
             }
         })
@@ -286,6 +312,8 @@ export {
     deleteLanguageProperty,
     enumerableLanguageKeys,
     getLanguagePlacementDescriptor,
+    getStorageDescriptor,
+    isDataPlacement,
     hasLanguageProperty,
     validatePropertyValue,
     enumerableLanguageKeyCandidates,

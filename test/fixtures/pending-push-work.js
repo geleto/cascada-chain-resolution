@@ -20,7 +20,7 @@ const substitutions = new Map([
         ['version.captures.delete(visit)', '$&; globalThis.__pendingPushCounts().captureMemberships--'],
     ]],
     ['array-view.js', [
-        ['constructor(source, operationContext, start = 0, end) {', '$&\n        globalThis.__pendingPushCounts().views++;'],
+        ['const bounds = metadata.requireMeta(this, operationContext).arrayRange = {', 'globalThis.__pendingPushCounts().views++;\n        $&'],
         ['this.owners = new Set()', '$&; globalThis.__pendingPushCounts().backings++'],
         ['constructor(backing, operationContext) {', '$&\n        globalThis.__pendingPushCounts().producerRecords++;'],
         ['for (const owner of this.owners) {', '$&\n            globalThis.__pendingPushCounts().ownerVisits++;'],

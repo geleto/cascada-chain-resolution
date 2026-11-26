@@ -438,7 +438,7 @@ mechanism rather than reasons to retain parallel engines.
     - Deletion target: an entire producer adapter family and its retain/release/refresh machinery, with no compatibility path left behind.
     - Preserve FIFO operation subscriptions, detached historical captures, failed optional writeback, independent retirement, and linear pending-copy/push work. Do not introduce a global subscription queue.
   - S1.3 — One captured-placement query boundary
-    - Compare `PropertyPlacement`, Array remap preparation, `ManagedCapture`, shape capture, and future F01 queries.
+    - Compare captured property versions, Array remap preparation, `ManagedCapture`, shape capture, and future F01 queries.
     - Try shared capture of presence/source/shape facts, with explicit consumer demands for values, identity, or complete Errors.
     - Deletion target: repeated placement-resolution, subscription, and source-retention loops in capture and Array preparation; avoid a second query wrapper around all existing loops.
 - S2 — One managed publication outcome and commit protocol (C04, C05, C06, C07, C10, C11, C12)

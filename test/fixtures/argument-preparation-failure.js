@@ -42,7 +42,7 @@ for (const reason of ["raw", "poison", "undefined", "fatal"]) {
     const receiver = route === "primitive export" ? "abc" : route === "managed export" ?
         { read(value) { return value } } : route === "external export" ?
             r.externalState({ read(value) { return value } }) : original
-    const chain = new r.Chain(r.import(receiver, initialization), initialization)
+    const chain = new r.Chain(r.import(receiver, initialization), initialization, r.CHAIN_MODE.Complete)
     const unrelated = new r.Chain({ value: 1 }, initialization)
     const sibling = r.import(new Promise(() => {}), initialization)
     const siblingOutcome = sibling.then(value => ({ value }), error => ({ error }))

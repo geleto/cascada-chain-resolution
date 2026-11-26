@@ -1,12 +1,11 @@
 import { runGraphTransition } from "./ownership.js"
-// This module owns the one guarded operation-work family: immediate entry, continuation
-// after one result, complete input collection, and clean-input
-// preparation. These share the execution and owner checks; do not grow them into
-// configurable lifecycle or Error-policy variants. See AGENTS.md "Operation Work Lifetimes".
+// Entry, continuations, early decisions and complete input collection share
+// the execution and owner guards. See AGENTS.md "Operation Work Lifetimes".
 
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
+import { markPromiseHandled } from "./thenable-subscription.js"
 
 function runInternalStep(operationContext, work, value) {
     const fatal = operationContext.execution.fatalError
@@ -73,6 +72,33 @@ function collectInputs(inputs, operationContext, onReady, owner) {
     return collectInputResults(inputs, operationContext, onReady, owner)
 }
 
+// The first proved answer discharges the other inputs. A proof can inspect
+// the ordered pair of controls or count the remaining receipts incrementally.
+function decideInputs(inputs, ctx, prove, owner) {
+    let remaining = inputs.length, signal, unregister
+    if (!remaining) return prove(inputs, undefined, 0)
+    for (let i = 0; i < inputs.length; i++) {
+        const wait = continueGraphTransition(inputs[i], ctx, value => {
+            if (!prove) return
+            inputs[i] = value
+            const result = prove(inputs, value, --remaining)
+            if (result === undefined && remaining) return
+            if (signal) signal.resolve(result)
+            unregister?.()
+            release()
+            return result
+        }, undefined, owner)
+        if (!prove) return wait
+        markPromiseHandled(wait, ctx)
+    }
+    signal = Promise.withResolvers()
+    const { promise } = signal
+    if (owner) unregister = releaseOnClose(owner, release)
+    return promise
+
+    function release() { inputs = prove = signal = unregister = undefined }
+}
+
 // Required preparation keeps collecting Errors after success becomes impossible,
 // but no longer retains successful values or the success-only continuation.
 function prepareInputs(inputs, operationContext, onReady, owner) {
@@ -104,7 +130,7 @@ function collectInputResults(inputs, operationContext, onReady, owner, errors) {
     function finish() {
         unregister?.()
         try {
-            return errors?.size ? errorUtils.combineErrors(errors) : onReady(values)
+            return errors?.size ? errorUtils.combineErrors(errors, operationContext) : onReady(values)
         } finally {
             values = onReady = undefined
             errors?.clear()
@@ -114,6 +140,7 @@ function collectInputResults(inputs, operationContext, onReady, owner, errors) {
 
 export {
     collectInputs,
+    decideInputs,
     continueOperation,
     continueGraphTransition,
     prepareInputs,

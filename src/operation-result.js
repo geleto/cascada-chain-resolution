@@ -58,11 +58,19 @@ function returnExpressionResult(operationContext, result) {
     if (isFatalError(result)) failExecution(operationContext, result)
     if (isPoisonError(result)) return createPoisonedValue(result)
     if (!languageValues.isPending(result, operationContext)) return result
-    return returnPendingResult(operationContext, result, (value, resolve, reject) => {
-        // Pending failure uses the existing Promise, without a ready container.
-        if (isPoisonError(value)) reject(value)
-        else resolve(value)
-    })
+    return returnPendingResult(operationContext, result, settleRejecting)
+}
+
+function settleRejecting(value, resolve, reject) {
+    if (isPoisonError(value)) reject(value)
+    else resolve(value)
+}
+
+function returnIteratorResult(operationContext, result) {
+    if (isFatalError(result)) failExecution(operationContext, result)
+    if (isPoisonError(result)) return Promise.reject(result)
+    return languageValues.isPending(result, operationContext)
+        ? returnPendingResult(operationContext, result, settleRejecting) : Promise.resolve(result)
 }
 
 // Both outward contracts own the same pending fatal obligation. Only their
@@ -90,4 +98,4 @@ function returnPendingResult(operationContext, result, onFulfilled) {
     })
 }
 
-export { returnOperationResult, returnExpressionResult, runManagedOperation, runOperation }
+export { returnOperationResult, returnExpressionResult, returnIteratorResult, runManagedOperation, runOperation }

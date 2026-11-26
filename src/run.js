@@ -4,6 +4,8 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as managedInvocation from "./managed-invocation.js"
+import { CHAIN_MODE } from "./chain.js"
+import { capturePlacement } from "./property-versions.js"
 import {
     transformProperty,
     walkMutationPath,
@@ -32,7 +34,13 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
         },
         delivery,
     )
-    return mutation ? operation.finishMutation(result) : operation.finish(result)
+    const append = mutation && chain._openAppend
+    if (append) append.update(capturePlacement(chain._state, "value", operationContext))
+    chain = undefined
+    const output = mutation ? operation.finishMutation(result) : operation.finish(result)
+    if (append && typeof output === "number" && output > append.maximum)
+        throw new Error("Push exceeds the entry's declared maximum contribution")
+    return output
 }
 
 function runMutation(scope, start, operation, invokeMutation) {
@@ -54,7 +62,11 @@ function runMutation(scope, start, operation, invokeMutation) {
                 return error
             }
             return transformProperty(target, operationContext, invokeMutation)
-        }, { start, publication: scope.publication },
+        }, { start, publication: scope.publication,
+            onTargetCaptured: operation.mode !== CHAIN_MODE.Complete ? () => {
+                scope.targetCaptured = true
+                operation.narrowScope?.()
+            } : undefined },
     )
 }
 
@@ -82,6 +94,9 @@ function selectMethodDescription(invocationWork, externalAccess) {
 
     const type = invocationWork.receiverCapture?.roots[0].type ??
         languageValues.typeOf(receiver, invocationWork.operationContext)
+    if (mutation && (invocationWork.appendOnly || invocationWork.missingOutput) && (type !== languageValues.TYPE.Array || externalAccess))
+        return errorUtils.validationError("Push-only mutation requires a managed Array", invocationWork.operationContext,
+            errorUtils.ERROR_KIND.InvalidArrayOperation)
     if (externalAccess && type === languageValues.TYPE.External) {
         return {
             prepareArguments: () => invocationWork.exportArguments(),

@@ -11,7 +11,7 @@ describe("captured Array flattening work", function () {
                 CASCADA_FLAT_NOOP_COUNTER: control === "counter" ? "1" : "0" },
         })
         assert.equal(child.status, control === "normal" ? 0 : 1, child.error?.message ?? child.stderr)
-        if (control === "normal") assert.equal(JSON.parse(child.stdout).cases, 11)
+        if (control === "normal") assert.equal(JSON.parse(child.stdout).cases, 62)
         else assert.match(child.stderr, control === "loader" ? /Flat work requires its runtime counter loader/ :
             /Flat work instrumentation must count executed capture and expansion/)
     })

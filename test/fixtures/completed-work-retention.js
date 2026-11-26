@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
+import { ArrayView } from "../../src/array-view.js"
 import { metaOf } from "../../src/meta.js"
 import { rejected, OrderedThenable } from "../ordered-thenable.js"
 
@@ -152,7 +153,7 @@ function mutationCase(array, nested, action) {
     return { ctx, chain, error, weak: [new WeakRef(old)] }
 }
 
-function invocationCase(method, pending, comparator, imported, klass) {
+async function invocationCase(method, pending, comparator, imported, klass, regional) {
     const ctx = context("invocation"), signal = pending ? Promise.withResolvers() : undefined
     const first = new Error("first"), second = new Error("second"), child = { unrelated: 1 }
     const nested = [signal?.promise ?? rejected(second)]
@@ -162,10 +163,21 @@ function invocationCase(method, pending, comparator, imported, klass) {
     const receiver = method === "inspect"
         ? Object.assign(klass ? new Receiver() : { inspect() { calls++; return 1 } }, { child, first: rejected(first), nested })
         : [rejected(first), nested, child]
-    const chain = new r.Chain(imported ? r.import(receiver, ctx) : receiver, ctx)
+    let chain
+    if (regional) {
+        const tail = Promise.withResolvers()
+        const source = new r.Chain(receiver, ctx, r.CHAIN_MODE.Unordered)
+        chain = new r.Chain(r.run(source, [], "concat", [tail.promise], ctx, {}), ctx)
+        r.assignPath(source, [], null, ctx)
+        tail.resolve([])
+        await new Promise(setImmediate)
+        const region = ArrayView.region(r.lookupPath(chain, [], ctx), ctx)
+        assert(region && !region.pending)
+    } else chain = new r.Chain(imported ? r.import(receiver, ctx) : receiver, ctx)
+    const refs = regional ? [[], [1], [2]].map(path => new WeakRef(r.lookupPath(chain, path, ctx)))
+        : [receiver, child, nested].map(value => new WeakRef(value))
     const result = r.run(chain, [], method, comparator ? [() => { calls++; return 0 }] : [], ctx, {})
     r.assignPath(chain, [], null, ctx)
-    const refs = [receiver, child, nested].map(value => new WeakRef(value))
     return { ctx, chain, result, weak: refs,
         async finish() {
             signal?.reject(second)
@@ -347,7 +359,9 @@ for (const array of [false, true]) for (const nested of [false, true])
 for (const action of array ? ["run", "assign", "delete", "length"] : ["run", "assign", "delete"])
     cases.push([`mutation ${action}, array=${array}, nested=${nested}`, () => mutationCase(array, nested, action)])
 for (const method of ["sort", "toSorted"]) for (const pending of [false, true]) for (const comparator of [false, true])
-    cases.push([`invocation ${method}, pending=${pending}, comparator=${comparator}`, () => invocationCase(method, pending, comparator)])
+for (const regional of [false, true])
+    cases.push([`invocation ${method}, pending=${pending}, comparator=${comparator}, regional=${regional}`,
+        () => invocationCase(method, pending, comparator, false, false, regional)])
 for (const imported of [false, true]) for (const klass of [false, true]) {
     cases.push([`materialized identity, imported=${imported}, class=${klass}`, () => materializedIdentityCase(klass, imported)])
     for (const pending of [false, true])
@@ -356,13 +370,40 @@ for (const imported of [false, true]) for (const klass of [false, true]) {
 }
 
 const selected = process.argv[2]
+cases.push(["failed finite flat", () => {
+    const ctx = context("failed finite flat"), later = Promise.withResolvers()
+    const payload = { k: 1 }, cycle = []
+    cycle.push(cycle, payload, later.promise)
+    const first = r.validationError("first", ctx, r.ERROR_KIND.OperationInputFailed)
+    const second = r.validationError("second", ctx, r.ERROR_KIND.OperationInputFailed)
+    const source = new r.Chain([first, cycle], ctx, r.CHAIN_MODE.Complete)
+    const result = r.run(source, [], "flat", [5], ctx, {})
+    r.assignPath(source, [], null, ctx)
+    return { weak: [new WeakRef(payload)], async finish() {
+        later.resolve(second)
+        assert.deepEqual(new Set((await result).errors), new Set([first, second]))
+    } }
+}])
+cases.push(["failed concat", () => {
+    const ctx = context("failed concat"), tail = Promise.withResolvers()
+    const prefix = { k: 1 }, argument = { k: 2 }
+    const first = r.validationError("first", ctx, r.ERROR_KIND.OperationInputFailed)
+    const second = r.validationError("second", ctx, r.ERROR_KIND.OperationInputFailed)
+    const chain = new r.Chain([prefix], ctx, r.CHAIN_MODE.Complete)
+    const result = r.run(chain, [], "concat", [first, [argument], tail.promise], ctx, {})
+    r.assignPath(chain, [], null, ctx)
+    return { weak: [new WeakRef(prefix), new WeakRef(argument)], async finish() {
+        tail.resolve(second)
+        assert.deepEqual(new Set((await result).errors), new Set([first, second]))
+    } }
+}])
 for (const method of ["includes", "indexOf", "lastIndexOf"])
 for (const availability of ["value", "identity"]) for (const matched of [false, true])
     cases.push([`terminal search, method=${method}, availability=${availability}, matched=${matched}`,
         () => terminalSearchCase(method, availability, matched)])
 const selectedCases = cases.filter(([name]) => !selected || name.startsWith(selected))
 assert(selectedCases.length > 0, `No completed-work retention cases match: ${selected}`)
-const states = selectedCases.map(([name, issue]) => [name, issue()])
+const states = await Promise.all(selectedCases.map(async ([name, issue]) => [name, await issue()]))
 await collect()
 const retained = states.filter(([, state]) => state.weak.some(weak => weak.deref() !== undefined)).map(([name]) => name)
 for (const [, state] of states) await state.finish?.()

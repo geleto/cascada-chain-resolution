@@ -20,21 +20,17 @@ Root placements and temporary leases preserve received values. Ownership derives
 
 ## Array ranges
 
-Array work is bounded by three shared mechanisms:
-
-1. Ranged key enumeration scans a strict selected range, including its holes, but enumerates present keys when the selection spans the complete physical backing so sparse full-range work remains proportional to present properties.
-2. Retained-property preparation represents contiguous movement as one source range and destination offset.
-3. Range remapping handles both complete remaps and selected `slice` results. `slice` converts each consumed bound once and remaps only the normalized range when view reuse is unavailable.
-
-All three use the common Promise-origin and placement transitions, preserving holes, ownership, versions, and inherited-setter safety without operation-specific paths.
+`slice` converts each consumed bound once and captures the normalized range. Candidate enumeration can stream a short interval or filter stored keys for a broad sparse interval. It merges the selected physical keys with logical versions and status in numeric order. A slice of a million-slot Array with two stored indexes can preserve the intervening holes as a single gap. Only selected element descriptors are needed.
 
 Pending length sequences have independent revision counters. A growth outcome invalidates only retained sequences containing that contribution; a private fork's completion causes no scan of an unchanged original. Repeated questions reuse current bounds until a relevant outcome changes. Fork construction and subscription attachment or removal visit their own captured frontier. Counter registrations end with the last Array or reader use, and retain no passive sequence or Array through a completed or unrelated source.
 
 ## Controlled Array work
 
+Include a pending middle deletion followed by pending pushes, overlapping copies of pending payloads, alternating pushes and reversals, and a chain of concatenations with separately pending operands. Count copied producers, shape notifications and retained reader callbacks across increasing history depths. Hold an unrelated input pending through collection. Count a closed cursor with an unfinished pull separately from a completed search or pull.
+
 One path-operation owner covers invocation, controlled input preparation, logical conversion, recursive `flat`, search continuations, comparator export, and remap construction. The coordinator closes after required publication and result processing. Component captures and leases release at their own last use. A preparation Error discards success-only assembly while required Error collection continues. A late continuation in a live execution still finishes required shared Promise settlement and bookkeeping, but performs no further operation work after closure. A continuation in a fatal execution returns at the common execution check before either kind of work.
 
-`concat` bounds later work by synchronously capturing each resolved logical Array as a sparse property-placement remap. Sort resolves each present top-level placement once. Default sorting converts each sortable occurrence once; comparator sorting exports one dense snapshot and reuses it for every comparison.
+`concat` captures each contributing range at its ordered turn. A protected prefix can be shared while another part is pending. Each source can release as soon as the capture owns the remaining data and shape. Sort keeps its captured candidates across comparator preparation. A comparator receives one exported snapshot. Repeated intrinsic checks in one operation share their failure and can share successful conversion work. Preserve the required callback sequence on success. A reached oversized Array contributes one capacity Error to full value consumption before any element traversal. A compound stores only distinct required leaves and stops when its native list would overflow. [Occurrence and collection rules](array-method-specification.md#failures-in-repeated-occurrences) · [Diagnostic capacity](array-method-specification.md#native-diagnostic-list-capacity)
 
 Array-length assignment uses its existing path-operation owner for guarded conversion; it allocates no second owner. Ready conversion needs no release registry. Conversion drops its source captures after constructing the resize, and the coordinator closes after required publication. Local sibling closure in a live execution does not suppress required shared property settlement; execution fatality stops a resumed conversion before settlement.
 
@@ -46,9 +42,9 @@ Consumers discover detached data through their ordinary logical path. The fenced
 
 ## Bulk Array mutation
 
-In-place Array replay commits each changed property through the ordinary live-edge transition. Every commit completes its property write, Promise version, cycle cut, reverse edges, and counter delta before the next native-order change.
+A controlled method publishes its logical mapping at the command's ordered turn. It can share an eligible range or assemble a determined result directly in private storage. Initialize the new logical relationships and active counters before exposing the corresponding placements. Live point writes keep their ordinary placement transitions. The command's prescribed writes determine identity even when the resulting values compare equal. [Array publication and bookkeeping](run.md#mutation-bookkeeping)
 
-This can repeat ancestor work across many changed properties, but the work remains limited to changed placements and affected dependencies. Batching would need an invalidated ancestor cache or transactional overlay because indexing one child can change the ancestor cone and counters observed by later changes. That additional state and ordering is not justified for the expected graph sizes.
+For `[A,B,C]!.splice(1,1)`, success publishes `[A,C]` and returns `[B]`. If a required source inspection fails the whole mutation, repair exposes `[A,B,C]`. No intermediate shift or deletion can escape. A streaming regional outcome publishes the positions permitted by its own dependency rules. [Failure and publication](array-method-specification.md#1-one-operation-separate-outcomes)
 
 ## Managed calls
 

@@ -32,7 +32,7 @@ describe("Array view backing actions", () => {
                 })
             } }, ctx), ctx)
             r.run(root, [], "create", [], ctx, { mutationScopeDepth: 0 })
-            const array = new r.Chain(r.lookupPath(root, ["values"], ctx), ctx)
+            const array = new r.Chain(r.lookupPath(root, ["values"], ctx), ctx, r.CHAIN_MODE.Complete)
             r.run(array, [], "slice", [0], ctx, {})
             const signal = Promise.withResolvers(), siblingSignal = Promise.withResolvers()
             const siblingOutcome = r.import(siblingSignal.promise, ctx).then(value => ({ value }), error => ({ error }))

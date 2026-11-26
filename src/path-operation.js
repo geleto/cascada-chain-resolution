@@ -9,19 +9,21 @@ import * as properties from "./language-properties.js"
 import { OperationOwner, releaseOnClose } from "./operation-lifecycle.js"
 import { captureRoute, consumeSegment } from "./path-context.js"
 import { ArrayView } from "./array-view.js"
+import { CHAIN_MODE } from "./chain.js"
 import * as languageValues from "./language-values.js"
 import { transformProperty, walkMutationPath } from "./mutations.js"
 import { IdentityPublication } from "./captured-identity.js"
 import { ExternalAccess } from "./external-access.js"
 import { externalLocationError, ExternalEffect, validateExternalAccess } from "./external-operation.js"
 import { captureSnapshotPlacement } from "./external-snapshot.js"
-import { mayBeThenable, readCallableThen } from "./thenable-subscription.js"
+import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 
 class PathOperation extends OperationOwner {
-    constructor(chain, path, operationContext, mutationScopeDepth, repair = false, firstDynamicSegment = path.length, receiverDepth = path.length, metadataOnly = false) {
+    constructor(chain, path, operationContext, mutationScopeDepth, repair = false, firstDynamicSegment = path.length, receiverDepth = path.length, metadataOnly = false, append = false) {
         super(operationContext)
         chain._assertOperationContext(operationContext)
         this.chain = chain
+        this.mode = chain._mode
         // Native failure ownership stops at the last statically selected scope.
         this.route = captureRoute(chain, path, firstDynamicSegment,
             metadataOnly ? path.length : Math.min(mutationScopeDepth ?? path.length, firstDynamicSegment, receiverDepth))
@@ -34,6 +36,8 @@ class PathOperation extends OperationOwner {
         this.repair = repair
         this.scopeDepth = mutationScopeDepth
         if (this.mutation && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
+        if (this.mutation && chain._appendOnly && !(append && !path.length && !repair))
+            throw new Error("A push-only reference permits only push on the selected Array")
         // Claim external order before managed gates can suspend path capture.
         // Capture still proceeds now; waiting first could capture a later gate.
         const node = this.route.externalScope
@@ -76,7 +80,7 @@ class PathOperation extends OperationOwner {
         this.releaseInput ??= versions.retainPlacement(placement, this.operationContext)
     }
 
-    observe(onValue, onExternal, onFailure, reflectionKind) {
+    observe(onValue, onExternal, onFailure, reflectionKind, onPlacement) {
         const chain = this.chain
         // The walker captures the root placement; subsequent work uses those
         // versions and the reserved route, never the source Chain again.
@@ -98,14 +102,15 @@ class PathOperation extends OperationOwner {
                         this.operationContext, value => ({ placement: { value, present: true }, result: undefined }))
                 }, { end: depth, observeTarget: !this.repair, preserveOnFailure: this.repair, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(selected, this.operationContext, outcome => {
-                if (errors.isPoisonError(outcome.result)) return outcome.result
+                if (errors.isPoisonError(outcome.result) || !errors.isPoisonError(outcome) && !outcome.placement)
+                    return outcome.result
                 const value = errors.isPoisonError(outcome) ? outcome : outcome.placement.value
                 return errors.isPoisonError(value) ? onValue(value) :
                     this.reachExternal(value, depth, onExternal)
             })
         }
         return walkObservationPath(chain, this, onValue,
-            onFailure, reflectionKind, { onExternal: (identity, index) =>
+            onFailure, reflectionKind, { onPlacement, onExternal: (identity, index) =>
                 this.metadataOnly && (this.route.nodes[index]?.[externalTree.TREE_NODE].identity || index === this.route.path.length)
                     ? steps.continueGraphTransition(this.selectRoute(index, true), this.operationContext,
                         failure => failure ?? onValue(undefined, true, this.route.path.length), undefined, this) :
@@ -212,6 +217,7 @@ class PathOperation extends OperationOwner {
     }
 
     mutate(transform, replaceScope = false, deleting = false) {
+        const operation = this
         let { chain, route } = this
         const { operationContext, scopeDepth: requestedDepth } = this
         const result = walkMutationPath(chain._state, this, target => {
@@ -243,24 +249,45 @@ class PathOperation extends OperationOwner {
                     working = { holder, publication: new IdentityPublication(operationContext) }
                     versions.transferPlacement(state.baseline, holder, "value", operationContext)
                 }
-                const transformed = transform(value, state, working, depth)
+                const transformed = transform(value, state, working, depth, target.parent)
                 value = state = undefined
                 if (!working) return transformed
-                return steps.continueGraphTransition(transformed, operationContext, outcome => {
-                    try {
-                        // A nested edit publishes its complete scope capture. Its
-                        // independent result and failed receiver remain separate.
-                        if (errors.isPoisonError(outcome)) return outcome
-                        if (errors.isPoisonError(outcome?.placement?.value)) {
-                            outcome.failed = true
-                            return outcome
-                        }
-                        const placement = versions.capturePlacement(working.holder, "value", operationContext)
+                if (working.targetCaptured && this.receiverOwnsFailure && languageValues.isPending(transformed, operationContext)) {
+                    // Receiver selection and path reconstruction installed the
+                    // child gate. Its failure cannot invalidate this ancestor.
+                    return adopt(steps.continueGraphTransition(transformed, operationContext, outcome => outcome.result))
+                }
+                if (this.method !== undefined && this.mode !== CHAIN_MODE.Complete && languageValues.isPending(transformed, operationContext)) {
+                    const { promise, resolve } = Promise.withResolvers()
+                    const result = steps.continueGraphTransition(transformed, operationContext, outcome => {
+                        if (working) { this.narrowScope = undefined; resolve(finish(outcome)) }
+                        return errors.isPoisonError(outcome) ? outcome : outcome?.result
+                    })
+                    markPromiseHandled(result, operationContext)
+                    this.narrowScope = () => {
+                        if (!working?.targetCaptured || !this.receiverOwnsFailure) return
+                        this.narrowScope = undefined
+                        resolve(adopt(result))
+                    }
+                    return promise
+                }
+                return steps.continueGraphTransition(transformed, operationContext, finish)
+                function finish(outcome) {
+                    if (errors.isPoisonError(outcome) || outcome?.failure && !operation.receiverOwnsFailure) {
                         working.publication.finish()
-                        return { placement, result: outcome?.result, published: working.publication.outcome() }
-                    } finally { working = undefined }
-                })
-            }, { replace: replaceScope && depth === requestedDepth, repair: this.repair,
+                        working = undefined
+                        return outcome
+                    }
+                    return adopt(outcome?.result)
+                }
+                function adopt(result) {
+                    working.publication.finish()
+                    const placement = versions.capturePlacement(working.holder, "value", operationContext)
+                    const published = working.publication.outcome()
+                    working = undefined
+                    return { placement, result, published }
+                }
+            }, { replace: replaceScope && depth === requestedDepth, supersede: replaceScope && depth === requestedDepth, repair: this.repair,
                 consumeRestored: true, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(outcome, operationContext, published => {
                 // The destination has accepted the capture. Detach this private
@@ -280,7 +307,7 @@ class PathOperation extends OperationOwner {
 
     finishMutation(outcome) {
         return steps.continueGraphTransition(outcome, this.operationContext, outcome => {
-            const failure = errors.isPoisonError(outcome) ? outcome : errors.isPoisonError(outcome.placement?.value) ? outcome.placement.value : null
+            const failure = errors.isPoisonError(outcome) ? outcome : outcome.failure
             // Blocked operations return result-only outcomes and preserve the
             // predecessor metadata captured at issuance.
             this.metadataSelection?.finish(false)
@@ -325,6 +352,28 @@ class PathOperation extends OperationOwner {
     }
 }
 
+function poisonPath(chain, path, cause, operationContext, firstDynamicSegment = path.length) {
+    const operation = new PathOperation(chain, path, operationContext, path.length, false, firstDynamicSegment,
+        path.length, false, true)
+    const selected = operation.route.externalScope
+        ? operation.observe(value => value, () => cause)
+        : walkMutationPath(chain._state, operation, target => {
+            if (target.propertyKind !== properties.ORDINARY_PROPERTY) {
+                const failure = properties.propertyValidationError("An intrinsic length is not a status placement", operationContext)
+                target.replaceReceiver(failure)
+                return failure
+            }
+            return transformProperty(target, operationContext, (_value, state) => {
+                const before = state.baseline
+                if (before.ownFailure) return { placement: before, result: versions.placementValue(before), published: false }
+                const failure = languageValues.isPending(cause, operationContext) ? new versions.PendingFailure(cause, operationContext) : cause
+                const placement = { ...before, ownFailure: failure }
+                return { placement, result: versions.placementValue(placement), published: true }
+            }, { replace: true })
+        })
+    return operation.finishMutation(selected)
+}
+
 function repairPath(chain, path, operationContext, firstDynamicSegment = path.length) {
     const operation = new PathOperation(chain, path, operationContext, path.length, true, firstDynamicSegment, path.length, true)
     // Restoration selects exactly the requested placement. It neither
@@ -340,7 +389,7 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
                 failure => ({ result: failure ?? undefined }), undefined, operation)
         } })
     return operation.finishMutation(steps.continueGraphTransition(result, operationContext, outcome => {
-        if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) operation.commitRepairMetadata()
+        if (!errors.isPoisonError(outcome) && outcome.result === undefined) operation.commitRepairMetadata()
         return outcome
     }))
 }
@@ -359,12 +408,15 @@ function walkObservationPath(
     try {
         return errors.catchExternalThrow(() => {
             placement = properties.readLanguagePlacement(chain._state, "value", operationContext)
-            return versions.resolveVisiblePlacement(placement, operationContext, ready => {
+            if (options.onPlacement && !operation.route.path.length && options.externalDepth !== 0)
+                return options.onPlacement(placement)
+            return versions.observePlacement(placement, operationContext, (value, ready) => {
                 try {
-                    return walkObservationValue(versions.placementValue(ready), operation, onResolved,
+                    if (!operation.open) return
+                    return walkObservationValue(value, operation, onResolved,
                         onUserCodeFailure, reflectionKind, options, versions.placementPresent(ready))
                 } finally { ready = undefined }
-            })
+            }, operation, options.onPlacement)
         }, operationContext, reflectionKind, onUserCodeFailure)
     } finally { placement = chain = undefined }
 }
@@ -377,7 +429,7 @@ function walkObservationValue(
     onResolved,
     onUserCodeFailure = undefined,
     reflectionKind = errors.ERROR_KIND.LookupReflectionFailed,
-    { start = 0, end = owner.route.path.length, onExternal, externalDepth = Infinity, snapshotAccess, type } = {},
+    { start = 0, end = owner.route.path.length, onExternal, onPlacement, externalDepth = Infinity, snapshotAccess, type } = {},
     present = true,
 ) {
     const { operationContext } = owner
@@ -431,14 +483,13 @@ function walkObservationValue(
         if (properties.classifyLanguageProperty(parent, key, operationContext) === properties.ARRAY_LENGTH)
             return ArrayView.resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
         const placement = properties.readLanguagePlacement(parent, key, operationContext)
-        const value = versions.placementValue(placement), present = versions.placementPresent(placement), version = placement.sourceVersion
-        if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present)
-        return versions.observePromiseVersion(
-            value, version, operationContext,
+        if (onPlacement && index === end && index !== externalDepth) return onPlacement(placement)
+        return versions.observePlacement(
+            placement, operationContext,
             (propertyValue, captured) => {
-                try { return runTraversal(() => walkValue(propertyValue, index, captured.present !== false)) }
+                try { return runTraversal(() => walkValue(propertyValue, index, versions.placementPresent(captured))) }
                 finally { propertyValue = captured = undefined }
-            }, owner,
+            }, owner, onPlacement,
         )
     }
 
@@ -474,4 +525,4 @@ function walkObservationValue(
     }
 }
 
-export { PathOperation, repairPath, walkObservationPath, walkObservationValue }
+export { PathOperation, poisonPath, repairPath, walkObservationPath, walkObservationValue }

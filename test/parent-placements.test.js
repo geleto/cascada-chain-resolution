@@ -165,22 +165,24 @@ describe("complete incoming placements", () => {
         verifyParents(second, b._state)
     })
 
-    it("discards a failed append view without undoing successful shared backing writes", () => {
+    it("publishes both append placements when shared backing accepts only the first write", () => {
         const ctx = context(), child = {}, other = {}, cause = new Error("second write")
         let armed = false
         const source = new Proxy([0], { defineProperty(target, key, descriptor) {
             if (armed && key === "2") throw cause
             return Reflect.defineProperty(target, key, descriptor)
         } })
-        const chain = new r.Chain(source, ctx)
+        const chain = new r.Chain(source, ctx, r.CHAIN_MODE.Complete)
         armed = true
         const result = r.run(chain, [], "concat", [[child, other]], ctx, {})
         armed = false
-        assert(r.isPoisonError(result))
-        assert.equal(source[1], child, "Earlier physical storage maintenance survives failure")
-        assert(!pairs(child, ctx).some(p => p.parent !== source && metaOf(p.parent, ctx)?.arrayRange))
+        const output = new r.Chain(result, ctx)
+        assert.equal(source[1], child)
+        assert.equal(r.lookupPath(output, [2], ctx), other)
+        assert(pairs(child, ctx).some(p => p.parent === result && p.key === "1"))
+        assert(pairs(other, ctx).some(p => p.parent === result && p.key === "2"))
         assert.deepEqual(r.export(chain, [], ctx), [0])
-        verifyParents(ctx, chain._state, child)
+        verifyParents(ctx, chain._state, output._state)
     })
 
     it("does not retain a deleted private native receiver edge on its returned child", async () => {

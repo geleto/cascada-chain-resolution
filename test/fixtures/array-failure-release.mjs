@@ -5,8 +5,8 @@ import { ready, OrderedThenable } from '../ordered-thenable.js'
 assert(global.gc)
 const cause = new Error('prebuilt host failure')
 const rows=[]
-async function execute(kind, mode, shape) {
- const label=`${kind}/${mode}/${shape}`, ctx={execution:new r.Execution(),errorContext:label}
+async function execute(kind, mode, shape, policy) {
+ const label=`${kind}/${mode}/${shape}/${policy}`, ctx={execution:new r.Execution(),errorContext:label}
  let array=[{n:2},{n:1}], args=[], method='sort', deferred
  const copies=[]
  if(kind==='flat-cycle') { array=[1];array.push(array);method='flat';args=[Infinity] }
@@ -32,8 +32,8 @@ async function execute(kind, mode, shape) {
     args[0]=deferred.promise??deferred;deferred.complete=()=>{deferred.resolve(value);deferred.flush?.()}
    }
  }
- let payload={tag:label}, source={array,payload}, chain=new r.Chain(shape==='view'?source:r.import(source,ctx),ctx), holder=chain, path=['array']
- if(shape==='view') {holder=new r.Chain(r.run(chain,path,'slice',[],ctx,{}),ctx);path=[];assert(r.lookupPath(holder,[],ctx) instanceof ArrayView,label)}
+ let payload={tag:label}, source={array,payload}, chain=new r.Chain(shape==='view'?source:r.import(source,ctx),ctx,policy), holder=chain, path=['array']
+ if(shape==='view') {holder=new r.Chain(r.run(chain,path,'slice',[],ctx,{}),ctx,policy);path=[];assert(r.lookupPath(holder,[],ctx) instanceof ArrayView,label)}
  const weak=[new WeakRef(source),new WeakRef(array),new WeakRef(payload)]
  let result=r.run(holder,path,method,args,ctx,{})
  deferred?.complete();result=await result
@@ -47,7 +47,8 @@ async function execute(kind, mode, shape) {
  result=array=args=deferred=payload=source=chain=holder=undefined
 }
 for(const kind of ['flat-cycle','sort-symbol','join-symbol','numeric-array','with-range','callback-invalid','callback-throw','callback-pending'])
-for(const mode of ['ready','sync','native','ordered'])for(const shape of ['array','view'])await execute(kind,mode,shape)
+for(const policy of kind==='flat-cycle' ? [r.CHAIN_MODE.Complete] : Object.values(r.CHAIN_MODE))
+for(const mode of ['ready','sync','native','ordered'])for(const shape of ['array','view'])await execute(kind,mode,shape,policy)
 for(let i=0;i<30;i++){await new Promise(setImmediate);global.gc()}
 const failed=rows.filter(row=>[...row.weak,...row.copies].some(ref=>ref.deref())).map(row=>({label:row.label,source:row.weak.map(ref=>Boolean(ref.deref())),copies:row.copies.map(ref=>Boolean(ref.deref()))}))
 console.log(JSON.stringify({cases:rows.length,failed},null,2))
