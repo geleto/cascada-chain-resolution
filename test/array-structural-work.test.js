@@ -66,6 +66,19 @@ describe("Array structural work", () => {
         verifyRefCounts(ctx, copy._state)
     })
 
+    it("bounds shrinking widths with zero point readers on separate turns", function () {
+        this.timeout(65000)
+        const result = execFileSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
+            "test/experiments/array-shrinking-history.mjs", "--check-bound"], { encoding: "utf8", timeout: 60000 })
+        assert.deepEqual(result.trim().split(/\r?\n/).map(line => JSON.parse(line).n), [120, 240, 480])
+    })
+
+    it("releases excluded concat and splice children on every point route", function () {
+        this.timeout(30000)
+        const result = execFileSync(process.execPath, [...process.execArgv, "--expose-gc",
+            "test/fixtures/array-excluded-point.mjs"], { encoding: "utf8" })
+        assert.match(result, /36 excluded-child and live-snapshot cases/)
+    })
     it("releases data held only for a numeric shape and protects outstanding data captures", function () {
         this.timeout(30000)
         const result = execFileSync(process.execPath, [...process.execArgv, "--expose-gc", "--unhandled-rejections=strict",

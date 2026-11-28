@@ -12,6 +12,79 @@ const edit = (file, find, replace = "") => ({ file, find, replace })
 
 export const SAFEGUARDS = [
     {
+        id: "array-cut-flags-only-surviving-slots",
+        guards: "An out-of-bounds historical point stays absent after the old suffix shrinks.",
+        faults: [edit("src/array-sequence.js", "present => present ? pointAt(sequence, index, back, p => flag(span(1, p)).placement) : hole",
+            "() => pointAt(sequence, index, back, p => flag(span(1, p)).placement)")],
+        witnesses: ["publishes a positional failure only inside the final splice width"],
+    },
+    {
+        id: "array-cut-preserves-common-width",
+        guards: "A shrinking join uses the correlated total of its moving fringe and retained near side.",
+        faults: [edit("src/array-sequence.js", "const options = width && { extent: width }", "const options = undefined")],
+        witnesses: ["bounds shrinking widths with zero point readers on separate turns"],
+    },
+    {
+        id: "array-cut-wakes-rear-point",
+        guards: "An exhausted suffix exposes the old prefix end before the predecessor width settles.",
+        faults: [edit("src/array-splice.js", "return continueGraphTransition(widthInRange(choice.after, 0), ctx, suffix =>",
+            "return continueGraphTransition(continueGraphTransition(size.length, ctx, () => widthInRange(choice.after, 0)), ctx, suffix =>")],
+        witnesses: ["selects the surviving rear occurrence while the discarded tail stays open"],
+    },
+    {
+        id: "array-cut-preserves-failed-start",
+        guards: "A failed sequential insertion preserves its obstruction on the old positions.",
+        faults: [edit("src/array-splice.js", "insertFailure: failed && sequential &&", "insertFailure: false &&")],
+        witnesses: ["replays the failed-start trace through the producer and every receiving mode"],
+    },
+    {
+        id: "array-cut-preserves-complete-failure",
+        guards: "A failed Complete deletion closes its whole scope before a cursor or dependent write can use it.",
+        faults: [edit("src/array-splice.js", "return failure ?? capacityError(ctx)",
+            "return failure ? { ...command, start: 0, count: 0, width: 0 } : capacityError(ctx)")],
+        witnesses: ["checks broad and disjoint effects while splice is held and after repair"],
+    },
+    {
+        id: "array-slice-preserves-opposite-edge",
+        guards: "A selected slice retains a common run known from the other end of its predecessor.",
+        faults: [edit("src/array-interval.js", "const edge = used > 0 &&", "const edge = false &&")],
+        witnesses: ["keeps the common occurrence of opposing slice bounds in either delivery order"],
+    },
+    {
+        id: "array-point-releases-other-join-side",
+        guards: "A retained point drops an excluded concat operand while the selected operand stays open.",
+        faults: [edit("src/array-sequence.js", "if (part === root) return", "return")],
+        witnesses: ["releases excluded concat and splice children on every point route"],
+    },
+    {
+        id: "array-point-restricts-splice-suffix",
+        guards: "A known splice start restricts the data held by a front point before its count settles.",
+        faults: [edit("src/array-splice.js", "return captureSuffixPoint(candidates, decision, extent, index, back, ctx)",
+            "return undefined")],
+        witnesses: ["releases excluded concat and splice children on every point route"],
+    },
+    {
+        id: "array-copy-within-reads-predecessor",
+        guards: "An overlapping copy selects each source occurrence from the captured predecessor.",
+        faults: [edit("src/array-interval.js", "span(count, payload) : read(first, first + count)",
+            "span(count, payload) : read(at, at + count)")],
+        witnesses: ["matches native copyWithin on both sides of mixed-sign coordinate crossings"],
+    },
+    {
+        id: "array-insertion-preserves-possible-rank",
+        guards: "An uncertain insertion preserves both extremes of a predecessor boundary's possible rank.",
+        faults: [edit("src/array-sequence.js", "beforeInsertion(high, cut.maximum, width)",
+            "beforeInsertion(high, cut.minimum, width)")],
+        witnesses: ["keeps issued ranks and independent endpoint proofs", "settles a range-filtered match"],
+    },
+    {
+        id: "array-insertion-preserves-guaranteed-window",
+        guards: "A bounded reader includes an old occurrence only when every insertion position keeps it in range.",
+        faults: [edit("src/array-sequence.js", "beforeInsertion(end, cut.minimum, width)",
+            "beforeInsertion(end, cut.maximum, width)")],
+        witnesses: ["waits for membership of an old Error when only the first slot survives overwrites"],
+    },
+    {
         id: "entry-preserves-ancestor-provenance",
         guards: "Nested entry cannot turn a computed ancestor into static native authority.",
         faults: [edit("src/enter.js", "entered._firstDynamicSegment = route.dynamicDepth - route.origin - depth",
@@ -176,9 +249,9 @@ export const SAFEGUARDS = [
     {
         id: "array-range-uses-effective-width",
         guards: "Small writes on large ordinary receivers follow the effective destination width.",
-        faults: [edit("src/array-methods.js",
-            "broadRange(width, work.receiver, length, ctx)",
-            "args[2] - args[1] > 64")],
+        faults: [edit("src/array-interval.js",
+            "regional || broadRange(count, work.receiver, length, ctx)",
+            "regional || length > 64")],
         witnesses: ["bounds endpoint splices and selected writes in Unordered"],
     },
     {
@@ -257,7 +330,7 @@ export const SAFEGUARDS = [
     {
         id: "array-range-releases-selected-values",
         guards: "Saved range-construction and invocation closures do not retain consumed entries through unformatted Error stacks.",
-        faults: [edit("src/array-methods.js", "    finally { entries = undefined }", "    finally {}")],
+        faults: [edit("src/array-interval.js", "} finally { entries = undefined }", "} finally {}")],
         witnesses: ["checks array-range-failure-retention at stack limit 1000"],
     },
     {
@@ -1133,7 +1206,7 @@ export const SAFEGUARDS = [
     {
         id: "joined-point-follows-membership",
         guards: "A requested index follows the first operand once its membership becomes certain.",
-        faults: [edit("src/array-sequence.js", "inRange(first, index, ctx), ctx, () => sequencePoint",
+        faults: [edit("src/array-sequence.js", "inRange(first, index), ctx, () => sequencePoint",
             "first.length, ctx, () => sequencePoint")],
         witnesses: ["resumes on the first relevant discovery in mode 1, reverse=false"],
     },

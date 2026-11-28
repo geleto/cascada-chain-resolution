@@ -1,5 +1,5 @@
 import { anyPresent, join, MAX_ARRAY_LENGTH, restrict, span } from "./array-layout.js"
-import { beforeInsertion, inRange, sequenceExtent, watch } from "./array-sequence.js"
+import { possibleOldBounds, inRange, sequenceExtent, watch } from "./array-sequence.js"
 import { continueGraphTransition } from "./internal-step.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
@@ -30,7 +30,7 @@ class InsertionRanks {
     constructor(groups, length, ctx) {
         this.records = groups.map(({ cut, backCut, width, before, extent, atEnd }) => {
             if (extent) {
-                const size = sequenceExtent(extent, ctx)
+                const size = sequenceExtent(extent)
                 cut = atEnd ? size : zero
                 backCut = atEnd ? zero : size
             }
@@ -75,7 +75,7 @@ class InsertionRanks {
             const record = this.records[i], { cut, width, before } = record
             const minimum = cut?.minimum ?? 0, maximum = cut?.maximum ?? 0
             if (minimum !== maximum) {
-                this.releases.push(watch(cut, changed, this.ctx))
+                this.releases.push(watch(cut, changed))
                 // Every real predecessor occurrence can still be on either
                 // side. Nothing earlier needs a subscription until this cut
                 // narrows, even when the predecessor's own length is open.
@@ -158,7 +158,7 @@ class InsertionRanks {
             let displaced = false
             for (let i = this.records.length - 1; i >= 0; i--) {
                 const { cut } = this.records[i]
-                const absent = cut ? inRange(cut, 0, this.ctx) : false
+                const absent = cut ? inRange(cut, 0) : false
                 answers[i] = continueGraphTransition(anyPresent([absent, displaced], this.ctx), this.ctx, v => !v)
                 if (cut) displaced = anyPresent([displaced, continueGraphTransition(absent, this.ctx, v => !v)], this.ctx)
             }
@@ -217,14 +217,13 @@ class InsertionThreshold {
             const { cut, width } = this.records[i]
             this.states[i] = { low, high }
             if (cut) {
-                low = beforeInsertion(low, cut.minimum, width)
-                high = beforeInsertion(high, cut.maximum, width)
-                const release = watch(cut, () => this.update(i), this.ctx)
+                ;[low, high] = possibleOldBounds(low, high, cut, width)
+                const release = watch(cut, () => this.update(i))
                 if (release) this.releases.push(release)
             }
         }
         if (typeof bound !== "number") {
-            const release = watch(bound, (lo, hi) => this.move(lo, hi), this.ctx)
+            const release = watch(bound, (lo, hi) => this.move(lo, hi))
             if (release) this.releases.push(release)
         }
     }
@@ -256,7 +255,7 @@ class InsertionThreshold {
                 if (answer !== undefined) { state.questions.delete(q); q.resolve(answer) }
             }
             if (!i) break
-            const low = beforeInsertion(state.low, cut.minimum, width), high = beforeInsertion(state.high, cut.maximum, width)
+            const [low, high] = possibleOldBounds(state.low, state.high, cut, width)
             const preceding = this.states[i - 1]
             if (low === preceding.low && high === preceding.high) break
             preceding.low = low

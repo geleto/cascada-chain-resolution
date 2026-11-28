@@ -1,6 +1,6 @@
 import { ArrayRegion } from "./array-region.js"
 import { ArrayView } from "./array-view.js"
-import { drainWidthUpdates, fixedWidth, LinkedWidth, projectedCount, sumExtent, sumWidths, widthInRange } from "./array-width.js"
+import { fixedWidth, LinkedWidth, projectedCount, sumExtent, sumWidths, widthInRange } from "./array-width.js"
 import { capacityCause, capacityPlacement, captureLayout, compactLayout, denseLayout, flagPositions, hasUnmarkedPlacement, join, layoutAt, LayoutBuilder, MAX_ARRAY_LENGTH, MAX_COUNT,
     fixedPayloads, individualFixedSlots, missingOutputMarker, missingOutputMarkers, projectCapacity, closedLayout, resolvedFixedLayout, restrict, reverseLayout, span, structuralPlacement } from "./array-layout.js"
 import { combineErrors, isPoisonError } from "./error.js"
@@ -32,16 +32,57 @@ function pointSelection(sequence, selectPoint, ctx) {
     sequence.point = (index, back) => read(pointAt(sequence, index, back))
     return sequence
 
-    function read(value, projections) {
+    function read(value) {
+        let projections
         while (value instanceof PointReference) {
             const { source, index, back, project } = value
             if (project) (projections ??= []).push(project)
+            const layout = source.layoutSource?.node
+            if (!layout && source.decisions && !undecidedCut(source.decisions)) {
+                value = continueGraphTransition(source.ready, ctx, node => layoutPoint(node, index, back))
+                break
+            }
+            if (layout) { value = layoutPoint(layout, index, back); break }
+            if (source.restrictChoice) {
+                const key = back ? -1 - index : index
+                const waiting = source.waitingPoints?.get(key)
+                if (waiting) { value = waiting; break }
+                ;(projections ??= []).push({ source, key })
+            }
             value = source.selectPoint ? source.selectPoint(index, back) : source.point(index, back)
         }
-        if (isPending(value, ctx)) return continueGraphTransition(value, ctx, p => read(p, projections))
-        while (projections?.length) value = projections.pop()(value)
+        if (isPending(value, ctx)) value = continueGraphTransition(value, ctx, next => read(next))
+        while (projections?.length) {
+            const next = projections.pop()
+            if (typeof next === "function") value = continueGraphTransition(value, ctx, next)
+            else if (isPending(value, ctx)) sharePoint(next.source, next.key, value, ctx)
+        }
         return value
     }
+}
+
+// Only unanswered coordinates are shared. Rear coordinates use negative keys.
+function sharePoint(source, key, value, ctx) {
+    const waiting = source.waitingPoints ??= new Map()
+    waiting.set(key, value)
+    markPromiseHandled(continueGraphTransition(value, ctx, () => {
+        waiting.delete(key)
+        if (!waiting.size) source.waitingPoints = undefined
+    }), ctx)
+}
+
+// A fixed operand and a chain of resolved structural cuts have a determined
+// layout even while the publication callbacks are still draining. Skip spent
+// controls when another capture tests the same historical prefix.
+function undecidedCut(cut) {
+    let pending = cut
+    while (pending && !pending.open) pending = pending.previous
+    while (cut !== pending) {
+        const previous = cut.previous
+        cut.previous = pending
+        cut = previous
+    }
+    return pending
 }
 
 // A selection may become provable before all of its controls settle.
@@ -61,58 +102,19 @@ class SelectionQuestions {
     changed() { for (const decide of this.pending ?? []) decide() }
 }
 
-function refine(sequence, minimum, maximum, active) {
-    if (minimum === sequence.minimum && maximum === sequence.maximum) return
-    sequence.minimum = minimum
-    sequence.maximum = maximum
-    const pending = active ?? []
-    for (const update of sequence.listeners ?? []) pending.push([update, minimum, maximum])
-    if (minimum === maximum) {
-        sequence.listeners?.clear()
-        sequence.listeners = undefined
-    }
-    if (!active) drainWidthUpdates(pending)
-}
-function watch(sequence, update, ctx) {
-    if (sequence.minimum === sequence.maximum) return
-    if (sequence.widths) return sequence.widths.watch(update)
-    if (sequence.watch) return sequence.watch(update)
-    const needsLength = !sequence.listeners
-    const release = watchBounds.call(sequence, update)
-    if (needsLength) followLength(sequence, ctx)
-    return release
+function watch(sequence, update) {
+    if (sequence.minimum !== sequence.maximum) return (sequence.widths ?? sequence).watch(update)
 }
 
-// Projected counts refine their bounds through completion. External length
-// sources use the same listeners and add one reaction for the final width.
-function watchBounds(update) {
-    if (this.minimum === this.maximum) return
-    const listeners = this.listeners ??= new Set()
-    listeners.add(update)
-    return () => listeners.delete(update)
+function inRange(sequence, index) { return widthInRange(sequence.widths ?? sequence, index) }
+
+function layoutPoint(node, index, back) {
+    return index >= node.length ? hole : layoutAt(node, back ? node.length - 1 - index : index) ?? hole
 }
 
-// The source's native reaction outlives a removable first subscriber.
-function followLength(sequence, ctx) {
-    markPromiseHandled(continueGraphTransition(sequence.length, ctx, n => refine(sequence, n, n)), ctx)
-}
-
-function inRange(sequence, index, ctx) {
-    if (index < sequence.minimum) return true
-    if (index >= sequence.maximum) return false
-    if (sequence.widths) return widthInRange(sequence.widths, index)
-    const { promise, resolve } = Promise.withResolvers()
-    let release
-    release = watch(sequence, (minimum, maximum) => {
-        if (index < minimum || index >= maximum) { release?.(); resolve(index < minimum) }
-    }, ctx)
-    return promise
-}
 function fixed(node) {
     return { node, operands: layoutOperands(node), dense: node.dense, minimum: node.length, maximum: node.length, length: node.length, ready: node,
-        head: node, tail: node, point(index, back) {
-            return index >= node.length ? hole : layoutAt(node, back ? node.length - 1 - index : index) ?? hole
-        } }
+        head: node, tail: node, point: (index, back) => layoutPoint(node, index, back) }
 }
 
 function captureSkippedRange(source, first, end, ctx) {
@@ -127,7 +129,7 @@ function blockedPositions(sequence, ctx) {
     if (sequence.node) return sequence
     const read = pointSelection({}, sequence.selectPoint, ctx).point
     sequence.obstructions = { end: (_first, limit) => limit }
-    return pointSelection(sequence, (i, back) => continueGraphTransition(inRange(sequence, i, ctx), ctx,
+    return pointSelection(sequence, (i, back) => continueGraphTransition(inRange(sequence, i), ctx,
         exists => exists ? knownObstruction(placementFromSelection(read(i, back), ctx)) : hole), ctx)
 }
 
@@ -193,6 +195,14 @@ function forwardSkipRange(output, source, offset, reversed, ctx) {
 // Number of old slots before an output boundary after inserting at cut.
 function beforeInsertion(bound, cut, width) { return Math.max(bound - width, Math.min(bound, cut)) }
 
+function guaranteedOldWindow(first, end, cut, width) {
+    return [beforeInsertion(first, cut.maximum, width), beforeInsertion(end, cut.minimum, width)]
+}
+
+function possibleOldBounds(low, high, cut, width) {
+    return [beforeInsertion(low, cut.minimum, width), beforeInsertion(high, cut.maximum, width)]
+}
+
 // Borrowed prefix data stays in storage. Point writes in the open region
 // replace numeric slots without changing disjoint occurrence identities.
 function captureOrder(owner, ctx) {
@@ -200,7 +210,7 @@ function captureOrder(owner, ctx) {
     if (!sequence) return
     const start = requireMeta(owner, ctx).arrayRange?.start ?? 0
     const minimum = ArrayView.minimumLength(owner, ctx), maximum = ArrayView.maximumLength(owner, ctx)
-    const source = takeSequence(trimmedSequence(sequence, start, 0, ctx), ArrayView.retainedLength(owner, ctx, maximum), false, ctx)
+    const source = takeSequence(dropSequence(sequence, start, false, ctx), ArrayView.retainedLength(owner, ctx, maximum), false, ctx)
     const prefix = ArrayView.prefixLength(owner, ctx)
     const entries = ownPlacementVersionEntries(owner, ctx).filter(([key]) => Number(key) >= prefix)
     if (!entries.length && minimum === source.minimum && maximum === source.maximum) return source
@@ -209,19 +219,20 @@ function captureOrder(owner, ctx) {
     const growth = maximum > Math.max(minimum, source.maximum) ||
         entries.length && Number(entries.at(-1)[0]) >= minimum
     const width = (n, first, end) => Math.max(0, Math.min(end, n) - first)
+    let ownerWidth
     function extent(first, end) {
-        const lo = width(minimum, first, end), hi = width(maximum, first, end)
-        if (lo === hi) return lo
-        const captured = ArrayView.captureLength(owner, ctx, undefined, end)
-        return continueGraphTransition(captured.read ? captured.read() : captured, ctx, n => width(n, first, end))
+        ownerWidth ??= ArrayView.captureExtent(owner, ctx, maximum)
+        return projectedCount(ownerWidth, -first, ctx, 0, end - first)
     }
     let output = fixed(empty), first = 0
     const append = part => { output = concatSequence(output, part, ctx) }
     function gap(end) {
         if (end <= first) return
-        const part = takeSequence(trimmedSequence(source, first, 0, ctx), end - first, false, ctx)
+        const part = takeSequence(dropSequence(source, first, false, ctx), end - first, false, ctx)
         const lo = width(minimum, first, end), hi = width(maximum, first, end)
-        append(growth && lo !== hi ? padSequence(part, lo, ctx, hi, extent(first, end)) : padSequence(part, lo, ctx))
+        const size = growth && lo !== hi ? extent(first, end) :
+            lo > part.minimum ? projectedCount(sequenceExtent(part), 0, ctx, lo) : undefined
+        append(size ? padSequence(part, size, ctx) : part)
     }
     for (let i = 0; i < entries.length;) {
         const index = Number(entries[i][0]), run = new LayoutBuilder()
@@ -231,12 +242,11 @@ function captureOrder(owner, ctx) {
             run.append(span(1, capturePlacementFromVersion(entries[i++][1])))
             first++
         } while (i < entries.length && Number(entries[i][0]) === first)
-        const node = run.finish(), count = extent(index, first)
-        if (typeof count === "number") append(fixed(restrict(node, 0, count)))
+        const node = run.finish(), low = width(minimum, index, first), high = width(maximum, index, first)
+        if (low === high) append(fixed(restrict(node, 0, low)))
         else {
-            const kept = width(minimum, index, first)
-            append(fixed(restrict(node, 0, kept)))
-            append(pendingSequence(count, n => fixed(restrict(node, kept, n)), ctx, 0, node.length - kept))
+            append(fixed(restrict(node, 0, low)))
+            append(pendingSequence(extent(index, first).length, n => fixed(restrict(node, low, n)), ctx, 0, node.length - low))
         }
     }
     gap(maximum)
@@ -246,35 +256,23 @@ function captureOrder(owner, ctx) {
 
 // Growth pads the captured extent with holes. The final width can be known
 // before the boundary between original occurrences and padding is known.
-function padSequence(source, minimum, ctx, maximum, length) {
-    if (length === undefined && source.minimum >= minimum) return source
-    if (length === undefined && source.node) return fixed(join(source.node, span(minimum - source.minimum)))
-    if (minimum > source.maximum) {
-        // Positions past the old maximum have fixed coordinates. A search
-        // starting there can match a hole while the old end is still open.
-        const prefix = padSequence(source, source.maximum, ctx)
-        let extra = fixed(span(minimum - source.maximum))
-        if (maximum > minimum) extra = concatSequence(extra,
-            pendingSequence(length, n => fixed(span(n - minimum)), ctx, 0, maximum - minimum), ctx)
-        return concatSequence(prefix, extra, ctx)
+function padSequence(source, extent, ctx) {
+    if (source.node || extent.minimum > source.maximum) {
+        // Beyond the old end, every position is already known to be a hole.
+        const prefix = source.node ? source : padSequence(source, fixedWidth(source.maximum), ctx)
+        return concatSequence(prefix, extentHoles(projectedCount(extent, -source.maximum, ctx), ctx), ctx, { extent })
     }
-    const size = n => Math.max(n, minimum)
-    const extent = length ?? (minimum >= source.maximum ? minimum : continueGraphTransition(source.length, ctx, size))
-    const output = { minimum, maximum: maximum ?? size(source.maximum), head: source.head, tail: empty, length: extent,
-        ready: continueGraphTransition(source.ready, ctx, node =>
-            continueGraphTransition(extent, ctx, n => join(node, span(n - node.length)))),
+    const { length } = extent
+    return useExtent({ head: source.head, tail: empty,
+        ready: collectInputs([source.ready, length], ctx, ([node, n]) => join(node, span(n - node.length))),
         point(index, back) {
             const read = i => i < 0 || i >= source.maximum ? hole : source.point(i, false)
-            return back ? continueGraphTransition(output.length, ctx, n => read(n - index - 1)) : read(index)
+            return back ? continueGraphTransition(length, ctx, n => read(n - index - 1)) : read(index)
         },
         split() {
-            const count = collectInputs([extent, source.length], ctx, ([n, used]) => n - used)
-            const padding = pendingSequence(count, n => fixed(span(n)), ctx, 0, output.maximum - source.minimum)
-            return [source, padding]
-        } }
-    watch(source, (lo, hi, pending) => refine(output, Math.max(output.minimum, size(lo)),
-        Math.min(output.maximum, maximum ?? size(hi)), pending), ctx)
-    return output
+            const count = collectInputs([length, source.length], ctx, ([n, used]) => n - used)
+            return [source, pendingSequence(count, n => fixed(span(n)), ctx, 0, extent.maximum - source.minimum)]
+        } }, extent)
 }
 
 // A sequence has two independent questions: its extent and a selected
@@ -305,7 +303,7 @@ function captureSequence(array, ctx, { limit = MAX_COUNT, keepExtent = false, om
             source = limit <= prefix ? fixed(node) : replacePrefix(order, node, ctx)
         }
         const kept = takeSequence(source, limit, false, ctx)
-        return preserve ? padToExtent(kept, limit, sequenceExtent(order, ctx), ctx) : kept
+        return preserve ? padToExtent(kept, limit, sequenceExtent(order), ctx) : kept
     }
     const low = Math.min(limit, minimum), high = Math.min(limit, maximum)
     const extent = preserve || low !== high ? ArrayView.captureExtent(array, ctx, preserve ? MAX_COUNT : limit) : undefined
@@ -331,7 +329,7 @@ function replacePrefix(order, node, ctx) {
         part = part.capacityInput ?? part.parts[0]
     }
     let output = part.node ? fixed(join(node, restrict(part.node, node.length, part.node.length))) :
-        concatSequence(fixed(node), trimmedSequence(part, node.length, 0, ctx), ctx)
+        concatSequence(fixed(node), dropSequence(part, node.length, false, ctx), ctx)
     while (path.length) {
         const parent = path.pop()
         output = parent.capacityInput ? capacitySequence(output, ctx, parent.capacityCause) :
@@ -349,32 +347,33 @@ function captureOpenSequence(array, ctx, extent, region, capture, read) {
         try { return join(head, capture(array, head.length, count)) }
         finally { lease.release(); array = undefined }
     })
-    const sequence = { length, ready, head, tail: empty, point(index, back) {
+    const sequence = { ready, head, tail: empty, point(index, back) {
         if (!back && index < head.length) return layoutAt(head, index) ?? hole
         if (array && !back && index < minimum) return read(array, index)
-        return continueGraphTransition(ready, ctx, node => fixed(node).point(index, back))
+        return continueGraphTransition(ready, ctx, node => layoutPoint(node, index, back))
     } }
-    useExtent(sequence, extent)
-    return sequence
+    return useExtent(sequence, extent)
 }
 
 function useExtent(output, widths) {
     output.widths = widths
+    output.length = widths.length
     Object.defineProperties(output, {
         minimum: { configurable: true, get: () => widths.minimum },
         maximum: { configurable: true, get: () => widths.maximum },
     })
+    return output
 }
 
-function concatSequence(left, right, ctx, trackPrefix) {
+function concatSequence(left, right, ctx, options) {
     if (left.minimum === MAX_COUNT) return left
     if (left.node && right.node) return fixed(join(left.node, right.node))
     if (!left.maximum) return right
     if (!right.maximum) return left
     if (left.parts?.[1].node && right.node)
-        return concatSequence(left.parts[0], fixed(join(left.parts[1].node, right.node)), ctx, trackPrefix)
+        return concatSequence(left.parts[0], fixed(join(left.parts[1].node, right.node)), ctx, options)
     if (left.node && right.parts?.[0].node && !right.cappedEnd)
-        return concatSequence(fixed(join(left.node, right.parts[0].node)), right.parts[1], ctx, trackPrefix)
+        return concatSequence(fixed(join(left.node, right.parts[0].node)), right.parts[1], ctx, options)
     const minimum = sumWidths(left.minimum, right.minimum), maximum = sumWidths(left.maximum, right.maximum)
     const clips = right.maximum > MAX_COUNT - left.maximum
     let endQuestion
@@ -382,49 +381,51 @@ function concatSequence(left, right, ctx, trackPrefix) {
         if (right.maximum <= MAX_COUNT - left.maximum) return false
         if (right.minimum >= MAX_COUNT - left.minimum) return true
     }
-    const widths = minimum === maximum ? fixedWidth(minimum) :
-        sumExtent(sequenceExtent(left, ctx), sequenceExtent(right, ctx), ctx, trackPrefix)
-    const output = { minimum, maximum, length: widths.length, parts: [left, right], operands: combineOperands(left.operands, right.operands), dense: left.dense && right.dense,
+    const widths = options?.extent ?? (minimum === maximum ? fixedWidth(minimum) :
+        sumExtent(sequenceExtent(left), sequenceExtent(right), ctx, options?.trackPrefix))
+    const output = { parts: [left, right], operands: combineOperands(left.operands, right.operands), dense: left.dense && right.dense,
         head: left.node ? join(left.node, right.head) : left.head,
         tail: clips ? empty : right.node ? join(left.tail, right.node) : right.tail }
     deriveSequenceLayout(output, left, right, undefined, ctx)
     pointSelection(output, (index, back) => sequencePoint(output, index, back, ctx), ctx)
+    if (right.node) output.decisions = left.decisions
+    else if (left.node) output.decisions = right.decisions
+    if (right.node && !clips) output.trailing = left.trailing
+    output.capturePoint = (index, back) => sequencePoint(output, index, back, ctx, true)
     if (clips) output.cappedEnd = () => {
         const known = endAtCap()
         if (known !== undefined) return known
         if (!endQuestion) {
             endQuestion = Promise.withResolvers()
-            if (output.widths) {
-                const a = watch(left, update, ctx), b = watch(right, update, ctx)
-                endQuestion.release = () => { a?.(); b?.() }
-            }
+            const a = watch(left, update), b = watch(right, update)
+            endQuestion.release = () => { a?.(); b?.() }
         }
         return endQuestion.promise
     }
-    function update(_lo, _hi, pending) {
-        if (endQuestion) {
-            const end = endAtCap()
-            if (end !== undefined) { endQuestion.release?.(); endQuestion.resolve(end); endQuestion = undefined }
-        }
+    function update() {
+        if (!endQuestion) return
+        const end = endAtCap()
+        if (end !== undefined) { endQuestion.release(); endQuestion.resolve(end); endQuestion = undefined }
     }
-    useExtent(output, widths)
-    return output
+    return useExtent(output, widths)
 }
 
 // A chain of concat commands can be deep even when its final Array has one
 // element. Walk determined joins directly and resume at the undecided one.
-function sequencePoint(part, index, back, ctx, loss) {
+function sequencePoint(part, index, back, ctx, capture, loss) {
+    const root = part
     while (part.parts || part.capacityInput) {
-        if (index >= part.maximum) return hole
+        if (index >= part.maximum) return capture ? { placement: hole } : hole
         if (part.capacityInput) {
+            if (capture && (back || index >= MAX_ARRAY_LENGTH)) break
             const input = part.capacityInput
             if (back ? input.maximum - 1 - index >= MAX_ARRAY_LENGTH : index >= MAX_ARRAY_LENGTH) {
-                const virtual = !back || inRange(input, MAX_ARRAY_LENGTH + index, ctx)
+                const virtual = !back || inRange(input, MAX_ARRAY_LENGTH + index)
                 if (typeof virtual !== "boolean")
-                    return continueGraphTransition(virtual, ctx, () => sequencePoint(part, index, back, ctx, loss))
+                    return continueGraphTransition(virtual, ctx, () => sequencePoint(part, index, back, ctx, false, loss))
                 if (index >= input.minimum)
-                    return continueGraphTransition(inRange(input, index, ctx), ctx, present =>
-                        present ? sequencePoint(part, index, back, ctx, loss) : hole)
+                    return continueGraphTransition(inRange(input, index), ctx, present =>
+                        present ? sequencePoint(part, index, back, ctx, false, loss) : hole)
                 // An inner loss is earlier. A permanent marker at the leaf
                 // keeps its original cause even when several commands clip it.
                 if (virtual) loss = part.capacityCause
@@ -433,21 +434,30 @@ function sequencePoint(part, index, back, ctx, loss) {
             continue
         }
         if (back && part.cappedEnd) {
+            if (capture) break
             const capped = part.cappedEnd()
-            if (typeof capped !== "boolean") return continueGraphTransition(capped, ctx, () => sequencePoint(part, index, back, ctx, loss))
+            if (typeof capped !== "boolean") return continueGraphTransition(capped, ctx, () => sequencePoint(part, index, back, ctx, false, loss))
             if (capped) { index = MAX_COUNT - 1 - index; back = false }
         }
         const first = part.parts[back ? 1 : 0], next = part.parts[back ? 0 : 1]
+        if (capture && index >= first.minimum && first.minimum !== first.maximum) break
         if (index < first.minimum) {
             part = first
         } else if (index >= first.maximum) {
             if (first.minimum !== first.maximum)
-                return continueGraphTransition(first.length, ctx, n => sequencePoint(next, index - n, back, ctx, loss))
+                return continueGraphTransition(first.length, ctx, n => sequencePoint(next, index - n, back, ctx, false, loss))
             index -= first.minimum
             part = next
         } else {
-            return continueGraphTransition(inRange(first, index, ctx), ctx, () => sequencePoint(part, index, back, ctx, loss))
+            return continueGraphTransition(inRange(first, index), ctx, () => sequencePoint(part, index, back, ctx, false, loss))
         }
+    }
+    if (capture) {
+        if (part === root) return
+        const child = !part.parts && !part.capacityInput && part.capturePoint?.(index, back)
+        if (child) return child
+        const release = retainOperands(part.operands, ctx)
+        return { placement: part.point(index, back), release }
     }
     return pointAt(part, index, back, loss && (p => capacityPlacement(p, loss, ctx)))
 }
@@ -492,14 +502,13 @@ function mappedSequence(source, reversed, dense, ctx) {
         }
         return source[key]
     }
-    const output = { minimum: source.minimum, maximum: source.maximum, length: source.length,
-        mappedInput: source, reversed, dense, head: map(reversed ? source.tail : source.head),
+    const output = { mappedInput: source, reversed, dense, head: map(reversed ? source.tail : source.head),
         tail: map(reversed ? source.head : source.tail), awaitSelection: source.awaitSelection }
     deriveSequenceLayout(output, source, undefined, map, ctx)
     pointSelection(output, (index, back) => pointAt(source, index, back !== reversed,
         dense && (p => densePlacement(p, ctx))), ctx)
     if (source.capturePoint) output.capturePoint = (index, back) => {
-        const point = source.capturePoint(index, back !== reversed)
+        const point = source.capturePoint?.(index, back !== reversed)
         return point && dense ? denseCapturedPoint(point, ctx) : point
     }
     if (!reversed || source.minimum === source.maximum)
@@ -525,49 +534,78 @@ function mappedSequence(source, reversed, dense, ctx) {
             return child && (mapped ??= mappedSequence(child, reversed, dense, ctx))
         } })
     }
-    useExtent(output, sequenceExtent(source, ctx))
-    return output
+    return useExtent(output, sequenceExtent(source))
 }
 
-function trimmedSequence(source, first, last, ctx) {
-    if (!first && !last) return source
-    if (first && last) return trimmedSequence(trimmedSequence(source, first, 0, ctx), 0, last, ctx)
-    const back = Boolean(last)
-    let count = first || last, rest, result
-    // Push a determined cut into the join while its boundary is known.
-    // Keep only the narrow, moving fringe when the cut crosses a fixed run.
-    const pair = (near, far) => back ? concatSequence(far, near, ctx) : concatSequence(near, far, ctx)
+function takeSequence(source, count, back, ctx) { return selectEdge(source, count, back, true, ctx) }
+function dropSequence(source, count, back, ctx) { return selectEdge(source, count, back, false, ctx) }
+
+// Follow the cut through established joins. Taking saves the nearer pieces,
+// dropping saves the farther ones. Unwind those pieces in Array order.
+function selectEdge(source, count, back, take, ctx) {
+    const decisions = !take && source.decisions
+    const side = back ? 1 : 0
+    let pieces, result
+    function save(part, width) { (pieces ??= []).push([part, width]) }
     for (;;) {
-        if (count >= source.maximum) { result = fixed(empty); break }
-        // Decided choices can form a history-sized spine. Only a pending
-        // choice needs a new projection to follow its eventual child.
-        const current = source.restrictChoice && source.current
-        if (current) { source = current; continue }
-        if (!source.parts || source.cappedEnd) {
-            if (source.capacityInput || source.cappedEnd) source = omitClippedEdge(source, count, back, ctx)
-            result = cropWithSplit(source, count, back, ctx)
-            break
-        }
-        const near = source.parts[back ? 1 : 0], far = source.parts[back ? 0 : 1]
-        if (count <= near.minimum) { (rest ??= []).push(far); source = near; continue }
-        if (near.minimum === near.maximum) { count -= near.minimum; source = far; continue }
-        if (far.node) {
-            const n = far.maximum, cut = count
-            const low = Math.min(n, Math.max(0, cut - near.maximum))
-            const high = Math.min(n, cut - near.minimum)
-            const common = back ? restrict(far.node, 0, n - high) : restrict(far.node, high, n)
-            if (common.length) (rest ??= []).push(fixed(common))
-            source = near
-            if (low === high) continue
-            const fringe = back ? restrict(far.node, n - high, n - low) : restrict(far.node, low, high)
-            const kept = projectedCount(sequenceExtent(near, ctx), high - cut, ctx, 0, high - low)
-            ;(rest ??= []).push(growingRange(fringe, back, kept, 0, ctx))
+        if (!count) { result = take ? fixed(empty) : source; break }
+        if (count >= source.maximum) { result = take ? source : fixed(empty); break }
+        if (take) {
+            if (!back && count <= MAX_ARRAY_LENGTH && source.capacityInput) { source = source.capacityInput; continue }
+            const edge = back ? source.tail : source.head
+            if (edge.length >= count) { result = fixed(layoutWindow(edge, 0, count, back)); break }
+        } else if (source.crop?.back === back) {
+            count = sumWidths(count, source.crop.count)
+            source = source.crop.source
             continue
         }
-        result = cropWithSplit(source, count, back, ctx)
+        const current = (source.restrictChoice || take && !back) && source.current
+        if (current && (source.restrictChoice || count <= current.minimum)) { source = current; continue }
+        if (source.parts && (!source.cappedEnd || take && !back)) {
+            const near = source.parts[side], far = source.parts[1 - side]
+            if (count <= near.minimum) {
+                if (!take) save(far)
+                source = near
+                continue
+            }
+            if (near.minimum === near.maximum) {
+                if (take) save(near)
+                count -= near.minimum
+                source = far
+                continue
+            }
+            if (!take && far.node) {
+                const low = Math.min(far.maximum, Math.max(0, count - near.maximum))
+                const high = Math.min(far.maximum, count - near.minimum)
+                if (high < far.maximum) save(fixed(layoutWindow(far.node, high, far.maximum, back)))
+                if (low < high) {
+                    const fringe = layoutWindow(far.node, low, high, back)
+                    // The two pieces share a cut. Their sum is one projection
+                    // of the near width, including when both pieces are open.
+                    const total = projectedCount(sequenceExtent(near), high - count, ctx)
+                    save(growingRange(fringe, back, total, 0, ctx), total)
+                }
+                source = near
+                continue
+            }
+        }
+        const excluded = source.minimum - count
+        if (take && excluded > 0 && (source.parts || source.capacityInput)) {
+            source = dropSequence(source, excluded, !back, ctx)
+            continue
+        }
+        if (!take && (source.capacityInput || source.cappedEnd)) source = omitClippedEdge(source, count, back, ctx)
+        result = projectEdge(source, count, back, take, ctx)
+        if (!result.node && (source.parts || source.split))
+            result.split = () => splitEdge(take && !back && source.parts || splitSequence(source, ctx), count, back, take, ctx)
         break
     }
-    while (rest?.length) result = pair(result, rest.pop())
+    while (pieces?.length) {
+        const [part, width] = pieces.pop()
+        const options = width && { extent: width }
+        result = take !== back ? concatSequence(part, result, ctx, options) : concatSequence(result, part, ctx, options)
+    }
+    if (decisions && !result.node && !result.decisions) result.decisions = decisions
     return result
 }
 
@@ -619,7 +657,7 @@ function omitClippedEdge(source, count, back, ctx) {
 }
 
 function holesWithExtent(part, ctx) {
-    return extentHoles(sequenceExtent(part, ctx), ctx)
+    return extentHoles(sequenceExtent(part), ctx)
 }
 
 function extentHoles(size, ctx) {
@@ -627,24 +665,17 @@ function extentHoles(size, ctx) {
     const known = span(size.minimum)
     const result = { length: size.length, head: known, tail: known, point: () => hole,
         ready: continueGraphTransition(size.length, ctx, span) }
-    useExtent(result, size)
-    return result
+    return useExtent(result, size)
 }
 
-function sequenceExtent(source, ctx) {
-    if (source.widths) return source.widths
-    if (source.coordinateExtent) return source.coordinateExtent
-    const count = source.coordinateExtent = LinkedWidth.pending(source.minimum, source.maximum, ctx)
-    if (count.minimum !== count.maximum) watch(source, (lo, hi, active) => count.narrow(lo, hi, active), ctx)
-    return count
-}
+function sequenceExtent(source) { return source.widths ?? fixedWidth(source.length) }
 
 // The selected slots are a subset of the source. Their numeric bounds can
 // narrow before the choice, independently of any retained data.
 function selectedExtent(input, select, source, ctx, minimum = 0) {
     if (!isPending(input, ctx)) return select(input, ctx)
     const size = LinkedWidth.pending(minimum, source.maximum, ctx)
-    const release = watch(source, (_, hi, active) => size.narrow(minimum, hi, active), ctx)
+    const release = watch(source, (_, hi, active) => size.narrow(minimum, hi, active))
     markPromiseHandled(continueGraphTransition(input, ctx, choice => {
         release?.()
         size.select(projectedCount(select(choice, ctx), 0, ctx, size.minimum, size.maximum))
@@ -660,8 +691,7 @@ function growingRange(node, fromHead, extent, offset, ctx) {
     const count = projectedCount(extent, -offset, ctx, 0, length)
     const pick = n => fromHead ? restrict(node, 0, n) : restrict(node, length - n, length)
     if (count.minimum === count.maximum) return fixed(pick(count.minimum))
-    const part = { length: count.length }
-    useExtent(part, count)
+    const part = useExtent({}, count)
     let final
     Object.defineProperties(part, {
         current: { get: () => count.minimum === count.maximum ? final ??= fixed(pick(count.minimum)) : undefined },
@@ -671,7 +701,7 @@ function growingRange(node, fromHead, extent, offset, ctx) {
     deriveSequenceLayout(part, fixed(node), undefined, () => part.current.node, ctx, valueSignal(count.length, ctx))
     part.point = (index, back) => {
         if (index >= part.maximum) return hole
-        if (back !== fromHead) return continueGraphTransition(inRange(part, index, ctx), ctx,
+        if (back !== fromHead) return continueGraphTransition(inRange(part, index), ctx,
             present => present ? layoutAt(node, fromHead ? index : length - 1 - index) ?? hole : hole)
         return continueGraphTransition(part.current?.node ?? part.ready, ctx, selected =>
             index < selected.length ? layoutAt(selected, back ? selected.length - 1 - index : index) ?? hole : hole)
@@ -685,128 +715,49 @@ function growingRange(node, fromHead, extent, offset, ctx) {
     return part
 }
 
-function cropWithSplit(source, count, back, ctx) {
-    const output = cropSequence(source, back ? 0 : count, back ? count : 0, ctx)
-    if (!output.node && (source.parts || source.split)) {
-        output.split = () => {
-            const parts = splitSequence(source, ctx)
-            if (!parts) return
-            const [near, far] = back ? [parts[1], parts[0]] : parts
-            const trim = (part, n) => trimmedSequence(part, back ? 0 : n, back ? n : 0, ctx)
-            const pair = (a, b) => back ? [b, a] : [a, b]
-            if (count <= near.minimum) return pair(trim(near, count), far)
-            const spill = count - near.minimum
-            if (spill >= far.maximum) return
-            if (near.minimum === near.maximum) return pair(fixed(empty), trim(far, spill))
-            const fringe = takeSequence(far, spill, back, ctx)
-            // Only this fringe can cross the cut as the near side grows.
-            const uncertain = back ? concatSequence(fringe, near, ctx) : concatSequence(near, fringe, ctx)
-            return pair(trim(uncertain, count), trim(far, spill))
-        }
-    }
-    return output
+// Both bounds are offsets from the same end of the captured predecessor.
+function edgeWindow(source, first, end, back, ctx) {
+    if (first >= end) return fixed(empty)
+    const kept = takeSequence(source, end, back, ctx)
+    return dropSequence(kept, first, back, ctx)
 }
 
-function cropSequence(source, first, last, ctx) {
-    const size = dropWidth(first + last)
-    const crop = node => restrict(node, first, node.length - last)
-    if (source.node) return fixed(crop(source.node))
-    const minimum = size(source.minimum), maximum = size(source.maximum)
-    if (!maximum) return fixed(empty)
-    if (source.mappedInput && !source.capacityInput) {
-        const child = trimmedSequence(source.mappedInput, source.reversed ? last : first, source.reversed ? first : last, ctx)
-        return mappedSequence(child, source.reversed, source.dense, ctx)
-    }
-    const extent = projectedCount(sequenceExtent(source, ctx), -(first + last), ctx)
-    const selected = source.restrictChoice?.(extent, child => trimmedSequence(child, first, last, ctx))
-    if (selected) return selected
-    const output = { minimum, maximum, length: extent.length }
-    output.head = restrict(source.head, Math.min(first, source.head.length), Math.min(source.head.length, first + minimum))
-    output.tail = restrict(source.tail, Math.max(0, source.tail.length - last - minimum), Math.max(0, source.tail.length - last))
-    deriveSequenceLayout(output, source, undefined, crop, ctx)
-    pointSelection(output, (index, back) => {
-        if (index < output.minimum || !(back ? first : last)) return pointAt(source, index + (back ? last : first), back)
-        return continueGraphTransition(source.length, ctx, n =>
-            index < size(n) ? pointAt(source, index + (back ? last : first), back) : hole)
-    }, ctx)
-    forwardSkipRange(output, source, first, false, ctx)
-    useExtent(output, extent)
-    return output
+function layoutWindow(node, first, end, back) {
+    const lo = Math.min(first, node.length), hi = Math.min(end, node.length)
+    return back ? restrict(node, node.length - hi, node.length - lo) : restrict(node, lo, hi)
 }
 
-function takeSequence(source, count, back, ctx) {
-    let pieces, result
-    for (;;) {
-        if (!count) { result = fixed(empty); break }
-        if (count >= source.maximum) { result = source; break }
-        if (!back && count <= MAX_ARRAY_LENGTH && source.capacityInput) { source = source.capacityInput; continue }
-        const edge = back ? source.tail : source.head
-        if (edge.length >= count) {
-            result = fixed(back ? restrict(edge, edge.length - count, edge.length) : restrict(edge, 0, count))
-            break
-        }
-        const current = (!back || source.restrictChoice) && source.current
-        if (current && (source.restrictChoice || count <= current.minimum)) { source = current; continue }
-        if (source.parts && !(back && source.cappedEnd)) {
-            const side = back ? 1 : 0, first = source.parts[side]
-            if (count <= first.minimum) { source = first; continue }
-            if (first.minimum === first.maximum) {
-                ;(pieces ??= []).push(first)
-                count -= first.minimum
-                source = source.parts[1 - side]
-                continue
-            }
-        }
-        // Even when the requested endpoint crosses an open operand, the
-        // minimum width proves a range at the opposite end unreachable.
-        const excluded = source.minimum - count
-        if (excluded > 0 && (source.parts || source.capacityInput)) {
-            source = trimmedSequence(source, back ? excluded : 0, back ? 0 : excluded, ctx)
-            continue
-        }
-        result = boundedSequence(source, count, back, ctx)
-        if (source.parts || source.split) result.split = () => {
-            const parts = !back && source.parts || splitSequence(source, ctx)
-            return parts && splitBounded(parts, count, back, ctx)
-        }
-        break
-    }
-    while (pieces?.length) {
-        const part = pieces.pop()
-        result = back ? concatSequence(result, part, ctx) : concatSequence(part, result, ctx)
-    }
-    return result
-}
-
-function boundedSequence(source, count, back, ctx) {
-    const crop = node => back ? restrict(node, Math.max(0, node.length - count), node.length) :
-        restrict(node, 0, Math.min(node.length, count))
-    const edge = back ? source.tail : source.head
-    if (edge.length >= count) return fixed(crop(edge))
+// Project a single end of an indivisible sequence. Layout, point reads,
+// and obstruction ranges consume the same anchored displacement and extent.
+function projectEdge(source, count, back, take, ctx) {
+    const offset = take ? 0 : count, limit = take ? count : MAX_COUNT
+    const project = node => layoutWindow(node, offset, limit, back)
+    const near = back ? source.tail : source.head, far = back ? source.head : source.tail
+    if (source.node || take && near.length >= count) return fixed(project(source.node ?? near))
+    const transform = take ? takeSequence : dropSequence
     if (source.mappedInput && !source.capacityInput)
-        return mappedSequence(takeSequence(source.mappedInput, count, back !== source.reversed, ctx), source.reversed, source.dense, ctx)
-    const size = limitWidth(count), minimum = size(source.minimum)
-    const extent = projectedCount(sequenceExtent(source, ctx), 0, ctx, 0, count)
-    const selected = source.restrictChoice?.(extent, child => takeSequence(child, count, back, ctx))
+        return mappedSequence(transform(source.mappedInput, count, back !== source.reversed, ctx), source.reversed, source.dense, ctx)
+    const extent = projectedCount(sequenceExtent(source), -offset, ctx, 0, limit)
+    if (!extent.maximum) return fixed(empty)
+    const selected = source.restrictChoice?.(extent, child => transform(child, count, back, ctx))
     if (selected) return selected
-    const output = { minimum, maximum: size(source.maximum), length: extent.length }
-    output.head = back ? empty : edge
-    output.tail = back ? edge : empty
-    deriveSequenceLayout(output, source, undefined, crop, ctx)
+    const edge = layoutWindow(near, offset, sumWidths(offset, extent.minimum), back)
+    const other = take ? empty : layoutWindow(far, 0, extent.minimum, !back)
+    const output = { head: back ? other : edge, tail: back ? edge : other }
+    if (!take) output.crop = { source, count, back }
+    deriveSequenceLayout(output, source, undefined, project, ctx)
     pointSelection(output, (index, fromEnd) => {
-        if (index >= count) return hole
-        if (fromEnd === back) return pointAt(source, index, back)
-        return continueGraphTransition(output.minimum === count ? count : output.length, ctx, length =>
-            index < length ? pointAt(source, length - 1 - index, back) : hole)
+        if (index >= extent.maximum) return hole
+        if (fromEnd === back) return pointAt(source, index + offset, back)
+        if (take) return continueGraphTransition(extent.minimum === count ? count : extent.length, ctx,
+            n => index < n ? pointAt(source, n - 1 - index, back) : hole)
+        return continueGraphTransition(inRange(output, index), ctx, member =>
+            member ? pointAt(source, index, fromEnd) : hole)
     }, ctx)
-    if (!back || source.minimum === source.maximum)
-        forwardSkipRange(output, source, back ? Math.max(0, source.minimum - count) : 0, false, ctx)
-    useExtent(output, extent)
-    return output
+    if (!take || !back || source.minimum === source.maximum)
+        forwardSkipRange(output, source, back ? take ? Math.max(0, source.minimum - count) : 0 : offset, false, ctx)
+    return useExtent(output, extent)
 }
-
-const dropWidth = amount => n => Math.max(0, n - amount)
-const limitWidth = limit => n => Math.min(n, limit)
 
 // A plain join stores its operands. Other mappings expose two disjoint,
 // ordered contributions on demand. Their widths can depend on the same cut.
@@ -816,21 +767,30 @@ function splitSequence(source, ctx) {
     if (source.parts && !source.cappedEnd) return source.parts
     // A successful split represents this entire captured sequence, including
     // its pending remainder. Readers share the derived views and subscriptions.
-    return source.partition ??= source.cappedEnd && source.parts ? splitBounded(source.parts, MAX_COUNT, false, ctx) :
+    return source.partition ??= source.cappedEnd && source.parts ? splitEdge(source.parts, MAX_COUNT, false, true, ctx) :
         source.split?.()
 }
 
-function splitBounded(parts, count, back, ctx) {
+function splitEdge(parts, count, back, take, ctx) {
+    if (!parts) return
     const [near, far] = back ? [parts[1], parts[0]] : parts
-    const room = Math.max(0, count - near.maximum)
-    const kept = takeSequence(near, count, back, ctx)
-    if (count <= near.minimum) return back ? [fixed(empty), kept] : [kept, fixed(empty)]
-    if (far.maximum <= room) return back ? [far, kept] : [kept, far]
-    const common = takeSequence(far, room, back, ctx)
-    const fringe = trimmedSequence(far, back ? 0 : room, back ? room : 0, ctx)
+    const pair = (a, b) => back ? [b, a] : [a, b]
+    const project = take ? takeSequence : dropSequence
+    if (count <= near.minimum) return pair(project(near, count, back, ctx), take ? fixed(empty) : far)
+    const spill = count - near.minimum
+    if (near.minimum === near.maximum) return pair(take ? near : fixed(empty), project(far, spill, back, ctx))
+    if (!take) {
+        if (spill >= far.maximum) return
+        const fringe = takeSequence(far, spill, back, ctx)
+        const crossing = back ? concatSequence(fringe, near, ctx) : concatSequence(near, fringe, ctx)
+        return pair(dropSequence(crossing, count, back, ctx), dropSequence(far, spill, back, ctx))
+    }
+    const kept = takeSequence(near, count, back, ctx), room = Math.max(0, count - near.maximum)
+    if (far.maximum <= room) return pair(kept, far)
+    const common = takeSequence(far, room, back, ctx), fringe = dropSequence(far, room, back, ctx)
     const rest = pendingSequence(near.length, n => takeSequence(fringe, Math.max(0, count - n - room), back, ctx),
-        ctx, 0, Math.min(fringe.maximum, Math.max(0, count - near.minimum - room)))
-    return back ? [concatSequence(rest, common, ctx), kept] : [kept, concatSequence(common, rest, ctx)]
+        ctx, 0, Math.min(fringe.maximum, spill - room))
+    return pair(kept, back ? concatSequence(rest, common, ctx) : concatSequence(common, rest, ctx))
 }
 
 function publishLayout(node, ctx) { return publishSequence(fixed(node), ctx) }
@@ -861,26 +821,17 @@ const noRelease = () => {}
 class SequencePublication {
     constructor(region, prefixLength, compact) {
         this.region = region
-        this.shape = region.shape
         this.prefixLength = prefixLength
         this.compact = compact
-    }
-    refine = (lo, hi) => {
-        if (this.region) this.region.refine(lo, hi)
-        else this.shape?.refine(lo, hi)
     }
     finishForward = () => {
         this.forwardReady = true
         if (this.region) return this.attach(this.region)
     }
     finish = node => {
-        this.unwatch?.()
-        this.unwatch = undefined
         const prefix = this.prefixLength
         this.node = prefix ? join(span(prefix), restrict(node, prefix, node.length)) : node
         if (this.region) return this.attach(this.region)
-        this.shape?.complete(node.length)
-        this.shape = undefined
     }
     attach(region) {
         // Reactivation can select a ready child synchronously while the
@@ -895,12 +846,11 @@ class SequencePublication {
             return this.finish(readSequenceLayout(region.sequence.layoutSource))
         }
         if (!this.node) {
-            if (!this.region) region.refine(region.sequence.minimum, region.sequence.maximum)
             this.region = region
             return
         }
         const node = this.node
-        this.node = this.region = this.shape = region.publication = undefined
+        this.node = this.region = region.publication = undefined
         return this.compact ? region.publish(node) : region.finishLayout(node)
     }
 }
@@ -930,7 +880,6 @@ function publishSequence(sequence, ctx, releaseInputs, borrowed) {
             region.updatePreservationReaders()
         }
         const receipt = region.publication = new SequencePublication(region, region.start, Boolean(compact))
-        if (region.shape) receipt.unwatch = watch(sequence, receipt.refine, ctx)
         if (compact) region.placements = sequence.node
         // This destination already retained its selections and can retire.
         // Independent readers use sequence.ready, which requests each choice
@@ -948,7 +897,7 @@ function publishSequence(sequence, ctx, releaseInputs, borrowed) {
 // the choice into its operands to find the selected layout or point.
 function selectedSequence(operands, extent, choice, select, ctx, blocked = false) {
     if (!choice.pending) return select(choice.value)
-    const output = { length: extent.length, head: empty, tail: empty,
+    const output = { head: empty, tail: empty,
         awaitSelection: choice.watch ??= selectionReceipt(choice.pending, ctx),
         get current() { return current() } }
     const current = selectSequenceLayout(output, operands, choice, select, ctx)
@@ -986,8 +935,8 @@ function pendingSequence(input, select, ctx, minimum = 0, maximum = MAX_COUNT, o
     }
     const extent = LinkedWidth.pending(minimum, maximum, ctx)
     if (minimum !== maximum) markPromiseHandled(continueGraphTransition(part, ctx, child =>
-        extent.select(projectedCount(sequenceExtent(child, ctx), 0, ctx, minimum, maximum))), ctx)
-    const output = { operands, head: empty, tail: empty, length: extent.length,
+        extent.select(projectedCount(sequenceExtent(child), 0, ctx, minimum, maximum))), ctx)
+    const output = { operands, head: empty, tail: empty,
         ready: continueGraphTransition(part, ctx, child => child.ready),
         widthFailure: continueGraphTransition(part, ctx, child => child.widthFailure) }
     pointSelection(output, (index, back) => {
@@ -997,20 +946,16 @@ function pendingSequence(input, select, ctx, minimum = 0, maximum = MAX_COUNT, o
     // Copying bounds or projecting capacity does not inspect the interior.
     Object.defineProperty(output, "current", { get: current })
     output.awaitSelection = selectionReceipt(part, ctx)
-    useExtent(output, extent)
-    return output
+    return useExtent(output, extent)
 }
 
 function obstructedSequence(source, cause, ctx) {
     const placement = structuralPlacement(cause)
     if (source.minimum === source.maximum) return fixed(span(source.minimum, placement))
-    source = sequenceExtent(source, ctx)
-    const output = { minimum: source.minimum, maximum: source.maximum, length: source.length,
-        head: span(source.minimum, placement), tail: span(source.minimum, placement),
+    const output = { head: span(source.minimum, placement), tail: span(source.minimum, placement),
         ready: continueGraphTransition(source.length, ctx, n => span(n, placement)),
-        point: index => continueGraphTransition(inRange(source, index, ctx), ctx, present => present ? placement : hole) }
-    watch(source, (lo, hi, pending) => refine(output, lo, hi, pending), ctx)
-    return output
+        point: index => continueGraphTransition(inRange(source, index), ctx, present => present ? placement : hole) }
+    return useExtent(output, source)
 }
 
 function valueSignal(input, ctx) {
@@ -1035,15 +980,16 @@ function afterFailedWidth(sequence, failure, ctx, blocked = false) {
         pointSelection(output, (index, back) => continueGraphTransition(decision.pending, ctx,
             () => pointAt(current(), index, back)), ctx)
         deriveSequenceLayout(output, sequence, undefined, node => decision.value ? flagPositions(node, decision.value, ctx) : node, ctx, decision)
-        useExtent(output, sequenceExtent(sequence, ctx))
+        useExtent(output, sequenceExtent(sequence))
         return blocked ? blockedPositions(output, ctx) : output
     } else {
         const flag = node => flagPositions(node, failure, ctx)
         const ready = continueGraphTransition(sequence.ready, ctx, flag)
         if (!isPending(ready, ctx)) return fixed(ready)
-        output = { minimum: sequence.minimum, maximum: sequence.maximum, length: sequence.length, operands: sequence.operands,
+        output = { operands: sequence.operands,
             head: flag(sequence.head), tail: flag(sequence.tail), ready, status: ready }
-        pointSelection(output, (index, back) => pointAt(sequence, index, back, p => flag(span(1, p)).placement), ctx)
+        pointSelection(output, (index, back) => continueGraphTransition(inRange(sequence, index), ctx,
+            present => present ? pointAt(sequence, index, back, p => flag(span(1, p)).placement) : hole), ctx)
         // Every selected position fails. An any-match search can collect the
         // compact causes together while it compares independent contributions.
         markPromiseHandled(continueGraphTransition(ready, ctx, node => {
@@ -1051,8 +997,7 @@ function afterFailedWidth(sequence, failure, ctx, blocked = false) {
             output.status = undefined
         }), ctx)
     }
-    watch(sequence, (lo, hi, pending) => refine(output, lo, hi, pending), ctx)
-    return output
+    return useExtent(output, sequenceExtent(sequence))
 }
 
 function combineWidthFailures(left, right, ctx) {
@@ -1088,12 +1033,12 @@ function joinContributions(inputs, asSequence, sequential, ctx, operands) {
 }
 
 function hasUnmarkedRange(sequence, ctx) {
-    return continueGraphTransition(inRange(sequence, 0, ctx), ctx, present => present &&
+    return continueGraphTransition(inRange(sequence, 0), ctx, present => present &&
         continueGraphTransition(sequence.ready, ctx, node => hasUnmarkedPlacement(node, ctx)))
 }
 
 function displacedRange(source, width, ctx) {
-    return takeSequence(trimmedSequence(source, MAX_ARRAY_LENGTH - width, 0, ctx), width, false, ctx)
+    return takeSequence(dropSequence(source, MAX_ARRAY_LENGTH - width, false, ctx), width, false, ctx)
 }
 
 function capacitySequence(input, ctx, cause) {
@@ -1101,21 +1046,18 @@ function capacitySequence(input, ctx, cause) {
     cause ??= capacityCause(ctx)
     const project = node => projectCapacity(node, ctx, false, cause).node
     if (input.node) return fixed(project(input.node))
-    const output = { length: input.length, dense: input.dense, widthFailure: input.widthFailure,
+    const output = { dense: input.dense, widthFailure: input.widthFailure,
         capacityInput: input, capacityCause: cause, head: project(input.head), tail: empty,
         obstructions: {
             end: (first, limit) => first >= MAX_ARRAY_LENGTH ? limit : first,
             observe: (_first, end, _work, _inspect, fail) => { if (end > MAX_ARRAY_LENGTH) fail() }
         },
-        split: () => [takeSequence(input, MAX_ARRAY_LENGTH, false, ctx), cropSequence(output, MAX_ARRAY_LENGTH, 0, ctx)] }
+        split: () => [takeSequence(input, MAX_ARRAY_LENGTH, false, ctx), projectEdge(output, MAX_ARRAY_LENGTH, false, false, ctx)] }
     deriveSequenceLayout(output, input, undefined, project, ctx)
     pointSelection(output, (index, back) => sequencePoint(output, index, back, ctx), ctx)
-    if (input.capturePoint) output.capturePoint = (index, back) => {
-        if (!back && index < MAX_ARRAY_LENGTH) return input.capturePoint(index, false)
-    }
-    useExtent(output, sequenceExtent(input, ctx))
-    return output
+    output.capturePoint = (index, back) => sequencePoint(output, index, back, ctx, true)
+    return useExtent(output, sequenceExtent(input))
 }
 
-export { pointAt, pointSelection, selectionReceipt, captureSequence, captureOrder, fixed, splitSequence, captureSkippedRange, forwardSkipRange, markerSequence, concatSequence, reversedSequence, trimmedSequence, publishLayout, publishFixedCopy, publishSequence, retainLayout, refine, watch, watchBounds, sequenceExtent, holesWithExtent, valueSignal, SelectionQuestions, beforeInsertion,
-    takeSequence, boundedSequence, denseSequence, pendingSequence, selectedSequence, appendContribution, joinContributions, capacitySequence, displacedRange, hasUnmarkedRange, inRange, afterFailedWidth, obstructedSequence, useExtent, selectedExtent }
+export { hole, layoutWindow, edgeWindow, layoutPoint, undecidedCut, pointAt, pointSelection, selectionReceipt, captureSequence, captureOrder, fixed, splitSequence, captureSkippedRange, forwardSkipRange, markerSequence, concatSequence, reversedSequence, dropSequence, publishLayout, publishFixedCopy, publishSequence, retainLayout, watch, sequenceExtent, valueSignal, SelectionQuestions, guaranteedOldWindow, possibleOldBounds,
+    takeSequence, projectEdge, denseSequence, pendingSequence, selectedSequence, appendContribution, joinContributions, capacitySequence, displacedRange, hasUnmarkedRange, inRange, afterFailedWidth, obstructedSequence, useExtent, selectedExtent }

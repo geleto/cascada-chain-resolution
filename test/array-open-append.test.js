@@ -213,9 +213,11 @@ describe("ordered open append contributions", () => {
         let result = hasItem ? new r.Chain(r.run(source, [], "concat", ["B"], ctx, {}), ctx) : source
         for (let i = 0; i < 12; i++)
             result = new r.Chain(r.run(result, [], "concat", [r.lookupPath(result, [], ctx)], ctx, {}), ctx)
-        const before = shared.listeners.size
+        const readers = () => (shared.widths.waiting?.size ?? 0) +
+            (shared.widths.questions?.runs.reduce((n, run) => n + (run?.live ?? 0), 0) ?? 0)
+        const before = readers()
         const cursor = r.iterate(result, [], ctx, { windowEnd: 2 }), pull = cursor.next()
-        assert(shared.listeners.size - before <= 24, "demand expands only the paths it can use")
+        assert(readers() - before <= 24, "demand expands only the paths it can use")
         if (hasItem) {
             assert.equal(r.run(result, [], "includes", ["B"], ctx, {}), true)
             const step = await pull

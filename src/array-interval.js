@@ -1,8 +1,8 @@
-import { capacityCause, capacityError, captureLayout, join, matchingLength, MAX_ARRAY_LENGTH, overlappingFailures, possibleWrites, projectCapacity, restrict, skippedLength, span, structuralPlacement } from "./array-layout.js"
-import { capacitySequence, concatSequence, captureOrder, captureSequence, fixed, forwardSkipRange, holesWithExtent, inRange, obstructedSequence, pointAt, pointSelection, publishSequence, refine,
-    selectedSequence, SelectionQuestions, sequenceExtent, takeSequence, boundedSequence, pendingSequence, trimmedSequence, valueSignal, watch, watchBounds } from "./array-sequence.js"
+import { anyPresent, capacityCause, capacityError, captureLayout, join, matchingLength, MAX_ARRAY_LENGTH, overlappingFailures, possibleWrites, projectCapacity, restrict, skippedLength, span, structuralPlacement, replaceLayoutRange } from "./array-layout.js"
+import { capacitySequence, concatSequence, captureOrder, captureSequence, fixed, forwardSkipRange, inRange, obstructedSequence, pointAt, pointSelection, publishLayout, publishSequence, useExtent,
+    selectedSequence, SelectionQuestions, sequenceExtent, edgeWindow, layoutPoint, layoutWindow, takeSequence, projectEdge, pendingSequence, dropSequence, valueSignal, watch } from "./array-sequence.js"
 import { ArrayView } from "./array-view.js"
-import { publishWidthLength } from "./array-width.js"
+import { LinkedWidth } from "./array-width.js"
 import { retainOperands } from "./array-sequence-layout.js"
 import { CHAIN_MODE } from "./chain.js"
 import { combineErrors, isPoisonError } from "./error.js"
@@ -10,9 +10,10 @@ import { collectInputs, continueGraphTransition, decideInputs } from "./internal
 import { isPending } from "./language-values.js"
 import { OperationOwner, releaseOnClose } from "./operation-lifecycle.js"
 import { createLeaseLedger } from "./ownership.js"
-import { arrayInput } from "./array-remap.js"
+import { arrayInput, createRangeOutput, createRemap, sliceOutput } from "./array-remap.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
-import { knownObstruction, placementFromSelection } from "./property-versions.js"
+import { knownObstruction, placementFromSelection, placementPresent, resolvePlacementPresence } from "./property-versions.js"
+import { readLanguagePlacement } from "./language-properties.js"
 import { supplyErrorEvidence } from "./error-evidence.js"
 import { checkArrayCapacity, numericInput, runArrayStep } from "./array-methods.js"
 
@@ -21,6 +22,20 @@ const empty = span(0)
 
 function broadRange(width, receiver, length, ctx) {
     return width > 64 && width > Math.min(length, ArrayView.storedIndexes(receiver, ctx)) / 4
+}
+
+// A determined interval carries the destination and the corresponding
+// predecessor range. All storage paths consume this same clipped count.
+const emptyRange = { at: 0, first: 0, count: 0 }
+function intervalRange(method, length, target, first, end, payload) {
+    const at = method === "copyWithin" ? target : first
+    return { at, first, count: Math.max(0, Math.min(end - first, length - at)), payload }
+}
+
+function overwriteLayout(read, length, { at, first, count, payload }, writes, ctx) {
+    const replacement = payload ? span(count, payload) : read(first, first + count)
+    return { node: replaceLayoutRange(read, length, at, count, replacement),
+        writes: writes && (payload ? count > 0 : possibleWrites([replacement, read(at, at + count)], ctx)) }
 }
 
 function rangeBounds(values, length) {
@@ -63,24 +78,14 @@ function lengthSamples(values, minimum, maximum) {
     return samples
 }
 
-function sliceSequence(source, start, end, ctx) {
-    if (start >= 0) return end < 0 ? trimmedSequence(source, start, -end, ctx) :
-        trimmedSequence(takeSequence(source, end, false, ctx), start, 0, ctx)
-    if (end < 0) return trimmedSequence(takeSequence(source, -start, true, ctx), 0, -end, ctx)
-    if (end >= source.maximum) return takeSequence(source, -start, true, ctx)
-    if (-start >= source.maximum) return takeSequence(source, end, false, ctx)
-}
-
 // Slice dimensions depend on normalized controls and the input count alone.
 // The last layout owner can leave while a length question keeps this alive.
 function sliceExtent(selection, source, ctx) {
-    const extent = { minimum: selection.sliceMinimum, maximum: selection.sliceMaximum, watch: watchBounds }
-    publishWidthLength(extent, selection.read(() =>
-        selection.sliceMinimum === selection.sliceMaximum ? selection.sliceMaximum : undefined), ctx)
+    const extent = LinkedWidth.pending(selection.sliceMinimum, selection.sliceMaximum, ctx)
     if (extent.minimum === extent.maximum) return extent
     const unwatch = selection.observeExtent(source)
     selection.updateBounds = active => {
-        refine(extent, selection.sliceMinimum, selection.sliceMaximum, active)
+        extent.narrow(selection.sliceMinimum, selection.sliceMaximum, active)
         if (extent.minimum === extent.maximum) {
             unwatch?.()
             selection.updateBounds = undefined
@@ -89,38 +94,49 @@ function sliceExtent(selection, source, ctx) {
     return extent
 }
 
-// A single bound already excludes source occurrences. Preserve their width
-// so the other bound, including a negative one, still uses the original end.
-function sliceCandidates(source, start, end, ctx) {
-    const shape = holesWithExtent(source, ctx)
-    if (start !== undefined) return concatSequence(sliceSequence(shape, 0, start, ctx),
-        sliceSequence(source, start, Infinity, ctx), ctx)
-    return concatSequence(sliceSequence(source, 0, end, ctx), sliceSequence(shape, end, Infinity, ctx), ctx)
-}
-
+// In the chosen direction the first available bound is the end of the
+// retained window. The remaining start still refers to the original width.
 function selectedSlice(selection, source, shape, extent, ctx) {
+    if (selection.empty) return fixed(empty)
+    if (selection.failure) return obstructedSequence(extent, selection.failure, ctx)
     const [, start, end] = selection.values
-    if (selection.done) {
-        if (selection.empty) return fixed(empty)
-        const from = typeof start === "number" ? start : 0
-        const to = typeof end === "number" ? end : Infinity
-        const input = selection.failure ? holesWithExtent(source, ctx) : source
-        const selected = sliceSequence(input, from, to, ctx) ?? intersectSlice(input, shape, extent, from, to, ctx)
-        return selection.failure ? obstructedSequence(selected, selection.failure, ctx) : selected
-    }
     const failed = selection.controls?.failed || isPoisonError(start) || isPoisonError(end)
-    const candidate = failed ? holesWithExtent(source, ctx) :
-        start === undefined && end === undefined ? source : sliceCandidates(source, start, end, ctx)
+    if (failed || start === undefined && end === undefined) {
+        if (failed) source = undefined
+        return selectedSequence(source?.operands, extent, sliceChange(selection, !failed, ctx),
+            () => selectedSlice(selection, source, shape, extent, ctx), ctx)
+    }
+    const reverse = end === undefined
+    const opposite = index => index === 0 ? Infinity : -index
+    const stop = reverse ? opposite(start) : end
+    const candidate = stop < 0 ? dropSequence(source, -stop, !reverse, ctx) : takeSequence(source, stop, reverse, ctx)
+    // A cut from one end may also contain a fixed run known from the other.
+    // Save only the part guaranteed to survive this bound, at its old offset.
+    const stable = reverse ? source.head : source.tail
+    const base = Math.max(0, shape.maximum - stop)
+    const common = stop > 0 && stop < shape.maximum && base < stable.length ?
+        layoutWindow(stable, base, stable.length, !reverse) : empty
     source = undefined
-    const choice = sliceChange(selection, start, end, failed, ctx)
-    return selectedSequence(candidate.operands, extent, choice,
-        () => selectedSlice(selection, candidate, shape, extent, ctx), ctx)
+    const select = () => {
+        if (selection.empty) return fixed(empty)
+        if (selection.failure) return obstructedSequence(extent, selection.failure, ctx)
+        const from = reverse ? opposite(selection.values[2]) : selection.values[1]
+        if (from >= 0) return dropSequence(candidate, from, reverse, ctx)
+        if (stop < 0) return takeSequence(candidate, Math.max(0, stop - from), !reverse, ctx)
+        if (-from >= shape.maximum) return candidate
+        if (stop >= shape.maximum) return takeSequence(candidate, -from, !reverse, ctx)
+        const used = -from - base
+        const edge = used > 0 && used <= common.length ? layoutWindow(common, 0, used, !reverse) : empty
+        return intersectSlice(candidate, shape, extent, from, stop, reverse, edge, ctx)
+    }
+    if (selection.done) return select()
+    return selectedSequence(candidate.operands, extent, sliceChange(selection, false, ctx), select, ctx)
 }
 
-// Pending controls keep only the numeric question when all data owners leave.
-function sliceChange(selection, start, end, failed, ctx) {
-    return valueSignal(selection.read(() => selection.done || !failed && (selection.controls?.failed ||
-        selection.values[1] !== start || selection.values[2] !== end) || undefined), ctx)
+// A length-only reader can retain this signal after every data owner leaves.
+function sliceChange(selection, first, ctx) {
+    return valueSignal(selection.read(() => selection.done || first && (selection.controls?.failed ||
+        selection.values[1] !== undefined || selection.values[2] !== undefined) || undefined), ctx)
 }
 
 function sliceCoordinates(extent, length, start, end, ctx) {
@@ -132,24 +148,26 @@ function sliceCoordinates(extent, length, start, end, ctx) {
 
 // Opposing anchors can meet inside the source's possible length range.
 // Keep the possible source interval and its independently captured shape.
-function intersectSlice(source, shape, extent, start, end, ctx) {
+function intersectSlice(source, shape, extent, start, end, reverse, edge, ctx) {
     const base = normalizeIndex(start, shape.minimum)
-    let candidate = trimmedSequence(takeSequence(source, end, false, ctx), base, 0, ctx)
+    let candidate = dropSequence(source, base, reverse, ctx)
     const coordinates = sliceCoordinates(extent, shape.length, start, end, ctx)
     const selected = selectedSequence(candidate.operands, extent, coordinates, ([first, last]) => {
-        const result = first < last ? trimmedSequence(takeSequence(candidate, last - base, false, ctx),
-            first - base, 0, ctx) : fixed(empty)
+        const result = edgeWindow(candidate, first - base, last - base, reverse, ctx)
         candidate = undefined
         return result
     }, ctx)
     if (coordinates.pending) {
+        selected[reverse ? "tail" : "head"] = edge
         const point = selected.selectPoint
         pointSelection(selected, (index, back) => {
+            if (reverse === back && index < edge.length) return layoutPoint(edge, index, back)
             if (!candidate || !coordinates.pending) return point(index, back)
             const first = normalizeIndex(start, shape.minimum), high = normalizeIndex(start, shape.maximum)
             const last = normalizeIndex(end, shape.minimum), endHigh = normalizeIndex(end, shape.maximum)
-            if (index < last - high && (back ? last === endHigh : first === high))
-                return pointAt(candidate, (back ? last - 1 - index : first + index) - base, false)
+            const fromEnd = back !== reverse
+            if (index < last - high && (fromEnd ? last === endHigh : first === high))
+                return pointAt(candidate, (fromEnd ? last - 1 - index : first + index) - base, reverse)
             return point(index, back)
         }, ctx)
     }
@@ -266,7 +284,7 @@ class IntervalSelection extends SelectionQuestions {
     }
 
     observeExtent(source) {
-        return watch(source, (lo, hi, active) => this.extent(lo, hi, active), this.ctx)
+        return watch(source, (lo, hi, active) => this.extent(lo, hi, active))
     }
 
     observeUnchanged(work, query) {
@@ -305,7 +323,7 @@ class IntervalSelection extends SelectionQuestions {
 
     arguments(length, payload) {
         const [target, start, end] = this.values.map(value => normalizeIndex(value, length))
-        return this.method === "slice" ? [start, Math.max(start, end)] : [this.method === "fill" ? payload : target, start, end]
+        return intervalRange(this.method, length, target, start, end, payload)
     }
 
     consider(active) {
@@ -386,15 +404,15 @@ class IntervalSelection extends SelectionQuestions {
     publishSlice(source, work, finish) {
         const ctx = this.ctx
         const complete = work.mode === CHAIN_MODE.Complete
-        const shape = sequenceExtent(source, ctx)
+        const shape = sequenceExtent(source)
         const extent = sliceExtent(this, shape, ctx)
         const sequence = selectedSlice(this, source, shape, extent, ctx)
         const output = () => finish(publishSequence(capacitySequence(sequence, ctx), ctx))
         if (!complete) return output()
         const done = this.read(() => this.done || undefined)
         const valid = continueGraphTransition(done, ctx, () => this.failure ?
-            continueGraphTransition(inRange(extent, 0, ctx), ctx, present => present ? this.failure : undefined) :
-            continueGraphTransition(inRange(extent, MAX_ARRAY_LENGTH, ctx), ctx, over => over ? capacityError(ctx) : undefined))
+            continueGraphTransition(inRange(extent, 0), ctx, present => present ? this.failure : undefined) :
+            continueGraphTransition(inRange(extent, MAX_ARRAY_LENGTH), ctx, over => over ? capacityError(ctx) : undefined))
         // Until whole-Array validation completes, the result itself owns its
         // remaining candidate placements. Transfer them before dropping that use.
         const release = isPending(valid, ctx) && retainOperands(sequence.operands, ctx)
@@ -421,19 +439,15 @@ class IntervalSelection extends SelectionQuestions {
             const extent = node.length, b = this.bounds(extent), marker = this.failure && structuralPlacement(this.failure)
             if (!canSelect(b, extent, !fill)) return node
             let mapped
-            if (fill) {
-                mapped = join(join(restrict(node, 0, b.s), span(b.E - b.s, marker ?? this.payload)),
-                    restrict(node, b.E, extent))
-                wrote = true
-            } else if (marker) {
+            if (marker && !fill) {
                 mapped = uncertainCopy(node, b, marker, ctx)
                 const reach = copyReach(b, extent)
                 wrote = possibleWrites([restrict(node, b.t, reach), restrict(node, b.s, b.E)], ctx)
             } else {
-                const count = Math.min(b.E - b.s, extent - b.t)
-                const replacement = restrict(node, b.s, b.s + count)
-                wrote = possibleWrites([replacement, restrict(node, b.t, b.t + count)], ctx)
-                mapped = join(join(restrict(node, 0, b.t), replacement), restrict(node, b.t + count, extent))
+                const range = intervalRange(method, extent, b.t, b.s, b.E, marker ?? this.payload)
+                const edit = overwriteLayout((lo, hi) => restrict(node, lo, hi), extent, range, true, ctx)
+                mapped = edit.node
+                wrote = edit.writes
             }
             const projected = projectCapacity(mapped, ctx, false, cause)
             lost = projected.failure
@@ -466,7 +480,7 @@ class IntervalSelection extends SelectionQuestions {
                 const i = back ? -1 - index : index
                 const at = (j, fromEnd = back) => proveSkip ? pointAt(source, fromEnd ? -1 - j : j, fromEnd) :
                     source.point(fromEnd ? -1 - j : j, fromEnd)
-                const admitted = read => index < lo ? read() : continueGraphTransition(inRange(source, index, ctx), ctx,
+                const admitted = read => index < lo ? read() : continueGraphTransition(inRange(source, index), ctx,
                     member => member ? read() : hole)
                 if (fill) {
                     if (i < b.s || i >= b.E || this.empty) return at(i)
@@ -504,7 +518,7 @@ class IntervalSelection extends SelectionQuestions {
         let seq
         if (isPending(ready, ctx)) {
             const head = restrict(source.head, 0, Math.min(source.head.length, fill ? initial.s : initial.t))
-            seq = { minimum: source.minimum, maximum: source.maximum, length: source.length, head, tail: empty, ready }
+            seq = useExtent({ head, tail: empty, ready }, sequenceExtent(source))
             pointSelection(seq, point, ctx)
             if (!fill) {
                 const facts = seq.obstructions = {
@@ -602,7 +616,7 @@ class IntervalSelection extends SelectionQuestions {
             }
             seq.tail = restrict(source.tail, source.tail.length - suffix, source.tail.length)
             if (last < source.maximum) {
-                const split = () => [boundedSequence(selectionSequence, last, false, ctx), trimmedSequence(source, last, 0, ctx)]
+                const split = () => [projectEdge(selectionSequence, last, false, true, ctx), dropSequence(source, last, false, ctx)]
                 if (last <= source.minimum) seq = concatSequence(...split(), ctx)
                 else seq.split = split
             }
@@ -611,14 +625,13 @@ class IntervalSelection extends SelectionQuestions {
             // of this run without inspecting or waiting on either neighbour.
             if (fill && this.payload && fillFirst < fillEnd) {
                 const before = takeSequence(seq, fillFirst, false, ctx)
-                const after = trimmedSequence(seq, fillEnd, 0, ctx)
+                const after = dropSequence(seq, fillEnd, false, ctx)
                 seq = concatSequence(concatSequence(before, fixed(span(fillEnd - fillFirst, this.payload)), ctx), after, ctx)
             }
-            this.updateBounds = active => refine(selectionSequence, source.minimum, source.maximum, active)
         } else seq = fixed(ready)
         const selection = this
         if (complete && seq.maximum > MAX_ARRAY_LENGTH) {
-            return continueGraphTransition(inRange(seq, MAX_ARRAY_LENGTH, ctx), ctx, over => {
+            return continueGraphTransition(inRange(seq, MAX_ARRAY_LENGTH), ctx, over => {
                 if (!over) return completeOutput()
                 return continueGraphTransition(work.mutation ? requiredWrites() : true, ctx, writes => {
                     release()
@@ -692,7 +705,7 @@ function prepareInterval(work) {
     if (selection.empty) {
         for (let i = 0; i < args.length; i++) work.discardArgument(i)
         args = undefined
-        return minimum !== maximum ? selection : method === "slice" ? [0, 0] : [0, 0, 0]
+        return minimum !== maximum ? selection : emptyRange
     }
     if (selection.failure && minimum === maximum && work.mode === CHAIN_MODE.Complete) {
         work.preparationFailed()
@@ -719,7 +732,7 @@ function prepareInterval(work) {
             return ArrayView.resolveInRange(work.receiver, MAX_ARRAY_LENGTH, work, over => !over ? selected : runArrayStep(work, () => {
                 const read = first => captureLayout(work.receiver, ctx, minimum, first, first + width)
                 const writes = possibleWrites([read(start), read(target)], ctx)
-                return continueGraphTransition(writes, ctx, effective => effective ? capacityError(ctx) : [0, 0, 0])
+                return continueGraphTransition(writes, ctx, effective => effective ? capacityError(ctx) : emptyRange)
             }))
         }
     }
@@ -745,7 +758,7 @@ function prepareInterval(work) {
             if (!selection.done) return
             if (selection.minimum !== selection.maximum) return selection
             work.arrayLength = selection.minimum
-            if (selection.empty) return method === "slice" ? [0, 0] : [0, 0, 0]
+            if (selection.empty) return emptyRange
             if (selection.failure) { work.preparationFailed(); return selection.failure }
             return minimum === maximum ? selection.arguments(minimum, selection.payload) : selection
         })
@@ -753,4 +766,61 @@ function prepareInterval(work) {
     return selection
 }
 
-export { IntervalSelection, prepareInterval, broadRange, normalizeIndex }
+function intervalMethod(range, work, finish, reportWrites) {
+    if (range instanceof IntervalSelection) return range.publish(work, finish, reportWrites)
+    const { method, operationContext: ctx, mutation } = work
+    const { at, first, count, payload } = range
+    const length = work.arrayLength ?? ArrayView.minimumLength(work.receiver, ctx)
+    const region = ArrayView.region(work.receiver, ctx), prefix = ArrayView.prefixLength(work.receiver, ctx)
+    const regional = (region?.layout || region?.placements) && (!prefix || length > MAX_ARRAY_LENGTH)
+    const capture = (lo, hi) => captureLayout(work.receiver, ctx, length, lo, hi)
+    if (method === "slice") {
+        if (!regional || first + count <= prefix || !region.pending && work.arrayLength !== undefined && length <= MAX_ARRAY_LENGTH)
+            return finish(sliceOutput(work.receiver, first, first + count, ctx))
+        if (work.mode === CHAIN_MODE.Complete && count > MAX_ARRAY_LENGTH) return capacityError(ctx)
+        const copy = projectCapacity(capture(first, first + count), ctx)
+        return finish(publishLayout(copy.node, ctx), undefined, copy.failure)
+    }
+    if (!count && mutation) { reportWrites(false); return finish() }
+    if (regional || broadRange(count, work.receiver, length, ctx)) {
+        const source = !payload && capture(0, length)
+        const edit = overwriteLayout(source ? (lo, hi) => restrict(source, lo, hi) : capture, length, range, mutation, ctx)
+        return finishLayout(edit.node, edit.writes, work, finish, reportWrites)
+    }
+
+    // A local copy captures its source before inspecting or replacing the
+    // destination. Stop the write test at the first established presence.
+    let entries = payload ? new Array(count).fill(payload) : createRemap(work.receiver, ctx, first, first + count)
+    try {
+        if (mutation) {
+            const pending = []
+            const present = p => {
+                const found = resolvePlacementPresence(p, ctx, placementPresent)
+                if (isPending(found, ctx)) pending.push(found)
+                return found === true
+            }
+            let writes = Boolean(payload) || Object.values(entries).some(present)
+            for (let i = at; !writes && i < at + count; i++) writes = present(readLanguagePlacement(work.receiver, i, ctx))
+            reportWrites(writes || anyPresent(pending, ctx))
+        }
+        return finish(runArrayStep(work, () => createRangeOutput(at, entries, work)))
+    } finally { entries = undefined }
+}
+
+function finishLayout(node, writes, work, finish, reportWrites) {
+    const ctx = work.operationContext
+    if (work.mode === CHAIN_MODE.Complete && node.length > MAX_ARRAY_LENGTH)
+        return continueGraphTransition(!work.mutation || writes, ctx, effective => {
+            if (effective) return capacityError(ctx)
+            reportWrites(false)
+            return finish()
+        })
+    if (work.mutation) {
+        reportWrites(writes)
+        if (writes === false) return finish()
+    }
+    const projected = projectCapacity(node, ctx)
+    return finish(publishLayout(projected.node, ctx), undefined, projected.failure)
+}
+
+export { intervalMethod, finishLayout, prepareInterval, broadRange, normalizeIndex }

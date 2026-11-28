@@ -13,14 +13,14 @@ import * as languageValues from "./language-values.js"
 import { prepareSearch, search } from "./array-search.js"
 import { concatSequence, joinContributions, capacitySequence, captureOrder, captureSequence, fixed, inRange, publishLayout, publishSequence, retainLayout } from "./array-sequence.js"
 import { CHAIN_MODE } from "./chain.js"
-import { applyEndpoint, applyLayoutMethod, copyDense, copyFixedRanges, partialEndpoint } from "./array-layout-methods.js"
-import { broadRange, IntervalSelection, prepareInterval } from "./array-interval.js"
+import { applyEndpoint, reverseFixed, copyDense, fixedEdit, partialEndpoint } from "./array-layout-methods.js"
+import { intervalMethod, prepareInterval } from "./array-interval.js"
 import * as propertyVersions from "./property-versions.js"
 import { readLanguagePlacement, readObservedPlacement } from "./language-properties.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { flatStream } from "./array-flat-stream.js"
 import { prepareSpliceArguments, spliceArray } from "./array-splice.js"
-import { LayoutBuilder, anyPresent, capacityError, captureLayout, denseLayout, join as joinLayout, layoutFromRemap, MAX_ARRAY_LENGTH, MAX_COUNT, mapLayout, projectCapacity, restrict, structuralPlacement,
+import { LayoutBuilder, capacityError, captureLayout, denseLayout, join as joinLayout, layoutFromRemap, MAX_ARRAY_LENGTH, MAX_COUNT, mapLayout, projectCapacity, restrict, structuralPlacement,
     span, placementCounts } from "./array-layout.js"
 
 const RETURN_RECEIVER = 1
@@ -197,7 +197,7 @@ function prepareWithArguments(work) {
         if (rank === 0) return nonempty === true ? at : undefined
         const validate = valid => errorUtils.isPoisonError(valid) ? valid : valid ? at : invalidIndex()
         return runArrayStep(work, () => remainingShape ? internalSteps.continueGraphTransition(
-            inRange(remainingShape, rank, ctx), ctx, validate, undefined, work) : resolveArrayInRange(rank, work, validate))
+            inRange(remainingShape, rank), ctx, validate, undefined, work) : resolveArrayInRange(rank, work, validate))
     }, work)
     if (errorUtils.isPoisonError(checked)) {
         work.discardPreparedOutput = undefined
@@ -269,57 +269,19 @@ function stringInput(value, invocationWork) {
     )
 }
 
-function intervalMethod(args, work, finish, reportWrites) {
-    if (args instanceof IntervalSelection) return args.publish(work, finish, reportWrites)
-    const ctx = work.operationContext, region = ArrayView.region(work.receiver, ctx)
-    // Local writes preserve the old range on exclusive backing. A broad
-    // replacement can be published as one span, including on sparse storage.
-    const length = work.arrayLength ?? ArrayView.minimumLength(work.receiver, ctx)
-    const width = work.method === "copyWithin" ? Math.min(args[2] - args[1], length - args[0]) : args[2] - args[1]
-    const prefix = ArrayView.prefixLength(work.receiver, ctx)
-    if (work.method === "slice" && (args[1] <= prefix ||
-        region && !region.pending && work.arrayLength !== undefined && length <= MAX_ARRAY_LENGTH))
-        return finish(arrayRemaps.sliceOutput(work.receiver, args[0], args[1], ctx))
-    if ((region?.layout || region?.placements) && (!prefix || length > MAX_ARRAY_LENGTH) ||
-        work.method !== "slice" && broadRange(width, work.receiver, length, ctx))
-        return applyLayoutMethod(args, work, finish, reportWrites)
-    if (work.method === "slice") return finish(arrayRemaps.sliceOutput(work.receiver, args[0], args[1], ctx))
-    return finish(work.method === "fill" ? fill(args, work, reportWrites) : copyWithin(args, work, reportWrites))
-}
-
 function endpointMethod(args, work, finish, reportWrites) {
     const { method, operationContext: ctx, arrayLength: length } = work
     if (!work.missingOutput) for (let i = 0; i < args.length; i++) args[i] = arrayRemaps.arrayInput(args[i], ctx)
     if (partialEndpoint(work)) return applyEndpoint(args, work, finish, reportWrites)
     if (method === "reverse")
-        return arrayRemaps.copyPhysicalArray(work, length, finish) ?? applyLayoutMethod(args, work, finish, reportWrites)
-    const region = ArrayView.region(work.receiver, ctx)
+        return reverseFixed(work, finish, reportWrites)
     const removes = method === "shift" || method === "pop"
-    if (region?.fixedCoordinates || method === "unshift" && args.length) {
-        const cut = removes && length ? 1 : 0
-        const at = method === "push" || method === "pop" ? length - cut : 0
-        const shared = copyFixedRanges(work, length, at, cut, args)
-        if (shared) return finish(shared, () => removes ? retainElement(cut ? readLanguagePlacement(work.receiver, at, ctx) :
-            undefined, work) : length + args.length)
-    }
-    if (method === "unshift" && args.length && (!region || ArrayView.prefixLength(work.receiver, ctx))) {
-        const newLength = length + args.length
-        const copy = arrayRemaps.copyPhysicalArray(work, length, output => finish(output, () => newLength), 0, 0, args)
-        if (copy !== undefined) return copy
-    }
-    if (work.mode === CHAIN_MODE.Complete && removes && length - 1 > MAX_ARRAY_LENGTH) return capacityError(ctx)
-    if (!region || removes && !region.pending && length <= MAX_ARRAY_LENGTH) {
-        if (removes) {
-            const first = method === "shift", index = first ? 0 : length - 1
-            const output = arrayRemaps.sliceOutput(work.receiver, first ? Math.min(1, length) : 0, first ? length : Math.max(0, length - 1), ctx)
-            return finish(output, () => retainElement(length ? readLanguagePlacement(work.receiver, index, ctx) :
-                undefined, work))
-        }
-        if ((method === "push" || method === "unshift" && !args.length) && args.length <= MAX_ARRAY_LENGTH - length) {
-            const view = arrayRemaps.appendView(work.receiver, [args], length, args.length, ctx)
-            if (view) return finish(view, () => length + args.length)
-        }
-    }
+    const cut = removes && length ? 1 : 0
+    const at = method === "push" || method === "pop" ? length - cut : 0
+    if (work.mode === CHAIN_MODE.Complete && length - cut > MAX_ARRAY_LENGTH) return capacityError(ctx)
+    const result = fixedEdit(work, length, at, cut, args, finish, removes ?
+        () => retainElement(cut ? readLanguagePlacement(work.receiver, at, ctx) : undefined, work) : () => length + args.length)
+    if (result !== undefined) return result
     return applyEndpoint(args, work, finish, reportWrites)
 }
 
@@ -432,11 +394,11 @@ function concatenate(args, work) {
         prefix = ArrayView.borrowPrefix(work.receiver, length, ctx)
         const receiver = prefix && prefix.length === length ? fixed(span(length)) :
             captureSequence(work.receiver, ctx, { omitEnd: prefix?.length })
-        const sequence = concatSequence(receiver, suffix, ctx, streaming)
+        const sequence = concatSequence(receiver, suffix, ctx, { trackPrefix: streaming })
         const borrowed = prefix && { source: work.receiver, range: prefix }
         const publish = sequence => work.retainOutput(publishSequence(sequence, ctx, undefined, borrowed))
         return streaming ? publish(capacitySequence(sequence, ctx)) : internalSteps.continueGraphTransition(
-            inRange(sequence, MAX_ARRAY_LENGTH, ctx), ctx, over => over ? capacityError(ctx) :
+            inRange(sequence, MAX_ARRAY_LENGTH), ctx, over => over ? capacityError(ctx) :
                 runArrayStep(work, () => publish(sequence)), undefined, work)
     } finally {
         args = parts = prefix = operands = undefined
@@ -477,47 +439,6 @@ function comparatorInput(value, invocationWork) {
         undefined,
         invocationWork,
     )
-}
-
-function fill(args, work, reportWrites) {
-    const [, start, end] = args
-    const writes = start < end
-    if (work.mutation) {
-        reportWrites(writes)
-        if (!writes) return
-    }
-    let entries = new Array(end - start).fill(args[0])
-    args = undefined
-    try { return runArrayStep(work, () => arrayRemaps.createRangeOutput(start, entries, work)) }
-    finally { entries = undefined }
-}
-
-function copyWithin(args, work, reportWrites) {
-    const length = work.arrayLength ?? ArrayView.minimumLength(work.receiver, work.operationContext)
-    const [target, start, end] = args
-    const count = Math.min(end - start, length - target)
-    if (work.mutation && count === 0) {
-        reportWrites(false)
-        return
-    }
-    const ctx = work.operationContext
-    let entries = arrayRemaps.createRemap(work.receiver, ctx, start, start + count)
-    try {
-        if (work.mutation) {
-            const waits = []
-            const present = p => {
-                if (!p) return false
-                const found = propertyVersions.resolvePlacementPresence(p, ctx, propertyVersions.placementPresent)
-                if (languageValues.isPending(found, ctx)) waits.push(found)
-                return found === true
-            }
-            let written = Object.values(entries).some(present)
-            for (let i = target; !written && i < target + count; i++)
-                written = present(readLanguagePlacement(work.receiver, i, ctx))
-            reportWrites(written || anyPresent(waits, ctx))
-        }
-        return runArrayStep(work, () => arrayRemaps.createRangeOutput(target, entries, work))
-    } finally { entries = undefined }
 }
 
 function retainControlArgument(work) {

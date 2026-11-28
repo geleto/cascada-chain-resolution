@@ -203,10 +203,8 @@ class ArrayView {
 
     // The same captured length facts cover a variable-width output region
     // and later indexed growth. Earlier questions keep their original bounds.
-    static deferLength(array, minimum, maximum, operationContext, widths) {
-        const state = new LengthState(minimum, widths)
-        ArrayView.#setState(array, state, operationContext)
-        if (!widths) return state.add(maximum)
+    static deferLength(array, widths, operationContext) {
+        ArrayView.#setState(array, new LengthState(widths.minimum, widths), operationContext)
     }
 
     static maximumLength(array, operationContext) {

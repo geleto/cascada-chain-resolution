@@ -6,9 +6,9 @@ import { normalizeModuleURL } from "./module-url.js"
 // receipt protocol. Keep counter state and semantic assertions in each fixture.
 // A disabled loader must leave the expected modules unreceived, not report a
 // successful zero-work measurement.
-export function instrumentRuntime(changes, enabled = true) {
+export function instrumentRuntime(changes, enabled = true, source = new URL("../src/", import.meta.url)) {
     const targets = new Map([...changes].map(([file, edits]) =>
-        [normalizeModuleURL(new URL(`../src/${file}`, import.meta.url)), { edits, loads: 0 }]))
+        [normalizeModuleURL(new URL(file, source)), { edits, loads: 0 }]))
     registerHooks({ load(url, context, next) {
         const loaded = next(url, context)
         const target = targets.get(normalizeModuleURL(url))

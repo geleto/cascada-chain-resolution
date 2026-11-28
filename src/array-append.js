@@ -1,7 +1,8 @@
 import { captureIdentity, reserveEntryIdentity } from "./captured-identity.js"
 import { captureLayout, join, MAX_ARRAY_LENGTH, MAX_COUNT, span } from "./array-layout.js"
+import { LinkedWidth } from "./array-width.js"
 import { ArrayView } from "./array-view.js"
-import { captureSequence, concatSequence, fixed, pendingSequence, publishSequence, refine, SelectionQuestions, trimmedSequence, watch } from "./array-sequence.js"
+import { captureSequence, concatSequence, fixed, pendingSequence, publishSequence, useExtent, SelectionQuestions, dropSequence, watch } from "./array-sequence.js"
 import { continueGraphTransition } from "./internal-step.js"
 import { createLeaseLedger } from "./ownership.js"
 import { resolveVisiblePlacement } from "./property-versions.js"
@@ -21,15 +22,14 @@ class OpenAppend extends SelectionQuestions {
         this.leases.acquire(source)
         this.head = this.prefix.head
         this.tail = span(0)
-        this.minimum = this.prefix.minimum
-        this.maximum = this.prefix.maximum + Math.min(bound ?? MAX_COUNT, MAX_COUNT - this.prefix.maximum)
+        const maximum = this.prefix.maximum + Math.min(bound ?? MAX_COUNT, MAX_COUNT - this.prefix.maximum)
+        useExtent(this, LinkedWidth.pending(this.prefix.minimum, maximum, ctx))
         if (bound !== undefined && this.minimum !== this.prefix.maximum) {
             this.initial = this.prefix
             this.bound = bound
         }
         this.completion = Promise.withResolvers()
         this.ready = continueGraphTransition(this.completion.promise, ctx, final => final.ready)
-        this.length = continueGraphTransition(this.completion.promise, ctx, final => final.length)
         this.output = publishSequence(this, ctx, () => this.leases.release(), range && { source, range })
         this.forwardIdentity = reserveEntryIdentity(source, this.output, ctx)
         this.observe(this.prefix)
@@ -71,7 +71,7 @@ class OpenAppend extends SelectionQuestions {
                 if (!this.bound || after.minimum - (before?.maximum ?? 0) >= this.bound) this.final = true
                 maximum = this.initial.maximum + Math.min(this.bound, MAX_COUNT - this.initial.maximum)
             }
-            refine(this, current.minimum, this.final ? current.maximum : maximum, pending)
+            this.widths.narrow(current.minimum, this.final ? current.maximum : maximum, pending)
             this.changed()
             // Further pushes cannot change a full contribution's contents.
             // The entry still owns its identity decision through closure.
@@ -81,7 +81,7 @@ class OpenAppend extends SelectionQuestions {
             }
         }
         update()
-        this.unwatch = watch(current, update, this.ctx)
+        this.unwatch = watch(current, update)
     }
 
     update(placement) {
@@ -147,7 +147,7 @@ function appendedAfter(prefix, next, ctx) {
     if (next instanceof OpenAppend) return next.after(prefix)
     const [before, after] = relativeParts(prefix, next)
     if (!before) return after
-    return pendingSequence(before.length, n => trimmedSequence(after, n, 0, ctx), ctx,
+    return pendingSequence(before.length, n => dropSequence(after, n, false, ctx), ctx,
         Math.max(0, after.minimum - before.maximum), after.maximum - before.minimum)
 }
 

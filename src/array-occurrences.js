@@ -1,8 +1,9 @@
+import { LinkedWidth } from "./array-width.js"
 import { continueGraphTransition, decideInputs } from "./internal-step.js"
 import { ArrayView } from "./array-view.js"
 import { readLanguagePlacement } from "./language-properties.js"
 import { anyPresent, capacityPlacement, captureLayout, span, layoutAt, MAX_ARRAY_LENGTH, MAX_COUNT, projectLoss, restrict, searchRuns, skippedRun } from "./array-layout.js"
-import { beforeInsertion, captureOrder, fixed, inRange, markerSequence, refine, sequenceExtent, splitSequence, trimmedSequence, watch } from "./array-sequence.js"
+import { guaranteedOldWindow, captureOrder, fixed, inRange, markerSequence, sequenceExtent, splitSequence, dropSequence, watch } from "./array-sequence.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { insertionRun, InsertionThreshold } from "./array-insertion-ranks.js"
@@ -136,7 +137,7 @@ class JoinedOccurrences {
             if (minimum === maximum) this.unwatch(leaf)
             refresh(leaf)
             this.wake?.()
-        }, this.ctx)
+        })
         if (release) { leaf.unwatch = release; this.releases.add(release) }
         return leaf
     }
@@ -236,7 +237,7 @@ class JoinedOccurrences {
                 const release = watch(cut, () => {
                     for (let parent = node; parent; parent = parent.parent) summarize(parent)
                     this.wake?.()
-                }, ctx)
+                })
                 if (release) this.releases.add(release)
             } else if (parts) this.expand(node, parts)
             else if (current?.parts && node.used) {
@@ -245,18 +246,18 @@ class JoinedOccurrences {
                 this.unwatch(node)
                 node.width = node.part.length
                 branch(node, contribution(fixed(span(node.used)), node.used),
-                    this.leaf(trimmedSequence(node.part, node.used, 0, ctx)))
+                    this.leaf(dropSequence(node.part, node.used, false, ctx)))
             } else if (!node.used && current && !current.node && !current.origins && !current.status &&
                 !node.part.capacityInput && current.tail.length) {
                 // These final occurrences survive even if their numeric indexes
                 // depend on an earlier contribution that never closes.
-                this.expand(node, [trimmedSequence(current, 0, current.tail.length, ctx), fixed(current.tail)])
+                this.expand(node, [dropSequence(current, current.tail.length, true, ctx), fixed(current.tail)])
             }
             if (node.left) {
                 if (node.cut) {
                     const { minimum, maximum } = node.cut, width = node.right.maximum
                     todo.push([node.right, from - minimum, to - maximum, low, high, origin ?? node],
-                        [node.left, beforeInsertion(from, maximum, width), beforeInsertion(to, minimum, width), low, high, origin ?? node])
+                        [node.left, ...guaranteedOldWindow(from, to, node.cut, width), low, high, origin ?? node])
                 } else {
                     todo.push([node.right, from - node.left.minimum, to - node.left.maximum,
                         origin ? low : add(low, node.left.minimum), origin ? high : add(high, node.left.maximum), origin],
@@ -375,13 +376,13 @@ function occurrence(node, part, low, high, local, root, ctx) {
     return { ...local, low: low + local.low, high: high + local.high, position,
         eligible: local.eligible && ((bound, delta, work) => local.eligible(
             low === high && typeof bound === "number" ? bound - low :
-                node.searchBound ??= relativeSearchBound(node, bound, work, local.ranks.ctx), delta, work)),
+                node.searchBound ??= relativeSearchBound(node, bound, work), delta, work)),
         first: () => local.first ? both(local.first(), none(outsidePresent(node, false, ctx)), ctx) :
             !local.low && none(either(continueGraphTransition(local.position(), ctx, i => i > 0),
             outsidePresent(node, false, ctx), ctx)),
         last: () => local.last ? both(local.last(), none(outsidePresent(node, true, ctx)), ctx) :
             local.high < node.minimum - 1 ? false : none(either(
-            continueGraphTransition(local.position(), ctx, i => inRange(part, i + 1, ctx)), outsidePresent(node, true, ctx), ctx)),
+            continueGraphTransition(local.position(), ctx, i => inRange(part, i + 1)), outsidePresent(node, true, ctx), ctx)),
         fromEnd() {
             const suffix = node.suffix ??= outsideWidth(node, true, ctx)
             if (local.fromEnd) return local.ranks.shifted(local.fromEnd(), suffix)
@@ -399,7 +400,7 @@ function occurrence(node, part, low, high, local, root, ctx) {
 // contribution. Track the widths still able to move the threshold. Keep
 // this question alive after discovery releases its tree and until the
 // comparison or its owner finishes.
-function relativeSearchBound(node, bound, work, shapeContext) {
+function relativeSearchBound(node, bound, work) {
     const ctx = work.operationContext, terms = [], stack = []
     let minimum = 0, maximum = 0
     for (let parent = node.parent; parent; node = parent, parent = node.parent)
@@ -412,14 +413,13 @@ function relativeSearchBound(node, bound, work, shapeContext) {
         }
         minimum += side.minimum
         maximum += side.maximum
-        if (side.minimum !== side.maximum) terms.push(sequenceExtent(side.part, shapeContext))
+        if (side.minimum !== side.maximum) terms.push(sequenceExtent(side.part))
     }
     let start = typeof bound === "number" ? bound : bound.minimum
     let end = typeof bound === "number" ? bound : bound.maximum
-    const result = { minimum: Math.max(0, start - maximum), maximum: Math.max(0, end - minimum) }
-    if (result.minimum === result.maximum) return result.minimum
-    const signal = Promise.withResolvers(), releases = []
-    result.length = signal.promise
+    const low = Math.max(0, start - maximum), high = Math.max(0, end - minimum)
+    if (low === high) return low
+    const result = LinkedWidth.pending(low, high, ctx), releases = []
     let unregister
     const release = () => {
         for (const remove of releases) remove()
@@ -429,8 +429,8 @@ function relativeSearchBound(node, bound, work, shapeContext) {
     const update = active => {
         if (!work.open || result.minimum === result.maximum) return
         const lo = Math.max(0, start - maximum), hi = Math.max(0, end - minimum)
-        refine(result, lo, hi, active)
-        if (lo === hi) { signal.resolve(lo); release() }
+        result.narrow(lo, hi, active)
+        if (lo === hi) release()
     }
     for (const term of terms) {
         let low = term.minimum, high = term.maximum
@@ -439,11 +439,11 @@ function relativeSearchBound(node, bound, work, shapeContext) {
             maximum += hi - high
             low = lo; high = hi
             update(active)
-        }, ctx)
+        })
         if (remove) releases.push(remove)
     }
     if (typeof bound !== "number") {
-        const remove = watch(bound, (lo, hi, active) => { start = lo; end = hi; update(active) }, ctx)
+        const remove = watch(bound, (lo, hi, active) => { start = lo; end = hi; update(active) })
         if (remove) releases.push(remove)
     }
     if (result.minimum !== result.maximum) unregister = releaseOnClose(work, release)
@@ -456,7 +456,7 @@ function insertionPosition(node, origin, index, ctx) {
         const parent = node.parent, cut = parent.cut
         if (cut && node === parent.left) {
             const width = parent.right.maximum
-            index = continueGraphTransition(index, ctx, i => continueGraphTransition(inRange(cut, i, ctx), ctx,
+            index = continueGraphTransition(index, ctx, i => continueGraphTransition(inRange(cut, i), ctx,
                 before => before ? i : i + width))
         } else if (node === parent.right) {
             const offset = cut ? cut.minimum === cut.maximum ? cut.minimum : cut.length : width(parent.left, ctx)
@@ -533,8 +533,8 @@ function summarize(node) {
     const { left, right } = node
     const minimum = node.exactWidth ?? add(left.minimum, right.minimum)
     const maximum = node.exactWidth ?? add(left.maximum, right.maximum)
-    if (node.listeners) refine(node, minimum, maximum)
-    else { node.minimum = minimum; node.maximum = maximum }
+    node.minimum = minimum
+    node.maximum = maximum
     node.clips = left.clips || right.clips || right.maximum > MAX_COUNT - left.maximum
     node.available = left.available || right.available
     if (node.cut) {
@@ -588,7 +588,7 @@ function present(node, ctx) {
     if (node.minimum) return true
     if (!node.maximum) return false
     return node.present ??= node.left ? either(present(node.left, ctx), present(node.right, ctx), ctx) :
-        inRange(node.part, 0, ctx)
+        inRange(node.part, 0)
 }
 function outsidePresent(node, suffix, ctx) {
     const sides = []

@@ -91,6 +91,12 @@ function restrict(node, first, end) {
     if (first >= middle) return restrict(node.right, first - middle, end - middle)
     return join(restrict(node.left, first, middle), restrict(node.right, 0, end - middle))
 }
+// A determined replacement consumes the two surviving ranges. The reader can
+// borrow them from an indexed layout or inspect just those native descriptors.
+function replaceLayoutRange(read, length, at, count, replacement) {
+    return join(join(read(0, at), replacement), read(at + count, length))
+}
+
 function layoutAt(node, index) {
     while (node.left) {
         if (index < node.left.length) node = node.left
@@ -769,5 +775,5 @@ function closedLayout(node, ctx, fixedCoordinates = false) {
     return PlacementConstruction.initializeAndPublish(new ArrayView(backing, ctx, 0, node.length), ctx, () => {})
 }
 
-export { LayoutBuilder, MAX_ARRAY_LENGTH, MAX_COUNT, capacityCause, capacityError, consumeArrayValue, hasUnmarkedPlacement, reportCapacityLoss, capacityPlacement, structuralPlacement, projectLoss, skippedLength, matchingLength, overlappingFailures, skippedRun, skippedCause, missingOutputMarker, missingOutputMarkers, span, join, restrict, layoutFromRemap,
+export { replaceLayoutRange, LayoutBuilder, MAX_ARRAY_LENGTH, MAX_COUNT, capacityCause, capacityError, consumeArrayValue, hasUnmarkedPlacement, reportCapacityLoss, capacityPlacement, structuralPlacement, projectLoss, skippedLength, matchingLength, overlappingFailures, skippedRun, skippedCause, missingOutputMarker, missingOutputMarkers, span, join, restrict, layoutFromRemap,
     layoutAt, layoutCause, searchRuns, mapLayout, reverseLayout, denseLayout, flagPositions, projectCapacity, captureLayout, closedLayout, materializeIndividualSlots, LayoutRegion, storedPlacements, implicitLayout, placementCounts, compactLayout, fixedPayloads, fixedPayloadError, followFixedChildren, individualFixedSlots, inheritSpliceSlots, resolvedFixedLayout, possibleWrites, anyPresent, visibleLayout }

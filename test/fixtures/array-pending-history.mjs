@@ -3,20 +3,35 @@ import { promiseHooks } from "node:v8"
 import { instrumentRuntime } from "../runtime-transform.js"
 
 let measuring, operations = 0, retirement
-let historyWork
+let historyWork, activeReaders = 0, peakReaders = 0
+const spaced = process.argv.includes("--spaced")
+const muted = process.argv.find(arg => arg.startsWith("--mute-lookup="))?.slice("--mute-lookup=".length)
+globalThis.__liveHistoryReader = change => {
+    if (!historyWork) return
+    activeReaders += change
+    peakReaders = Math.max(peakReaders, activeReaders)
+}
+
 globalThis.__historyVisit = () => { if (measuring) operations++ }
 globalThis.__historyRetirement = execution => { if (retirement?.execution === execution) retirement.visits++ }
-globalThis.__historyRecord = key => { if (historyWork) historyWork[key]++ }
+globalThis.__historyRecord = key => { if (historyWork && key !== muted) historyWork[key]++ }
 const count = text => [text, text + "\n        globalThis.__historyVisit()"]
 const countRecord = (anchor, key) => [anchor, anchor + "\n        globalThis.__historyRecord(" + JSON.stringify(key) + ")"]
 const loaded = instrumentRuntime([
     ["array-occurrences.js", [count("const [node, from, to, low, high, origin] = todo.pop()")]],
-    ["array-sequence.js", [count("function cropSequence(source, first, last, ctx) {"),
-        count("function watch(sequence, update, ctx) {"),
+    ["array-sequence.js", [count("function projectEdge(source, count, back, take, ctx) {"),
+        count("function watch(sequence, update) {"),
         countRecord("while (value instanceof PointReference) {", "points"),
         countRecord("while (part.parts || part.capacityInput) {", "points"),
-        countRecord("function refine(sequence, minimum, maximum, active) {", "notifications")]],
+        ["while (pending && !pending.open) pending = pending.previous",
+            "while (pending && !pending.open) { globalThis.__historyRecord('cuts'); pending = pending.previous }"],
+        countRecord("while (cut !== pending) {", "cuts"),
+        countRecord("if (!layout && source.decisions && !undecidedCut(source.decisions)) {", "indexed"),
+        ["waiting.set(key, value)", "$&\n    globalThis.__liveHistoryReader(1); globalThis.__historyRecord('questions')"],
+        ["waiting.delete(key)", "$&\n        globalThis.__liveHistoryReader(-1)"],
+    ]],
     ["array-width.js", [
+        countRecord("narrow(low, high, active) {", "narrowed"),
         countRecord("function notifyReader(reader, active) {", "notifications"),
         countRecord("const [update, lo, hi] = pending[i]", "dispatches"),
         countRecord("root() {", "width"),
@@ -26,6 +41,20 @@ const loaded = instrumentRuntime([
         countRecord("const question = from.entries[from.first++]", "width"),
         countRecord("const q = entries[run.first]", "width"),
         countRecord("const q = entries[run.end - 1]", "width"),
+    ]],
+    ["array-splice.js", [
+        countRecord("function captureTrailingPoint(source, index, ctx) {", "trailing"),
+        countRecord("const entry = { open: true, previous: undecidedCut(previous) }", "cutRecords"),
+    ]],
+    ["array-layout.js", [
+        countRecord("function branch(left, right) {", "branches"),
+        countRecord("function restrict(node, first, end) {", "ranges"),
+        ["function layoutAt(node, index) {\n    while (node.left) {", "$&\n        globalThis.__historyRecord('slots')"],
+    ]],
+    ["array-sequence-layout.js", [
+        countRecord("const part = stack[stack.length - 1], left = part.left, right = part.right", "assembly"),
+        countRecord("const part = stack.pop()\n            if (!part || part.height) continue", "choices"),
+        countRecord("const [part, source] = stack.pop()", "uses"),
     ]],
     ["array-interval.js", [count("const point = (index, back) => {")]],
     ["array-region.js", [count("const [part, first, end] = todo.pop()")]],
@@ -292,13 +321,14 @@ for (const n of [64, 128, 256]) for (const search of [false, true]) {
 // Charge a replacement index for each mapping examined during construction,
 // query, update and release. Keep width and final output work separate.
 function startHistoryPhase() {
-    historyWork = { points: 0, width: 0, notifications: 0, dispatches: 0 }
+    historyWork = { points: 0, width: 0, narrowed: 0, notifications: 0, dispatches: 0, branches: 0, ranges: 0, slots: 0, assembly: 0, choices: 0, uses: 0, cuts: 0, questions: 0, indexed: 0, trailing: 0, cutRecords: 0 }
     return historyWork
 }
 
 async function measureSpliceHistory(n, count, retainPoints, { prependAndTrim, readLengths }) {
     const ctx = context(), model = ["A", "B", "C"], counts = [], reads = [], expected = []
     const chain = new r.Chain(model.slice(), ctx, r.CHAIN_MODE.Sequential)
+    activeReaders = peakReaders = 0
     let duringLookup = 0
     const issued = startHistoryPhase()
     for (let i = 0; i < n; i++) {
@@ -327,16 +357,22 @@ async function measureSpliceHistory(n, count, retainPoints, { prependAndTrim, re
         }
     }
     const settled = startHistoryPhase()
-    for (const control of counts.reverse()) control.resolve(count)
+    const order = process.argv.includes("--forward") ? counts : process.argv.includes("--interleaved") ?
+        [...counts.filter((_, i) => i % 2), ...counts.filter((_, i) => !(i % 2)).reverse()] : counts.reverse()
+    for (const control of order) {
+        control.resolve(count)
+        if (spaced) await tick()
+    }
     assert.deepEqual(await Promise.all(reads), expected)
     const exported = startHistoryPhase()
     assert.deepEqual(await r.export(chain, [], ctx), model)
     const released = startHistoryPhase()
     await r.assignPath(chain, [], undefined, ctx)
+    assert.equal(activeReaders, 0, "all unanswered point entries retired")
     historyWork = undefined
     const notifications = settled.notifications + settled.dispatches + exported.notifications + exported.dispatches
     assert(notifications < 12 * n, `width notifications for ${n} splices deleting ${count}, points=${retainPoints}`)
-    return { n, count, retainPoints, prependAndTrim, readLengths, issued, settled, exported, released, duringLookup }
+    return { n, count, retainPoints, prependAndTrim, readLengths, issued, settled, exported, released, duringLookup, peakReaders }
 }
 
 const lookupGrowth = []
@@ -349,6 +385,11 @@ async function measureLookupPair(n, count, options) {
     // Activity common to both programs cannot supply this receipt.
     assert(points.duringLookup > 0 || points.settled.points > control.settled.points,
         `retained lookup counter missed its public route for ${n} splices deleting ${count}, ${JSON.stringify(options)}`)
+    if (count === 1) {
+        const path = options.prependAndTrim ? "indexed" : "trailing"
+        assert(points.issued[path] + points.settled[path] > control.issued[path] + control.settled[path],
+            `missing ${path} public lookup receipt at H=${n}, lengths=${options.readLengths}`)
+    }
     lookupGrowth.push(control, points)
     return control
 }
@@ -358,7 +399,8 @@ for (const count of [1, 3]) {
     for (const n of [120, 240, 480]) {
         const control = await measureLookupPair(n, count, { prependAndTrim: false, readLengths: true })
         const visits = control.settled.width + control.exported.width
-        assert(visits > 0 && visits < n * (300 + 8 * Math.ceil(Math.log2(n))), `width visits ${visits} for ${n} splices deleting ${count}`)
+        const widthBudget = (spaced ? 320 : 300) + 8 * Math.ceil(Math.log2(n))
+        assert(visits > 0 && visits < n * widthBudget, `width visits ${visits} for ${n} splices deleting ${count}`)
         if (previousWidth) assert(visits < 2.6 * previousWidth, `width visits doubled from ${previousWidth} to ${visits}`)
         previousWidth = visits
     }
@@ -377,8 +419,8 @@ console.log("retained lookup work " + JSON.stringify(lookupGrowth))
 
 // A later clipping count makes a distinct appended value certain. An older
 // historical point still depends on the first count.
-{
-    const ctx = context(), source = new r.Chain(["A", "B", "C"], ctx, r.CHAIN_MODE.Sequential)
+for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) {
+    const ctx = context(), source = new r.Chain(["A", "B", "C"], ctx, mode)
     const first = Promise.withResolvers(), last = Promise.withResolvers()
     const call = (method, args) => r.run(source, [], method, args, ctx, mutation)
     call("push", ["U", "V"]); call("splice", [1, first.promise])
@@ -430,6 +472,13 @@ if (checkLookupBound) {
     for (const [label, rows] of series) {
         for (let i = 1; i < rows.length; i++) {
             const previous = rows[i - 1], current = rows[i]
+            // All index allocation is also an upper bound on retained records.
+            // Measure simultaneously unanswered coordinate entries separately.
+            assert(current.peakReaders <= 16 * current.n)
+            const structural = row => ["points", "branches", "ranges", "slots", "assembly", "choices", "uses",
+                "cuts", "cutRecords", "questions"].reduce((n, key) => n + total(row, key), 0)
+            if (structural(current) >= 2.6 * structural(previous))
+                violations.push(`${label} H=${previous.n}/${current.n} structural ${structural(previous)}/${structural(current)}`)
             for (const key of ["points", "width"]) {
                 const small = total(previous, key), large = total(current, key)
                 if (large > 0 && large >= 2.6 * small)

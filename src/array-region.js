@@ -11,7 +11,7 @@ import { markPromiseHandled } from "./thenable-subscription.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { indexRegionPoint, publishRegionCount, releaseBackingCounter } from "./refcounts.js"
 import { blockedPlacement, completePlacementGate, consumePlacementTransition, getOwnPlacementVersion, installPlacementGate, placementPresent, transferPlacement, copyArrayOverlays } from "./property-versions.js"
-import { beforeInsertion, splitSequence, watch } from "./array-sequence.js"
+import { guaranteedOldWindow, sequenceExtent, splitSequence, watch } from "./array-sequence.js"
 import { retainOperands } from "./array-sequence-layout.js"
 
 const hole = Object.freeze({ present: false, value: undefined })
@@ -33,7 +33,7 @@ function finishPoint(gate, placement, ctx) {
 class ArrayRegion extends LayoutRegion {
     pending = true
 
-    get end() { return Math.min(this.publishedEnd, this.sequence?.widths?.maximum ?? this.publishedEnd) }
+    get end() { return Math.min(this.publishedEnd, this.widths?.maximum ?? this.publishedEnd) }
     set end(maximum) { this.publishedEnd = maximum }
 
     constructor(sequence, ctx) {
@@ -54,30 +54,16 @@ class ArrayRegion extends LayoutRegion {
         if (sharedHead) region.attachFixed(head, false)
         else storedPlacements(head, (index, p) => transferPlacement(p, region.producers, String(index), ctx, undefined, undefined, false))
         const view = new ArrayView(backing, ctx, 0, minimum, borrowed?.range)
-        if (minimum !== maximum) region.shape = ArrayView.deferLength(view, minimum, maximum, ctx, sequence.widths)
+        if (minimum !== maximum) {
+            region.widths = sequenceExtent(sequence)
+            ArrayView.deferLength(view, region.widths, ctx)
+        }
         return { region, output: PlacementConstruction.initializeAndPublish(view, ctx, view => {
             if (borrowed) {
                 const start = borrowed.sourceStart ?? 0
                 copyArrayOverlays(borrowed.source, view, ctx, start, start + borrowed.range.length, -start)
             }
         }) }
-    }
-
-    refine(minimum, maximum) {
-        // Closing an optional coordinate publishes its absence at the same
-        // transition as the new bound, including already indexed projections.
-        const gates = this.gates, ctx = this.operationContext
-        if (gates?.size && maximum < this.publishedEnd) {
-            const discard = index => {
-                const gate = gates.get(index)
-                if (gate?.owner) finishPoint(gate, hole, ctx)
-            }
-            if (this.publishedEnd - maximum < gates.size) {
-                for (let index = maximum; index < this.publishedEnd; index++) discard(index)
-            } else for (const index of gates.keys()) if (index >= maximum) discard(index)
-        }
-        this.end = maximum
-        this.shape?.refine(minimum, maximum)
     }
 
     versionAt(index, delivered) {
@@ -103,7 +89,7 @@ class ArrayRegion extends LayoutRegion {
         gate.version.transition.selection = true
         ;(this.gates ??= new Map()).set(index, gate)
         // Only this coordinate's absence can complete it before selection.
-        const widths = this.sequence?.widths
+        const widths = this.widths
         if (widths && index >= widths.minimum) gate.unwatchWidth = watchWidthIndex(widths, index, present => {
             gate.unwatchWidth = undefined
             if (!present && gate.owner) finishPoint(gate, hole, ctx)
@@ -230,7 +216,7 @@ class ArrayRegion extends LayoutRegion {
             if (!work.open) return
             const release = watch(part, () => {
                 if (work.open) { update(); scan() }
-            }, ctx)
+            })
             if (release) releases.push(release)
         }
         // Bounds tighten monotonically. Forward only the two newly included
@@ -284,7 +270,7 @@ class ArrayRegion extends LayoutRegion {
                     const oldSlots = extend((from, to) => enqueue(source, from, to))
                     const newSlots = extend((from, to) => inspectRange(added, from, to))
                     follow(cut, () => {
-                        oldSlots(beforeInsertion(first, cut.maximum, added.length), beforeInsertion(end, cut.minimum, added.length))
+                        oldSlots(...guaranteedOldWindow(first, end, cut, added.length))
                         newSlots(Math.max(0, first - cut.minimum), end - cut.maximum)
                     })
                 } else follow(part, () => {
@@ -322,7 +308,7 @@ class ArrayRegion extends LayoutRegion {
             this.attachFixed(node, true)
             this.finishPreservation()
             if (this.pending) {
-                this.refine(node.length, node.length)
+                this.end = node.length
                 for (const read of this.readers ?? []) read(node)
                 this.readers = undefined
             }
@@ -331,7 +317,7 @@ class ArrayRegion extends LayoutRegion {
         const ready = compactLayout(node, ctx)
         if (isPending(ready, ctx)) {
             this.placements = node
-            this.refine(node.length, node.length)
+            this.end = node.length
             for (const read of this.readers ?? []) read(node)
             this.readers = undefined
         }
@@ -465,7 +451,6 @@ class ArrayRegion extends LayoutRegion {
         this.implicit = Boolean(this.layout.covered)
         this.pending = false
         try {
-            this.shape?.complete(node.length)
             storedPlacements(node, (index, placement) => {
                 if (!getOwnPlacementVersion(this.producers, index, ctx)) transferPlacement(placement, this.producers, String(index), ctx,
                     undefined, undefined, false)
@@ -473,7 +458,7 @@ class ArrayRegion extends LayoutRegion {
             for (const read of this.readers ?? []) read(node, terminal)
         } finally {
             this.finishPreservation()
-            this.sequence = this.placements = this.gates = this.producers = this.readers = this.shape = this.settlement = undefined
+            this.sequence = this.placements = this.gates = this.producers = this.readers = this.widths = this.settlement = undefined
         }
     }
 }

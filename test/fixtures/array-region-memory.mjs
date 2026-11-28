@@ -25,10 +25,6 @@ const loaded = instrumentRuntime([
         [/function installPlacementGate(?:Untraced)?\(owner, key, operationContext, captured, capturedVersion\) \{/g,
             "$&\n    globalThis.arrayRegionCount('gates')"],
     ]],
-    ["array-sequence.js", [
-        ["function followLength(sequence, ctx) {",
-            "$&\n    if (sequence.watch) throw new Error('A self-refining count subscribed to its own length')"],
-    ]],
     ["language-values.js", [
         ["return Reflect.apply(then, value, [fulfill, reject])", "globalThis.arrayRegionCount('continuations'); $&"],
     ]],

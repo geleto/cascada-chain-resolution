@@ -1,15 +1,16 @@
+import { finishLayout } from "./array-interval.js"
 import { checkArrayCapacity, retainElement } from "./array-methods.js"
-import { ArrayView } from "./array-view.js"
+import { ArrayView, isArrayView } from "./array-view.js"
 import { CHAIN_MODE } from "./chain.js"
 import { retainPlacement } from "./property-versions.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { readLanguagePlacement } from "./language-properties.js"
 import { capacitySequence, captureSequence, concatSequence, denseSequence, displacedRange, fixed, inRange, publishFixedCopy, publishLayout, publishSequence, reversedSequence,
-    hasUnmarkedRange, takeSequence, trimmedSequence } from "./array-sequence.js"
+    hasUnmarkedRange, takeSequence, dropSequence } from "./array-sequence.js"
 import { continueGraphTransition } from "./internal-step.js"
 import { anyPresent, MAX_ARRAY_LENGTH, MAX_COUNT, capacityCause, capacityError, captureLayout, denseLayout, individualFixedSlots, layoutFromRemap, join,
-    possibleWrites, projectCapacity, reportCapacityLoss, restrict, reverseLayout, span } from "./array-layout.js"
-import { arrayInput, copyPhysicalArray, createRangeOutput } from "./array-remap.js"
+    possibleWrites, replaceLayoutRange, projectCapacity, reportCapacityLoss, restrict, reverseLayout, span } from "./array-layout.js"
+import { appendView, arrayInput, copyPhysicalArray, createArrayFromRemap, createRangeOutput, createRemap, sliceOutput } from "./array-remap.js"
 
 function partialEndpoint(work) {
     const { receiver, operationContext: ctx } = work
@@ -23,21 +24,61 @@ function reverseWrites(node, ctx) {
     return possibleWrites([restrict(node, 0, half), restrict(node, node.length - half, node.length)], ctx)
 }
 
-// These mappings use each retained source occurrence at most once. A copy
-// of physical slots establishes the first shared tree. Later endpoint edits,
-// dense copies and reversals reuse its unchanged ranges at their new offsets.
-function copyFixedRanges(work, length, at, cut, inserted) {
-    const { receiver, operationContext: ctx, method } = work
-    if (length === undefined || length > MAX_ARRAY_LENGTH || length - cut + inserted.length > MAX_ARRAY_LENGTH) return
-    const region = ArrayView.region(receiver, ctx)
-    const interiorInsertion = (method === "splice" || method === "toSpliced") && !cut && inserted.length && at < length
-    if (region ? !region.fixedCoordinates : !interiorInsertion && !inserted.some(p => p.sourceVersion) && !ArrayView.hasStoredVersions(receiver, ctx)) return
-    const read = (first, end) => captureLayout(receiver, ctx, length, first, end)
-    let node
-    if (method === "toReversed") node = reverseLayout(read(0, length))
-    else node = join(join(read(0, at), layoutFromRemap(inserted)), read(at + cut, length))
-    if (method === "toReversed" || method === "toSpliced" || method === "with") node = denseLayout(node, ctx)
-    return publishFixedCopy(node, ctx)
+// A determined cut can share an endpoint, patch equal-width storage, copy
+// directly to native order, or reuse persistent spans. The same coordinates
+// drive both outputs. Only splice! consumes the removed descriptors.
+function fixedEdit(work, length, at, cut, inserted, finish, readResult) {
+    const { method, operationContext: ctx } = work
+    const width = inserted.length, kept = length - cut
+    const dense = method === "with" || method === "toReversed" || method === "toSpliced"
+    const removes = method === "shift" || method === "pop", splice = method === "splice" || method === "toSpliced"
+    const region = ArrayView.region(work.receiver, ctx), prefix = ArrayView.prefixLength(work.receiver, ctx)
+    const native = length <= MAX_ARRAY_LENGTH && width <= MAX_ARRAY_LENGTH - kept
+    if (!splice && (!native || region?.pending && !region.fixedCoordinates)) return
+    const slice = (lo, hi) => sliceOutput(work.receiver, lo, hi, ctx)
+    const done = readResult ? (output, removed, failure) => finish(output, readResult, failure) : finish
+    if (!dense && native) {
+        if (!width && (!at || at + cut === length) && (prefix || !region?.pending) &&
+            (removes && !region?.fixedCoordinates || ArrayView.tryShareStorage(work.receiver, ctx))) {
+            return done(at ? slice(0, at) : slice(cut, length), () => work.retainOutput(cut && cut <= kept ?
+                createArrayFromRemap(createRemap(work.receiver, ctx, at, at + cut), ctx) : slice(at, at + cut)))
+        }
+        if (prefix || !region) {
+            if (cut && cut === width && ArrayView.tryShareStorage(work.receiver, ctx))
+                return replaceRange(work, at, inserted, finish)
+            if (at === length) {
+                const output = appendView(work.receiver, [inserted], length, width, ctx)
+                if (output) return done(output, () => work.retainOutput(slice(at, at)))
+            }
+        }
+    }
+    const shared = native && (region ? region.fixedCoordinates :
+        splice && at < length && (!cut && width || isArrayView(work.receiver, ctx) && cut !== width && at + cut < length) ||
+        (dense || splice) && (inserted.some(p => p.sourceVersion) || ArrayView.hasStoredVersions(work.receiver, ctx)))
+    if (!shared) {
+        // A non-extensible push can still borrow the predecessor as a
+        // prefix. Copying that storage would revisit it on every append.
+        if (!dense && !splice && (method !== "unshift" || region && !prefix)) return
+        const copy = copyPhysicalArray(work, length, done, at, cut, inserted)
+        if (copy !== undefined || !splice) return copy
+    }
+    const removed = method === "splice" && work.mutation
+    const source = removed ? captureLayout(work.receiver, ctx, length) : undefined
+    const read = (lo, hi) => source ? restrict(source, lo, hi) : captureLayout(work.receiver, ctx, length, lo, hi)
+    let mapped = method === "toReversed" ? reverseLayout(read(0, length)) :
+        replaceLayoutRange(read, length, at, cut, layoutFromRemap(inserted))
+    if (dense) mapped = denseLayout(mapped, ctx)
+    const result = removed && (() => work.mode === CHAIN_MODE.Complete && cut > MAX_ARRAY_LENGTH ?
+        capacityError(ctx) : work.retainOutput(publishLayout(read(at, at + cut), ctx)))
+    if (shared) return done(publishFixedCopy(mapped, ctx), result)
+    const projected = projectCapacity(mapped, ctx, width > MAX_COUNT - kept)
+    return done(publishLayout(projected.node, ctx), result, projected.failure)
+}
+
+function replaceRange(work, at, inserted, finish) {
+    const ctx = work.operationContext
+    const removed = work.mutation && work.retainOutput(createArrayFromRemap(createRemap(work.receiver, ctx, at, at + inserted.length), ctx))
+    return finish(createRangeOutput(at, inserted, work), () => removed)
 }
 
 const returnLength = length => () => length
@@ -76,7 +117,7 @@ function applyEndpoint(args, work, finish, reportWrites) {
     switch (work.method) {
     case "push": case "unshift": {
         if (appending && source.maximum === MAX_COUNT)
-            reportWrites(continueGraphTransition(inRange(source, MAX_COUNT - 1, ctx), ctx, full => !full))
+            reportWrites(continueGraphTransition(inRange(source, MAX_COUNT - 1), ctx, full => !full))
         const inserted = work.missingOutput ? args : fixed(layoutFromRemap(args))
         output = work.method === "push" ? concatSequence(source, inserted, ctx) : concatSequence(inserted, source, ctx)
         result = returnLength(output.length)
@@ -88,7 +129,7 @@ function applyEndpoint(args, work, finish, reportWrites) {
     }
     case "pop": case "shift": {
         const tail = work.method === "pop"
-        output = trimmedSequence(source, tail ? 0 : 1, tail ? 1 : 0, ctx)
+        output = dropSequence(source, 1, tail, ctx)
         result = () => continueGraphTransition(removed ?? source.point(0, tail), ctx, p =>
             retainElement(p, work), undefined, work)
         break
@@ -110,10 +151,10 @@ function applyEndpoint(args, work, finish, reportWrites) {
     const view = publishSequence(capacitySequence(output, ctx, cause), ctx, release, borrowed)
     if (!work.mutation) return finish(view)
     let lost
-    if (appending) lost = inRange(source, (work.missingOutput ? MAX_COUNT : MAX_ARRAY_LENGTH) - args.length, ctx)
+    if (appending) lost = inRange(source, (work.missingOutput ? MAX_COUNT : MAX_ARRAY_LENGTH) - args.length)
     else if (work.method === "unshift" && args.length)
-        lost = anyPresent([inRange(source, MAX_COUNT - args.length, ctx), hasUnmarkedRange(displacedRange(source, args.length, ctx), ctx)], ctx)
-    else if (work.method === "reverse") lost = hasUnmarkedRange(trimmedSequence(output, MAX_ARRAY_LENGTH, 0, ctx), ctx)
+        lost = anyPresent([inRange(source, MAX_COUNT - args.length), hasUnmarkedRange(displacedRange(source, args.length, ctx), ctx)], ctx)
+    else if (work.method === "reverse") lost = hasUnmarkedRange(dropSequence(output, MAX_ARRAY_LENGTH, false, ctx), ctx)
     return finish(view, result, reportCapacityLoss(lost, cause, ctx))
 }
 
@@ -129,20 +170,9 @@ function copyDense(args, work, finish) {
         const receiver = work.receiver
         const replacement = work.method === "with" ? arrayInput(args[1], ctx) : undefined
         if (length !== undefined) {
-            const [relative] = args
-            if (replacement && length <= MAX_ARRAY_LENGTH && !ArrayView.region(receiver, ctx) &&
-                ArrayView.hasStoredVersions(receiver, ctx) && ArrayView.tryShareStorage(receiver, ctx)) {
-                const at = relative < 0 ? length + relative : relative
-                const left = captureLayout(receiver, ctx, length, 0, at), right = captureLayout(receiver, ctx, length, at + 1, length)
-                if (left.dense && right.dense) return finish(createRangeOutput(at, [replacement], work))
-                return finish(publishLayout(join(join(denseLayout(left, ctx), span(1, replacement)), denseLayout(right, ctx)), ctx))
-            }
-            const shared = copyFixedRanges(work, length, replacement ? relative < 0 ? length + relative : relative : 0,
-                replacement ? 1 : 0, replacement ? [replacement] : [])
-            if (shared) return finish(shared)
-            const copy = work.method === "toReversed" ? copyPhysicalArray(work, length, finish) :
-                copyPhysicalArray(work, length, finish, relative < 0 ? length + relative : relative, 1, [replacement])
-            if (copy !== undefined) return copy
+            const at = !replacement ? 0 : args[0] < 0 ? length + args[0] : args[0]
+            const result = fixedEdit(work, length, at, Number(Boolean(replacement)), replacement ? [replacement] : [], finish)
+            if (result !== undefined) return result
         }
         let mapped
         if (work.method === "toReversed") mapped = reversedSequence(captureSequence(receiver, ctx), ctx, true)
@@ -151,7 +181,7 @@ function copyDense(args, work, finish) {
             const at = back && length !== undefined ? length + relative : relative
             const source = captureSequence(receiver, ctx, { omitStart: at, omitEnd: at + 1 })
             const near = takeSequence(source, index, back, ctx)
-            const far = trimmedSequence(source, back ? 0 : index + 1, back ? index + 1 : 0, ctx)
+            const far = dropSequence(source, index + 1, back, ctx)
             mapped = denseSequence(concatSequence(concatSequence(back ? far : near, fixed(span(1, replacement)), ctx),
                 back ? near : far, ctx), ctx)
         }
@@ -159,57 +189,12 @@ function copyDense(args, work, finish) {
     }
 }
 
-// The selected extent is exact. Map its captured ranges without expanding
-// compressed holes, repeated values or the virtual tail.
-function applyLayoutMethod(args, work, finish, reportWrites) {
-    const { method, operationContext: ctx, mode, mutation, arrayLength: length } = work
-    const complete = mode === CHAIN_MODE.Complete
-    const capture = (first, end) => captureLayout(work.receiver, ctx, length, first, end)
-    let node
-    switch (method) {
-    case "reverse":
-        node = reverseLayout(capture(0, length))
-        if (mutation) return writeLayout(node, reverseWrites(node, ctx))
-        if (complete && length > MAX_ARRAY_LENGTH) return capacityError(ctx)
-        break
-    case "slice": {
-        const [first, end] = args
-        if (complete && end - first > MAX_ARRAY_LENGTH) return capacityError(ctx)
-        node = capture(first, end)
-        break
-    }
-    case "fill": {
-        const [placement, first, end] = args
-        if (first === end && mutation) { reportWrites(false); return finish() }
-        const replacement = span(end - first, placement)
-        node = join(join(capture(0, first), replacement), capture(end, length))
-        if (mutation) return writeLayout(node, true)
-        break
-    }
-    case "copyWithin": {
-        const [target, start, end] = args, count = Math.min(end - start, length - target)
-        if (!count && mutation) { reportWrites(false); return finish() }
-        const source = capture(0, length), replacement = restrict(source, start, start + count)
-        node = join(join(restrict(source, 0, target), replacement), restrict(source, target + count, length))
-        if (mutation) return writeLayout(node, possibleWrites([replacement, restrict(source, target, target + count)], ctx))
-        break
-    }
-    }
-    if (complete && node.length > MAX_ARRAY_LENGTH) return capacityError(ctx)
-    const projected = projectCapacity(node, ctx)
-    return finish(publishLayout(projected.node, ctx), undefined, projected.failure)
-
-    function writeLayout(node, writes) {
-        if (complete && length > MAX_ARRAY_LENGTH) return continueGraphTransition(writes, ctx, effective => {
-            if (effective) return capacityError(ctx)
-            reportWrites(false)
-            return finish()
-        })
-        reportWrites(writes)
-        if (writes === false) return finish()
-        const projected = projectCapacity(node, ctx)
-        return finish(publishLayout(projected.node, ctx), undefined, projected.failure)
-    }
+function reverseFixed(work, finish, reportWrites) {
+    const { receiver, arrayLength: length, operationContext: ctx } = work
+    const physical = copyPhysicalArray(work, length, finish)
+    if (physical !== undefined) return physical
+    const node = reverseLayout(captureLayout(receiver, ctx, length))
+    return finishLayout(node, work.mutation && reverseWrites(node, ctx), work, finish, reportWrites)
 }
 
-export { copyDense, copyFixedRanges, applyLayoutMethod, applyEndpoint, partialEndpoint }
+export { copyDense, fixedEdit, replaceRange, reverseFixed, applyEndpoint, partialEndpoint }
