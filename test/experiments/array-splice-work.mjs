@@ -76,6 +76,10 @@ if (timing) {
             ["middle", true, false], ["indexed", false, false], ["middle", false, true],
         ]) {
             const { issued, settled } = await sample(n, mode, kind, deferred, managed)
+            if (process.argv.includes("--check-storage") && kind === "middle" && !deferred) {
+                if (managed) assert(issued.links + issued.unlinks < n * n + 32 * n, "relinked unchanged children twice per edit")
+                else assert(issued.physical + issued.captures < 4 * n, "recaptured unchanged physical spans")
+            }
             console.log(JSON.stringify({ n, mode, kind, deferred, managed, issued, settled }))
         }
     loaded("splice storage and established relationships")

@@ -1,5 +1,6 @@
 import { finishLayout } from "./array-interval.js"
 import { checkArrayCapacity, retainElement } from "./array-methods.js"
+import { metaOf, requireMeta } from "./meta.js"
 import { ArrayView, isArrayView } from "./array-view.js"
 import { CHAIN_MODE } from "./chain.js"
 import { retainPlacement } from "./property-versions.js"
@@ -22,6 +23,13 @@ function partialEndpoint(work) {
 function reverseWrites(node, ctx) {
     const half = Math.floor(node.length / 2)
     return possibleWrites([restrict(node, 0, half), restrict(node, node.length - half, node.length)], ctx)
+}
+
+// Reuse the unchanged spans of a physical view between shifting edits.
+// A backing with child placements pays to relink them on each publication;
+// the direct native copy installs those relationships once.
+function sharesScalarBacking(receiver, ctx) {
+    return isArrayView(receiver, ctx) && !metaOf(requireMeta(receiver, ctx).backingRecord, ctx)?.outgoingPlacements?.size
 }
 
 // A determined cut can share an endpoint, patch equal-width storage, copy
@@ -53,8 +61,8 @@ function fixedEdit(work, length, at, cut, inserted, finish, readResult) {
         }
     }
     const shared = native && (region ? region.fixedCoordinates :
-        splice && at < length && (!cut && width || isArrayView(work.receiver, ctx) && cut !== width && at + cut < length) ||
-        (dense || splice) && (inserted.some(p => p.sourceVersion) || ArrayView.hasStoredVersions(work.receiver, ctx)))
+        splice && at < length && (!cut && width || cut !== width && at + cut < length && sharesScalarBacking(work.receiver, ctx)) ||
+        dense && (inserted.some(p => p.sourceVersion) || ArrayView.hasStoredVersions(work.receiver, ctx)))
     if (!shared) {
         // A non-extensible push can still borrow the predecessor as a
         // prefix. Copying that storage would revisit it on every append.
