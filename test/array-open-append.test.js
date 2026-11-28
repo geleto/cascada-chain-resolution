@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { captureOrder } from "../src/array-sequence.js"
+import { ready, rejected } from "./ordered-thenable.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: "open append" })
 const access = { mayPoisonScope: false, maximumCount: 2 }
@@ -455,5 +456,78 @@ describe("ordered open append contributions", () => {
             assert.equal(await later, cause)
             r.repairPath(chain, [], ctx)
             assert.deepEqual(r.export(chain, [], ctx), ["A", "B"])
+        })
+
+    for (const [name, mode] of Object.entries(r.CHAIN_MODE))
+        it(`clips a splice against an open concat while its prefix and removed head are observed in ${name}`, async () => {
+            const pending = Symbol("pending")
+            const checkpoint = value => Promise.race([value, new Promise(resolve => setImmediate(resolve, pending))])
+            for (const delivery of ["ready", "sync", "count-first", "close-first"])
+            for (const amount of [1, 3, 10, "reject"]) for (const append of [false, true]) {
+                const ctx = context(), wrap = v => new r.Chain(v, ctx, mode)
+                const stream = wrap(["A", "B", "C"]), close = Promise.withResolvers(), count = Promise.withResolvers()
+                let issuer
+                const entry = r.enter(stream, [], ctx, { ...access, maximumCount: 1 }, inner => {
+                    issuer = inner
+                    return close.promise
+                })
+                async function closeIssuer() {
+                    if (append) push(issuer, "extra", ctx)
+                    close.resolve()
+                    await entry
+                }
+                const fails = amount === "reject"
+                const cause = fails && r.validationError("count", ctx, r.ERROR_KIND.OperationInputFailed)
+                let input = count.promise
+                if (delivery === "ready") input = fails ? cause : amount
+                if (delivery === "sync") input = fails ? rejected(cause) : ready(amount)
+                const a = wrap(r.run(stream, [], "concat", [["T"]], ctx, {}))
+                const removed = wrap(r.run(a, [], "splice", [2, input, "X"], ctx, { mutationScopeDepth: 0 }))
+                const prefix = r.export(wrap(r.run(a, [], "slice", [0, 2], ctx, {})), [], ctx)
+                const successor = r.export(a, [], ctx), cut = r.export(removed, [], ctx)
+                const head = r.lookupPath(removed, [0], ctx), length = r.lookupPath(removed, ["length"], ctx)
+                const scenario = `${name}/${delivery}/${amount}/append=${append}`
+                if (input === count.promise) {
+                    assert.deepEqual(await checkpoint(prefix), mode === r.CHAIN_MODE.Complete ? pending : ["A", "B"], scenario)
+                    if (delivery === "close-first") await closeIssuer()
+                    if (fails) count.reject(cause)
+                    else count.resolve(amount)
+                }
+                if (delivery !== "close-first") {
+                    if (amount === 1) {
+                        assert.deepEqual(await checkpoint(cut), ["C"], scenario)
+                        assert.equal(await checkpoint(successor), pending, scenario)
+                    } else if (!fails) {
+                        assert.deepEqual(await checkpoint(successor), ["A", "B", "X"], scenario)
+                        assert.equal(await checkpoint(head), "C", scenario)
+                        assert.equal(await checkpoint(length), pending, scenario)
+                        assert.equal(await checkpoint(cut), pending, scenario)
+                    }
+                    await closeIssuer()
+                }
+                const expected = ["A", "B", "C", ...(append ? ["extra"] : []), "T"]
+                if (fails) {
+                    assert.equal(await cut, cause, scenario)
+                    assert.equal(await head, cause, scenario)
+                    assert.equal(await length, cause, scenario)
+                    assert.equal(await successor, cause, scenario)
+                    if (mode === r.CHAIN_MODE.Complete) {
+                        assert.equal(await prefix, cause, scenario)
+                        r.repairPath(a, [], ctx)
+                        assert.deepEqual(await r.export(a, [], ctx), expected, scenario)
+                    } else {
+                        assert.deepEqual(await prefix, ["A", "B"], scenario)
+                        assert.equal(await r.lookupPath(a, [2], ctx), "X", scenario)
+                        assert.equal(await r.lookupPath(a, [3], ctx), cause, scenario)
+                    }
+                } else {
+                    const expectedCut = expected.splice(2, amount, "X")
+                    assert.deepEqual(await cut, expectedCut, scenario)
+                    assert.equal(await head, expectedCut[0], scenario)
+                    assert.equal(await length, expectedCut.length, scenario)
+                    assert.deepEqual(await successor, expected, scenario)
+                    assert.deepEqual(await prefix, ["A", "B"], scenario)
+                }
+            }
         })
 })

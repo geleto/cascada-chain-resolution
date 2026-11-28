@@ -675,4 +675,59 @@ describe("captured splice regions", () => {
             })
         }
     }
+
+    it("distinguishes equal final lengths after edits at both ends", async () => {
+        for (const mode of Object.values(r.CHAIN_MODE)) for (const first of [0, 1]) {
+            const ctx = context(), source = new r.Chain(["A", "B", "C"], ctx, mode)
+            const counts = [Promise.withResolvers(), Promise.withResolvers()]
+            const call = (method, args) => r.run(source, [], method, args, ctx, mutation)
+            for (const [i, count] of counts.entries()) {
+                call("push", [`a${i}`, `b${i}`])
+                call("splice", [1, count.promise])
+                call("unshift", [`u${i}`])
+                call("splice", [-1, 1])
+            }
+            const point = r.lookupPath(source, [2], ctx), length = r.lookupPath(source, ["length"], ctx)
+            counts[1].resolve(1 - first)
+            await new Promise(setImmediate)
+            counts[0].resolve(first)
+            assert.equal(await length, 6)
+            assert.equal(await point, first === 0 ? "B" : "A")
+        }
+    })
+
+    it("advances a captured prefix read independently of a fresh observer", async () => {
+        const waiting = Symbol("waiting")
+        const questions = [[r.lookupPath, [0], "A"], [r.export, [], ["A", "B"]], [r.hasError, [], false]]
+        for (const mode of Object.values(r.CHAIN_MODE)) for (const reject of [false, true])
+        for (const [read, path, healthy] of questions) for (const schedule of ["early", "fresh", "both"]) {
+            const ctx = context(), wrap = value => new r.Chain(value, ctx, mode)
+            const source = wrap(["A", "B", "C"]), start = Promise.withResolvers(), count = Promise.withResolvers()
+            const cause = r.validationError("delete count", ctx, r.ERROR_KIND.OperationInputFailed)
+            const call = r.run(source, [], "splice", [start.promise, count.promise, "Y"], ctx, mutation)
+            const captured = r.capturePath(source, [], ctx, mode)
+            const prefix = wrap(r.run(captured, [], "slice", [0, 2], ctx, {}))
+            r.assignPath(source, [], ["later"], ctx)
+
+            const answers = []
+            if (schedule !== "fresh") answers.push(read(prefix, path, ctx))
+            start.resolve(2)
+            await new Promise(setImmediate)
+            if (schedule !== "early") answers.push(read(prefix, path, ctx))
+            const checkpoint = new Promise(resolve => setImmediate(resolve, waiting))
+            const complete = mode === r.CHAIN_MODE.Complete
+            for (const answer of answers)
+                assert.deepEqual(await Promise.race([answer, checkpoint]), complete ? waiting : healthy)
+
+            if (reject) count.reject(cause)
+            else count.resolve(1)
+            const removed = await call
+            if (reject) assert.equal(removed, cause)
+            else assert.deepEqual(await r.export(wrap(removed), [], ctx), ["C"])
+            for (const answer of answers) {
+                if (complete && reject) assert.equal(await answer, read === r.hasError ? true : cause)
+                else assert.deepEqual(await answer, healthy)
+            }
+        }
+    })
 })

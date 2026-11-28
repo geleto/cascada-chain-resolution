@@ -3,27 +3,29 @@ import { promiseHooks } from "node:v8"
 import { instrumentRuntime } from "../runtime-transform.js"
 
 let measuring, operations = 0, retirement
-let widthWork
+let historyWork
 globalThis.__historyVisit = () => { if (measuring) operations++ }
 globalThis.__historyRetirement = execution => { if (retirement?.execution === execution) retirement.visits++ }
-globalThis.__widthVisit = key => { if (widthWork) widthWork[key]++ }
+globalThis.__historyRecord = key => { if (historyWork) historyWork[key]++ }
 const count = text => [text, text + "\n        globalThis.__historyVisit()"]
-const countWidth = (anchor, key) => [anchor, anchor + "\n        globalThis.__widthVisit(" + JSON.stringify(key) + ")"]
+const countRecord = (anchor, key) => [anchor, anchor + "\n        globalThis.__historyRecord(" + JSON.stringify(key) + ")"]
 const loaded = instrumentRuntime([
     ["array-occurrences.js", [count("const [node, from, to, low, high, origin] = todo.pop()")]],
     ["array-sequence.js", [count("function cropSequence(source, first, last, ctx) {"),
         count("function watch(sequence, update, ctx) {"),
-        countWidth("function refine(sequence, minimum, maximum, active) {", "notifications")]],
+        countRecord("while (value instanceof PointReference) {", "points"),
+        countRecord("while (part.parts || part.capacityInput) {", "points"),
+        countRecord("function refine(sequence, minimum, maximum, active) {", "notifications")]],
     ["array-width.js", [
-        countWidth("function notifyReader(reader, active) {", "notifications"),
-        countWidth("const [update, lo, hi] = pending[i]", "notifications"),
-        countWidth("root() {", "visits"),
-        countWidth("const outer = path.pop(), inner = outer.source", "visits"),
-        countWidth("for (const run of this.runs) {", "visits"),
-        countWidth("for (const run of questions.runs) if (run) {", "visits"),
-        countWidth("const question = from.entries[from.first++]", "visits"),
-        countWidth("const q = entries[run.first]", "visits"),
-        countWidth("const q = entries[run.end - 1]", "visits"),
+        countRecord("function notifyReader(reader, active) {", "notifications"),
+        countRecord("const [update, lo, hi] = pending[i]", "dispatches"),
+        countRecord("root() {", "width"),
+        countRecord("const outer = path.pop(), inner = outer.source", "width"),
+        countRecord("for (const run of this.runs) {", "width"),
+        countRecord("for (const run of questions.runs) if (run) {", "width"),
+        countRecord("const question = from.entries[from.first++]", "width"),
+        countRecord("const q = entries[run.first]", "width"),
+        countRecord("const q = entries[run.end - 1]", "width"),
     ]],
     ["array-interval.js", [count("const point = (index, back) => {")]],
     ["array-region.js", [count("const [part, first, end] = todo.pop()")]],
@@ -286,35 +288,113 @@ for (const n of [64, 128, 256]) for (const search of [false, true]) {
     assert.deepEqual(await r.export(source, [], ctx), ["A", "C", "X", "Y", "U", "V"])
 }
 
-// A reverse delivery used to propagate every narrowed width back through
-// every later splice. Retain a scalar answer at each historical boundary.
-for (const count of [1, 3]) {
-    let previous
-    for (const n of [120, 240, 480]) {
-        const ctx = context(), model = ["A", "B", "C"], counts = [], reads = [], expected = []
-        const chain = new r.Chain(model.slice(), ctx, r.CHAIN_MODE.Sequential)
-        for (let i = 0; i < n; i++) {
-            const control = Promise.withResolvers()
-            counts.push(control)
-            reads.push(r.run(chain, [], "push", [i, i], ctx, mutation))
-            expected.push(model.push(i, i))
-            r.run(chain, [], "splice", [1, control.promise], ctx, mutation)
-            model.splice(1, count)
+// The baseline point hooks count forwarding records and join/capacity nodes.
+// Charge a replacement index for each mapping examined during construction,
+// query, update and release. Keep width and final output work separate.
+function startHistoryPhase() {
+    historyWork = { points: 0, width: 0, notifications: 0, dispatches: 0 }
+    return historyWork
+}
+
+async function measureSpliceHistory(n, count, retainPoints, { prependAndTrim, readLengths }) {
+    const ctx = context(), model = ["A", "B", "C"], counts = [], reads = [], expected = []
+    const chain = new r.Chain(model.slice(), ctx, r.CHAIN_MODE.Sequential)
+    let duringLookup = 0
+    const issued = startHistoryPhase()
+    for (let i = 0; i < n; i++) {
+        const control = Promise.withResolvers()
+        counts.push(control)
+        const first = 3 * i, second = first + 1
+        reads.push(r.run(chain, [], "push", [first, second], ctx, mutation))
+        expected.push(model.push(first, second))
+        r.run(chain, [], "splice", [1, control.promise], ctx, mutation)
+        model.splice(1, count)
+        if (prependAndTrim) {
+            r.run(chain, [], "unshift", [first + 2], ctx, mutation)
+            model.unshift(first + 2)
+            r.run(chain, [], "splice", [-1, 1], ctx, mutation)
+            model.splice(-1, 1)
+        }
+        if (readLengths) {
             reads.push(r.lookupPath(chain, ["length"], ctx))
             expected.push(model.length)
         }
-        widthWork = { visits: 0, notifications: 0 }
-        for (const control of counts.reverse()) control.resolve(count)
-        assert.deepEqual(await r.export(chain, [], ctx), model)
-        assert.deepEqual(await Promise.all(reads), expected)
-        const { visits, notifications } = widthWork
-        widthWork = undefined
-        const scenario = " for " + n + " splices deleting " + count
-        assert(notifications < 12 * n, "width notifications " + notifications + scenario)
-        assert(visits > 0 && visits < n * (300 + 8 * Math.ceil(Math.log2(n))), "width visits " + visits + scenario)
-        if (previous) assert(visits < 2.6 * previous, "width visits doubled from " + previous + " to " + visits + scenario)
-        previous = visits
+        if (retainPoints) {
+            const index = 1 + i % 15, before = issued.points
+            reads.push(r.lookupPath(chain, [index], ctx))
+            expected.push(model[index])
+            duringLookup += issued.points - before
+        }
     }
+    const settled = startHistoryPhase()
+    for (const control of counts.reverse()) control.resolve(count)
+    assert.deepEqual(await Promise.all(reads), expected)
+    const exported = startHistoryPhase()
+    assert.deepEqual(await r.export(chain, [], ctx), model)
+    const released = startHistoryPhase()
+    await r.assignPath(chain, [], undefined, ctx)
+    historyWork = undefined
+    const notifications = settled.notifications + settled.dispatches + exported.notifications + exported.dispatches
+    assert(notifications < 12 * n, `width notifications for ${n} splices deleting ${count}, points=${retainPoints}`)
+    return { n, count, retainPoints, prependAndTrim, readLengths, issued, settled, exported, released, duringLookup }
+}
+
+const lookupGrowth = []
+const checkLookupBound = process.argv.includes("--check-lookup-bound")
+
+async function measureLookupPair(n, count, options) {
+    const control = await measureSpliceHistory(n, count, false, options)
+    const points = await measureSpliceHistory(n, count, true, options)
+    // Require work from a lookup itself or extra work during its settlement.
+    // Activity common to both programs cannot supply this receipt.
+    assert(points.duringLookup > 0 || points.settled.points > control.settled.points,
+        `retained lookup counter missed its public route for ${n} splices deleting ${count}, ${JSON.stringify(options)}`)
+    lookupGrowth.push(control, points)
+    return control
+}
+
+for (const count of [1, 3]) {
+    let previousWidth
+    for (const n of [120, 240, 480]) {
+        const control = await measureLookupPair(n, count, { prependAndTrim: false, readLengths: true })
+        const visits = control.settled.width + control.exported.width
+        assert(visits > 0 && visits < n * (300 + 8 * Math.ceil(Math.log2(n))), `width visits ${visits} for ${n} splices deleting ${count}`)
+        if (previousWidth) assert(visits < 2.6 * previousWidth, `width visits doubled from ${previousWidth} to ${visits}`)
+        previousWidth = visits
+    }
+}
+// Vary the history and explicit length reads independently. Keep the
+// additional samples small in the ordinary subprocess regression.
+for (const options of [
+    { prependAndTrim: false, readLengths: false },
+    { prependAndTrim: true, readLengths: false },
+    { prependAndTrim: true, readLengths: true },
+]) {
+    for (const n of checkLookupBound ? [120, 240, 480] : [32])
+        await measureLookupPair(n, 1, options)
+}
+console.log("retained lookup work " + JSON.stringify(lookupGrowth))
+
+// A later clipping count makes a distinct appended value certain. An older
+// historical point still depends on the first count.
+{
+    const ctx = context(), source = new r.Chain(["A", "B", "C"], ctx, r.CHAIN_MODE.Sequential)
+    const first = Promise.withResolvers(), last = Promise.withResolvers()
+    const call = (method, args) => r.run(source, [], method, args, ctx, mutation)
+    call("push", ["U", "V"]); call("splice", [1, first.promise])
+    const earlier = r.lookupPath(source, [1], ctx)
+    call("push", ["W", "X"]); call("splice", [1, last.promise])
+    call("push", ["Y", "Z"]); call("splice", [1, 1])
+    const later = r.lookupPath(source, [1], ctx)
+    assert(r.isPending(earlier, ctx) && r.isPending(later, ctx))
+    last.resolve(6)
+    await tick()
+    const pending = Symbol("pending")
+    assert.equal(await Promise.race([earlier, Promise.resolve(pending)]), pending)
+    assert.equal(await Promise.race([later, Promise.resolve(pending)]), "Z")
+    first.resolve(1)
+    assert.equal(await earlier, "C")
+    assert.deepEqual(await r.export(source, [], ctx), ["A", "Z"])
 }
 
 // Each known delete count of three cancels its push and one earlier slot.
@@ -342,4 +422,21 @@ for (const count of [1, 3]) {
 
 loaded("pending Array history")
 stopCounting()
+if (checkLookupBound) {
+    const total = (row, key) => row.issued[key] + row.settled[key] + row.exported[key] + row.released[key]
+    const violations = []
+    const growing = lookupGrowth.filter(row => row.count === 1 && row.retainPoints)
+    const series = Map.groupBy(growing, row => `prependAndTrim=${row.prependAndTrim} readLengths=${row.readLengths}`)
+    for (const [label, rows] of series) {
+        for (let i = 1; i < rows.length; i++) {
+            const previous = rows[i - 1], current = rows[i]
+            for (const key of ["points", "width"]) {
+                const small = total(previous, key), large = total(current, key)
+                if (large > 0 && large >= 2.6 * small)
+                    violations.push(`${label} H=${previous.n}/${current.n} ${key} ${small}/${large}`)
+            }
+        }
+    }
+    assert.equal(violations.length, 0, "retained lookup growth exceeded the doubling check\n" + violations.join("\n"))
+}
 console.log("pending Array reader work and release verified")
