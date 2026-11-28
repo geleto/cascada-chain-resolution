@@ -12,6 +12,13 @@ const edit = (file, find, replace = "") => ({ file, find, replace })
 
 export const SAFEGUARDS = [
     {
+        id: "array-rear-read-observes-absence",
+        guards: "An earlier rear read observes exclusion before its possible source settles.",
+        faults: [edit("src/array-methods.js", "present === false ? hole : languageValues.isPending(p, ctx)",
+            "languageValues.isPending(p, ctx)")],
+        witnesses: ["wakes an earlier rear read when the selected width excludes it"],
+    },
+    {
         id: "array-cut-flags-only-surviving-slots",
         guards: "An out-of-bounds historical point stays absent after the old suffix shrinks.",
         faults: [edit("src/array-sequence.js", "present => present ? pointAt(sequence, index, back, p => flag(span(1, p)).placement) : hole",

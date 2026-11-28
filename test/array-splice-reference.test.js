@@ -171,6 +171,28 @@ describe("independent splice reference", () => {
         }
     })
 
+    it("wakes an earlier rear read when the selected width excludes it", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
+        for (const method of ["slice", "toSpliced"]) for (const first of [0, 1]) {
+            const ctx = context(), wrap = value => new r.Chain(value, ctx, mode)
+            const predecessor = Promise.withResolvers(), bounds = [Promise.withResolvers(), Promise.withResolvers()]
+            const source = wrap(["A", "B", "C"]), args = method === "slice" ? [-2, -1] : [-4, 4, "X"]
+            r.run(source, [], "splice", [0, predecessor.promise], ctx, mutation)
+            const output = wrap(r.run(source, [], method, [...bounds.map(b => b.promise), ...args.slice(2)], ctx, {}))
+            const rear = () => r.run(output, [], "at", [-2], ctx, {}), earlier = rear()
+            const pending = Symbol("held")
+            assert.equal(await Promise.race([earlier, Promise.resolve(pending)]), pending)
+            bounds[first].resolve(args[first])
+            await tick()
+            bounds[1 - first].resolve(args[1 - first])
+            await tick()
+            assert.equal(await Promise.race([earlier, Promise.resolve(pending)]), undefined)
+            assert.equal(await Promise.race([rear(), Promise.resolve(pending)]), undefined)
+            predecessor.resolve(1)
+            assert.deepEqual(await r.export(output, [], ctx), method === "slice" ? ["B"] : ["X"])
+        }
+    })
+
     it("publishes a positional failure only inside the final splice width", async () => {
         for (const length of [2, 3]) for (const countFirst of [true, false]) {
             const ctx = context(), tail = Promise.withResolvers(), start = Promise.withResolvers(), count = Promise.withResolvers()
@@ -179,6 +201,8 @@ describe("independent splice reference", () => {
             r.run(receiver, [], "splice", [2, tail.promise], ctx, mutation)
             const view = wrap(r.run(receiver, [], "toSpliced", [start.promise, count.promise, "I"], ctx, {}))
             const rear = r.run(view, [], "at", [-4], ctx, {}), inside = r.run(view, [], "at", [-3], ctx, {})
+            const reversed = wrap(r.run(view, [], "toReversed", [], ctx, {}))
+            const last = r.lookupPath(reversed, [3], ctx)
             if (countFirst) count.resolve(0)
             else start.reject(cause)
             await tick()
@@ -188,6 +212,7 @@ describe("independent splice reference", () => {
             assert.equal(await Promise.race([rear, Promise.resolve("held")]), "held")
             tail.resolve(3 - length)
             assert.equal(await rear, length === 3 ? cause : undefined)
+            assert.equal(await last, length === 3 ? cause : undefined)
             assert.equal(await inside, cause)
         }
     })
