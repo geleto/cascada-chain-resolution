@@ -564,6 +564,11 @@ A ready container is a completed outward failure, not pending graph work or a fa
 
 ## Verification
 
+- During a fix, start with the smallest public program that fails on the old code and passes on the fix. Exercise the other callers of the changed rule and a case that must behave differently. Use the matching trace, work, depth or collection fixture when the change affects that invariant. For documentation-only changes, check the edited claims, examples and links.
+- Run broad checks at an integration checkpoint or when the user requests them. For a shared-transition merge, run the required ordinary, instrumented and scaled checks on the stable candidate. Group fixes found in one review pass before starting those campaigns. An explicitly requested complete audit still covers the whole candidate after corrections. [Commands and scale](test/README.md#scaling-generated-runs)
+- Track each heavy run by candidate, command, settings and seed or shard. Reuse a completed result only while its relevant source, tests, shared fixtures, loaders and settings match. After a change confined to one test, run that test and its affected faults or instrumentation. If reporting a complete suite on the exact final tree, run that suite there and identify any other evidence carried forward.
+- Give each large job or shard one runner. Keep deadline-sensitive subprocess tests clear of competing heavy jobs. Reproduce a failure in its own case or shard before repeating the wider run. Report focused development checks separately from completed merge verification.
+
 - Prefer integration tests through public operations across meaningful synchronous and Promise interleavings.
 - Extend the generated sequence models, the conflict matrix, and the consistency verifiers described in [test/README.md](test/README.md) when a feature adds an operation, placement state, representation, or route. Keep their default runs bounded, and run them at the larger scale that file describes before merging changes to shared transition mechanisms.
 - Cover sequential equivalence and owner isolation; immutable Chain outputs; lease and gate lifetimes; overlapping observations and mutation barriers; external ancestor, descendant, and sibling guards; mutable-external extraction rejection and property snapshots; and Promise fulfillment and rejection.

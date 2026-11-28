@@ -187,6 +187,14 @@ Default active-root histories deliberately settle method-result/host-call values
 
 ## Scaling generated runs
 
+During development, run a single regression directly through Mocha. For example, this exercises a captured point while its predecessor stays open. Use the same command with the trace loader when publication matters. The [verification policy](../AGENTS.md#verification) sets the timing of the full-suite and scaled runs below.
+
+```sh
+node --unhandled-rejections=strict ./node_modules/mocha/bin/mocha.js test/array-splice-reference.test.js --grep "wakes a captured forward point"
+```
+
+For safeguard runs, select the affected fault IDs while developing. Use `--skip-baseline` when a clean full baseline with the same inputs is already recorded. A missing witness can still trigger the runner's full mutated suite. Inspect that fault and its named assertion before repeating the campaign. [Safeguard runner](safeguards/run.mjs)
+
 [array-history-storage.test.js](array-history-storage.test.js) checks bounded backing capacity for a four-element moving queue at N=16/32/64, ready/native/ordered payload delivery, retained sparse views, and final parent/refcount consistency. Its [queue-storage-release.mjs](fixtures/queue-storage-release.mjs) subprocess keeps a retained-view control while checking collection of later removed payloads after ready or pending push/shift and push/slice histories. The `array-growth-bounds-discarded-prefix` safeguard removes the growth bound to verify detection. These queue checks are separate from the pending-copy history correction.
 
 Ordinary-read instrumentation rejects a ready, unadmitted child regardless of the owner's preparation state. It permits captured pending versions and newly created poison, which have their own admission rules. The deliberate missing-admission fault in `publication-trace.test.js` verifies this check; reads cannot repair preparation.
@@ -275,7 +283,7 @@ When semantics change, check every normative claim about the changed behavior ag
 1. Reproduce it with the same command and settings; start the Array fixture at the reported program with `CASCADA_SEQUENCE_START`.
 2. Decide from the contracts whether the runtime or the model is wrong. Change a model only where it contradicts a contract, never to match the implementation.
 3. Reduce the failure to the shortest command sequence that still fails, and keep it as an explicit regression next to the related tests.
-4. After the fix, rerun the generated tests at the larger scale: a fix can displace a problem into a neighboring case.
+4. Replay the failing program and nearby generated cases after the fix. Run the larger campaign on the stable candidate before merging a shared-transition change, so cases beyond that neighborhood also get checked. [Scale and commands](#scaling-generated-runs)
 
 ## Harness rules
 
