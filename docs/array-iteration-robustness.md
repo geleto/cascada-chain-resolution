@@ -1,5 +1,7 @@
 # Array structural refactor plan
 
+The first rewrite and the corrections from its review are recorded in the [implementation handoff](array-structural-rewrite.md). The [follow-up plan](array-structural-follow-up.md) starts from those changes and identifies the remaining duplicate selection rules.
+
 **Build one splice candidate on the current kernel.** Make the same issued cut serve the ready copy, pending point and range readers, and Unordered occurrence traversal. Whether to extend it depends on what it simplifies and what the public readers can prove, release and deliver. [Implementation sequence](#implementation-sequence) · [Pending representation](#representing-an-unresolved-cut)
 
 ## Start here
