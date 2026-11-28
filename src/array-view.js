@@ -1,5 +1,5 @@
 import { captureIdentity, compareIdentities } from "./captured-identity.js"
-import { continueGraphTransition } from "./internal-step.js"
+import { continueGraphTransition, decideInputs } from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -7,6 +7,8 @@ import { LengthState } from "./array-length.js"
 import { fixedWidth } from "./array-width.js"
 import { addParent, removeParent, PlacementConstruction, activateRelationships, updateBackingOwners } from "./parent-placements.js"
 import { copyArrayOverlays, getOwnPlacementVersion, ownPlacementVersionEntries } from "./property-versions.js"
+
+const hole = Object.freeze({ present: false, value: undefined })
 
 class ArrayBacking {
     constructor(array, operationContext) {
@@ -182,11 +184,29 @@ class ArrayView {
         return typeof state === "number" ? Math.min(state, limit ?? Infinity) : state.capture(owner, undefined, limit)
     }
 
-    static captureInRange(array, index, operationContext, owner) {
+    static #captureMembership(array, index, operationContext, owner) {
         const state = ArrayView.#stateOf(array, operationContext)
-        if (typeof state === "number") return index < state
-        const question = state.capture(owner, index)
+        return typeof state === "number" ? index < state : state.capture(owner, index)
+    }
+
+    static captureInRange(array, index, operationContext, owner) {
+        const question = ArrayView.#captureMembership(array, index, operationContext, owner)
         return question?.read ? question.read() : question
+    }
+
+    // A point from either end can disappear while its source is still open.
+    // Keep the captured width question only until either input decides the placement.
+    static selectPoint(array, index, selected, ctx, owner) {
+        if (!languageValues.isPending(selected, ctx)) return selected
+        const member = ArrayView.#captureMembership(array, index, ctx, owner)
+        if (member === true) return selected
+        const membership = member === false ? false : member.read()
+        return decideInputs([selected, membership], ctx, ([placement, present]) => {
+            if (present === false) return hole
+            if (languageValues.isPending(placement, ctx)) return
+            member.release()
+            return placement
+        }, owner)
     }
 
     // An entry can create an index without committing growth at issuance.
@@ -773,4 +793,4 @@ function hasArrayAncestor(ancestry, array, operation) {
     }
 }
 
-export { ArrayView, ArrayBacking, ArrayBackingProducers, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }
+export { ArrayView, ArrayBacking, ArrayBackingProducers, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor, hole }

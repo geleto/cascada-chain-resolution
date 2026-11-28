@@ -11,7 +11,7 @@ import { certainPoison, supplyErrorEvidence } from "./error-evidence.js"
 import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
 import { prepareSearch, search } from "./array-search.js"
-import { concatSequence, joinContributions, capacitySequence, captureOrder, captureSequence, fixed, hole, inRange, publishLayout, publishSequence, retainLayout } from "./array-sequence.js"
+import { concatSequence, joinContributions, capacitySequence, captureOrder, captureSequence, fixed, inRange, publishLayout, publishSequence, retainLayout } from "./array-sequence.js"
 import { CHAIN_MODE } from "./chain.js"
 import { applyEndpoint, reverseFixed, copyDense, fixedEdit, partialEndpoint } from "./array-layout-methods.js"
 import { intervalMethod, prepareInterval } from "./array-interval.js"
@@ -146,14 +146,9 @@ function prepareAtIndex([index = 0], work) {
         const prefixLength = ArrayView.prefixLength(work.receiver, ctx)
         if (sequence && (!prefixLength || -index <= sequence.minimum - prefixLength)) {
             const rank = -1 - index, point = sequence.capturePoint?.(rank, true)
-            let selected = point?.placement ?? sequence.point(rank, true)
-            // A rear coordinate can disappear before its old source is known.
-            if (rank >= sequence.minimum && languageValues.isPending(selected, ctx)) {
-                const member = ArrayView.captureInRange(work.receiver, rank, ctx, work)
-                selected = internalSteps.decideInputs([selected, member], ctx, ([p, present]) =>
-                    present === false ? hole : languageValues.isPending(p, ctx) ? undefined : p, work)
-            }
-            return { placement: point ? propertyVersions.placementFromSelection(selected, ctx, undefined, point.release) : selected }
+            const placement = point ? propertyVersions.captureObservedPoint(work.receiver, rank, point, ctx, work) :
+                ArrayView.selectPoint(work.receiver, rank, sequence.point(rank, true), ctx, work)
+            return { placement }
         }
     }
     return runArrayStep(work, () => index < 0

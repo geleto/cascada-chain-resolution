@@ -199,7 +199,7 @@ function readLanguagePlacement(parent, key, operationContext) {
 
 function readObservedPlacement(parent, key, ctx) {
     const point = ArrayView.capturePoint(parent, key, ctx)
-    return point ? captureObservedPoint(point, ctx) : readLanguagePlacement(parent, key, ctx)
+    return point ? captureObservedPoint(parent, Number(key), point, ctx) : readLanguagePlacement(parent, key, ctx)
 }
 
 function hasLanguageProperty(parent, key, operationContext) {

@@ -193,6 +193,50 @@ describe("independent splice reference", () => {
         }
     })
 
+    it("wakes a captured forward point when slice excludes it before concat settles", async () => {
+        const held = Symbol("held")
+        const checkpoint = point => Promise.race([point, Promise.resolve(held)])
+        for (const mode of modes) for (const first of [0, 1]) for (const method of ["at", "lookup"])
+        for (const readers of ["early", "fresh", "both"]) for (const reject of [false, true]) {
+            const ctx = context(), wrap = value => new r.Chain(value, ctx, mode)
+            const gap = Promise.withResolvers(), bounds = [Promise.withResolvers(), Promise.withResolvers()]
+            const joined = wrap(r.run(wrap([]), [], "concat", [gap.promise], ctx, {}))
+            const sliced = wrap(r.run(joined, [], "slice", bounds.map(b => b.promise), ctx, {}))
+            const read = index => method === "at" ? r.run(sliced, [], "at", [index], ctx, {}) : r.lookupPath(sliced, [index], ctx)
+            const points = readers === "fresh" ? [] : [read(1)]
+            for (const point of points) assert.equal(await checkpoint(point), held)
+            const values = [-1, 1], complete = mode === r.CHAIN_MODE.Complete
+            const expected = complete ? held : undefined
+            bounds[first].resolve(values[first])
+            await tick()
+            // Either bound alone limits the result to at most one slot.
+            for (const point of points) assert.equal(await checkpoint(point), expected)
+            bounds[1 - first].resolve(values[1 - first])
+            await tick()
+            if (readers !== "early") points.push(read(1))
+            for (const point of points) assert.equal(await checkpoint(point), expected)
+            const possible = read(0)
+            assert.equal(await checkpoint(possible), held)
+            const cause = r.validationError("concat operand", ctx, r.ERROR_KIND.OperationInputFailed)
+            if (reject) gap.reject(cause)
+            else gap.resolve(["X"])
+            for (const point of points) assert.equal(await point, reject && complete ? cause : undefined)
+            assert.equal(await possible, reject ? cause : "X")
+        }
+    })
+
+    it("preserves the source position through alternating end crops", async () => {
+        for (const mode of modes) for (const [length, expected] of [[1, 0], [2, 1], [3, 1], [4, 2]]) {
+            const ctx = context(), gap = Promise.withResolvers(), wrap = value => new r.Chain(value, ctx, mode)
+            let current = wrap(r.run(wrap([]), [], "concat", [gap.promise], ctx, {}))
+            for (const args of [[-3], [0, 2], [-1]]) current = wrap(r.run(current, [], "slice", args, ctx, {}))
+            const point = r.lookupPath(current, [0], ctx)
+            assert(r.isPending(point, ctx))
+            gap.resolve(Array.from({ length }, (_, i) => i))
+            assert.equal(await point, expected)
+        }
+    })
+
     it("publishes a positional failure only inside the final splice width", async () => {
         for (const length of [2, 3]) for (const countFirst of [true, false]) {
             const ctx = context(), tail = Promise.withResolvers(), start = Promise.withResolvers(), count = Promise.withResolvers()
@@ -202,6 +246,8 @@ describe("independent splice reference", () => {
             const view = wrap(r.run(receiver, [], "toSpliced", [start.promise, count.promise, "I"], ctx, {}))
             const rear = r.run(view, [], "at", [-4], ctx, {}), inside = r.run(view, [], "at", [-3], ctx, {})
             const reversed = wrap(r.run(view, [], "toReversed", [], ctx, {}))
+            // Index 3 is in the extended Array even when the failed range ends before it.
+            r.assignPath(reversed, [4], "padding", ctx)
             const last = r.lookupPath(reversed, [3], ctx)
             if (countFirst) count.resolve(0)
             else start.reject(cause)
@@ -213,6 +259,7 @@ describe("independent splice reference", () => {
             tail.resolve(3 - length)
             assert.equal(await rear, length === 3 ? cause : undefined)
             assert.equal(await last, length === 3 ? cause : undefined)
+            assert.equal(await r.lookupPath(reversed, [4], ctx), "padding")
             assert.equal(await inside, cause)
         }
     })

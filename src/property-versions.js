@@ -237,8 +237,9 @@ function placementFromSelection(selected, ctx, input, releaseSelection) {
     }
 }
 
-function captureObservedPoint(point, ctx) {
-    return placementFromSelection(point.placement, ctx, undefined, point.release)
+function captureObservedPoint(array, index, point, ctx, owner) {
+    const selected = ArrayView.selectPoint(array, index, point.placement, ctx, owner)
+    return placementFromSelection(selected, ctx, undefined, point.release)
 }
 
 function densePlacement(placement, ctx) {

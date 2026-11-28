@@ -12,11 +12,17 @@ const edit = (file, find, replace = "") => ({ file, find, replace })
 
 export const SAFEGUARDS = [
     {
+        id: "array-crop-preserves-anchored-end",
+        guards: "Successive crops from opposite ends preserve their separate source coordinates.",
+        faults: [edit("src/array-sequence.js", "crop && crop.back === back && crop.take === take", "crop && crop.take === take")],
+        witnesses: ["preserves the source position through alternating end crops"],
+    },
+    {
         id: "array-rear-read-observes-absence",
-        guards: "An earlier rear read observes exclusion before its possible source settles.",
-        faults: [edit("src/array-methods.js", "present === false ? hole : languageValues.isPending(p, ctx)",
-            "languageValues.isPending(p, ctx)")],
-        witnesses: ["wakes an earlier rear read when the selected width excludes it"],
+        guards: "An earlier point read observes width exclusion before its possible source settles.",
+        faults: [edit("src/array-view.js", "if (present === false) return hole")],
+        witnesses: ["wakes an earlier rear read when the selected width excludes it",
+            "wakes a captured forward point when slice excludes it before concat settles"],
     },
     {
         id: "array-cut-flags-only-surviving-slots",

@@ -325,6 +325,31 @@ function startHistoryPhase() {
     return historyWork
 }
 
+async function sameEndCropVisits(n, rear) {
+    const ctx = context(), gap = Promise.withResolvers()
+    const wrap = value => new r.Chain(value, ctx, r.CHAIN_MODE.Sequential)
+    let current = wrap(r.run(wrap([]), [], "concat", [gap.promise], ctx, {})), wider
+    for (let count = n; count > 0; count--) {
+        const next = wrap(r.run(current, [], "slice", rear ? [-count] : [0, count], ctx, {}))
+        if (count === 2) wider = r.capturePath(next, [], ctx, r.CHAIN_MODE.Sequential)
+        await r.assignPath(current, [], undefined, ctx)
+        current = next
+    }
+    const work = startHistoryPhase()
+    const point = r.lookupPath(current, [0], ctx)
+    assert(r.isPending(point, ctx))
+    gap.resolve(["A", "B", "C"])
+    assert.equal(await point, rear ? "C" : "A")
+    historyWork = undefined
+    assert.deepEqual(await r.export(wider, [], ctx), rear ? ["B", "C"] : ["A", "B"])
+    return work.points
+}
+
+for (const rear of [false, true]) {
+    const short = await sameEndCropVisits(2, rear), long = await sameEndCropVisits(64, rear)
+    assert(long <= short + 2, `same-end slice point revisited prior cuts (rear=${rear}): ${short}, ${long}`)
+}
+
 async function measureSpliceHistory(n, count, retainPoints, { prependAndTrim, readLengths }) {
     const ctx = context(), model = ["A", "B", "C"], counts = [], reads = [], expected = []
     const chain = new r.Chain(model.slice(), ctx, r.CHAIN_MODE.Sequential)

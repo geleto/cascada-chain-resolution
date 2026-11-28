@@ -1,5 +1,5 @@
 import { ArrayRegion } from "./array-region.js"
-import { ArrayView } from "./array-view.js"
+import { ArrayView, hole } from "./array-view.js"
 import { fixedWidth, LinkedWidth, projectedCount, sumExtent, sumWidths, widthInRange } from "./array-width.js"
 import { capacityCause, capacityPlacement, captureLayout, compactLayout, denseLayout, flagPositions, hasUnmarkedPlacement, join, layoutAt, LayoutBuilder, MAX_ARRAY_LENGTH, MAX_COUNT,
     fixedPayloads, individualFixedSlots, missingOutputMarker, missingOutputMarkers, projectCapacity, closedLayout, resolvedFixedLayout, restrict, reverseLayout, span, structuralPlacement } from "./array-layout.js"
@@ -13,7 +13,6 @@ import { capturePlacementFromVersion, densePlacement, knownObstruction, ownPlace
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { combineOperands, deriveSequenceLayout, layoutOperands, readSequenceLayout, retainOperands, SelectedOperands, selectionReceipt, selectSequenceLayout } from "./array-sequence-layout.js"
 
-const hole = Object.freeze({ value: undefined, present: false })
 const empty = span(0)
 
 // A selector can forward a point through arbitrarily many captured commands.
@@ -554,9 +553,12 @@ function selectEdge(source, count, back, take, ctx) {
             if (!back && count <= MAX_ARRAY_LENGTH && source.capacityInput) { source = source.capacityInput; continue }
             const edge = back ? source.tail : source.head
             if (edge.length >= count) { result = fixed(layoutWindow(edge, 0, count, back)); break }
-        } else if (source.crop?.back === back) {
-            count = sumWidths(count, source.crop.count)
-            source = source.crop.source
+        }
+        const crop = source.crop
+        if (crop && crop.back === back && crop.take === take) {
+            // A tighter take already has the smaller bound. Consecutive drops add.
+            if (!take) count = sumWidths(count, crop.count)
+            source = crop.source
             continue
         }
         const current = (source.restrictChoice || take && !back) && source.current
@@ -743,8 +745,7 @@ function projectEdge(source, count, back, take, ctx) {
     if (selected) return selected
     const edge = layoutWindow(near, offset, sumWidths(offset, extent.minimum), back)
     const other = take ? empty : layoutWindow(far, 0, extent.minimum, !back)
-    const output = { head: back ? other : edge, tail: back ? edge : other }
-    if (!take) output.crop = { source, count, back }
+    const output = { head: back ? other : edge, tail: back ? edge : other, crop: { source, count, back, take } }
     deriveSequenceLayout(output, source, undefined, project, ctx)
     pointSelection(output, (index, fromEnd) => {
         if (index >= extent.maximum) return hole
