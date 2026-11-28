@@ -88,7 +88,7 @@ describe("trusted Array intrinsic boundaries", function () {
                 const concat = "const extended = arrayRemaps.appendView(work.receiver, parts, length,"
                 assert.equal(source.split(concat).length - 1, 1, "Concat publication anchor needs updating")
                 source = source.replace(concat, 'globalThis.arrayIntrinsicFault("concat"); ' + concat)
-                const mapped = "const sequence = concatSequence(receiver, suffix, ctx, streaming)"
+                const mapped = "const sequence = concatSequence(receiver, suffix,"
                 assert.equal(source.split(mapped).length - 1, 1, "Concat mapping anchor needs updating")
                 source = source.replace(mapped, 'globalThis.arrayIntrinsicFault("concat"); ' + mapped)
                 return { ...result, source }
