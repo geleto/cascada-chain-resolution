@@ -2,11 +2,136 @@ import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { ready } from "./ordered-thenable.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
+import { ArrayView } from "../src/array-view.js"
+import { requireMeta } from "../src/meta.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: "partial splice" })
 const mutation = { mutationScopeDepth: 0 }
 
 describe("captured splice regions", () => {
+    it("preserves the selected slot's exact flag through an outstanding at() read", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
+        for (const schedule of ["ready", "sync", "start-first", "count-first"]) {
+            const ctx = context(), start = Promise.withResolvers(), count = Promise.withResolvers()
+            const cause = r.validationError("failed start", ctx, r.ERROR_KIND.OperationInputFailed)
+            const child = { n: 1 }, array = new r.Chain([child], ctx, mode)
+            const earlier = r.capturePath(array, [], ctx, mode)
+            const inputs = schedule === "ready" ? [cause, 0] : schedule === "sync" ? [ready(cause), ready(0)] :
+                [start.promise, count.promise]
+            const splice = r.run(array, [], "splice", [...inputs, "Y"], ctx, mutation)
+            const front = r.run(array, [], "at", [0], ctx, {})
+            const back = r.run(array, [], "at", [-1], ctx, {})
+            const point = r.lookupPath(array, [0], ctx)
+            if (schedule === "start-first" || schedule === "count-first") {
+                if (schedule === "start-first") start.resolve(cause)
+                else count.resolve(0)
+                await new Promise(setImmediate)
+                if (schedule === "start-first") count.resolve(0)
+                else start.resolve(cause)
+            }
+            const displaced = mode === r.CHAIN_MODE.Sequential
+            assert.equal(await splice, cause)
+            assert.equal(await front, displaced ? cause : child)
+            assert.equal(await back, displaced ? cause : "Y")
+            assert.equal(await point, displaced ? cause : child)
+            assert.equal(r.lookupPath(earlier, [0], ctx), child)
+            for (const i of [0, 1]) await r.repairPath(array, [i], ctx)
+            assert.equal(r.lookupPath(array, [0], ctx), child)
+            assert.deepEqual(await r.export(array, [], ctx), [child, "Y"])
+        }
+    })
+
+    it("proves a failed Sequential insertion while its exact fallback still needs the count", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
+        for (const insert of [false, true]) for (const countFails of [false, true]) {
+            const ctx = context(), start = Promise.withResolvers(), count = Promise.withResolvers()
+            const array = new r.Chain(["A", "B"], ctx, mode)
+            const failure = label => r.validationError(label, ctx, r.ERROR_KIND.OperationInputFailed)
+            const first = failure("start"), second = failure("count")
+            const call = r.run(array, [], "splice", [start.promise, count.promise, ...(insert ? ["X"] : [])], ctx, mutation)
+            let deep, exact
+            Promise.resolve(r.hasError(array, [], ctx)).then(v => { deep = v })
+            Promise.resolve(r.getErrors(array, [], ctx)).then(v => { exact = v })
+            start.resolve(first)
+            await new Promise(setImmediate)
+            assert.equal(deep, mode === r.CHAIN_MODE.Sequential && insert ? true : undefined)
+            assert.equal(exact, undefined)
+            count.resolve(countFails ? second : 0)
+            await call
+            await new Promise(setImmediate)
+            if (countFails) assert.deepEqual(new Set(exact.errors), new Set([first, second]))
+            else assert.equal(exact, insert && mode === r.CHAIN_MODE.Sequential ? first : null)
+        }
+    })
+    it("publishes certain explicit status at a selected slot before the earlier fill can choose its cause", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) {
+            const ctx = context(), bound = Promise.withResolvers()
+            const array = new r.Chain(["A", "B", "C"], ctx, mode)
+            const cause = r.validationError("flag", ctx, r.ERROR_KIND.OperationInputFailed)
+            r.run(array, [], "fill", ["Z", bound.promise], ctx, mutation)
+            const old = r.hasError(array, [], ctx)
+            r.poisonPath(array, [1], cause, ctx)
+            const report = r.getErrors(array, [], ctx)
+            assert.equal(await r.isPoisoned(array, [1], ctx), true)
+            assert.equal(await r.hasError(array, [], ctx), true)
+            r.assignPath(array, [2], "W", ctx)
+            assert.equal(r.lookupPath(array, [2], ctx), "W")
+            assert(r.isPending(report, ctx))
+            r.repairPath(array, [1], ctx)
+            bound.resolve(1)
+            assert.equal(await old, false)
+            assert.equal(await report, cause)
+            assert.deepEqual(await r.export(array, [], ctx), ["A", "Z", "W"])
+        }
+    })
+    for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) {
+        for (const method of ["splice", "toSpliced"])
+            it(`delivers a restricted ${method} prefix when the start arrives in mode ${mode}`, async () => {
+                for (const warm of [false, true]) {
+                    const ctx = context(), start = Promise.withResolvers(), count = Promise.withResolvers()
+                    const wrap = value => new r.Chain(value, ctx, mode)
+                    const array = wrap(["A", "B", "C"])
+                    const result = r.run(array, [], method, [start.promise, count.promise, "Y"], ctx,
+                        method === "splice" ? mutation : {})
+                    const source = method === "splice" ? array : wrap(result)
+                    const prefix = wrap(r.run(source, [], "slice", [0, 2], ctx, {}))
+                    const tail = r.export(wrap(r.run(source, [], "slice", [3], ctx, {})), [], ctx)
+                    if (warm) for (const index of [0, 1]) r.lookupPath(prefix, [index], ctx)
+                    const exported = r.export(prefix, [], ctx), causes = r.getErrors(prefix, [], ctx)
+                    const joined = r.run(prefix, [], "join", ["/"], ctx, {})
+                    const reversed = wrap(r.run(prefix, [], "toReversed", [], ctx, {}))
+                    const pushed = r.run(prefix, [], "push", ["Z"], ctx, mutation)
+                    const edited = r.export(prefix, [], ctx)
+                    let tailReady = false
+                    Promise.resolve(tail).then(() => { tailReady = true })
+                    start.resolve(2)
+                    assert.deepEqual(await exported, ["A", "B"])
+                    assert.equal(await causes, null)
+                    assert.equal(await joined, "A/B")
+                    assert.deepEqual(await r.export(reversed, [], ctx), ["B", "A"])
+                    assert.equal(await pushed, 3)
+                    assert.deepEqual(await edited, ["A", "B", "Z"])
+                    assert.equal(tailReady, false)
+                    count.resolve(0)
+                    assert.deepEqual(await tail, ["C"])
+                }
+            })
+        it(`exports a guaranteed fill run inside an open splice in mode ${mode}`, async () => {
+            const ctx = context(), count = Promise.withResolvers(), wrap = value => new r.Chain(value, ctx, mode)
+            const source = wrap(["A", , "C"])
+            r.run(source, [], "splice", [1, count.promise], ctx, mutation)
+            r.run(source, [], "splice", [-3, 0, "X", "Y"], ctx, mutation)
+            r.run(source, [], "fill", ["Z", 2], ctx, mutation)
+            const read = (start, end) => r.export(wrap(r.run(source, [], "slice", [start, end], ctx, {})), [], ctx)
+            const possible = read(2, 5)
+            let finished = false
+            Promise.resolve(possible).then(() => { finished = true })
+            assert.deepEqual(await read(2, 3), ["Z"])
+            assert.equal(finished, false)
+            count.resolve(0)
+            assert.deepEqual(await possible, ["Z", "Z", "Z"])
+        })
+    }
     it("preserves surviving occurrences and their ranks through reversal of an open insertion", async () => {
         const ctx = context(), start = Promise.withResolvers(), size = Promise.withResolvers(), wrap = v => new r.Chain(v, ctx)
         const source = wrap(r.run(wrap(["A", "B", "C"]), [], "toSpliced", [2, size.promise], ctx, {}))
@@ -230,6 +355,12 @@ describe("captured splice regions", () => {
         const ctx = context(), child = { x: 1 }, count = Promise.withResolvers()
         const retained = new r.Chain(child, ctx), chain = new r.Chain([child, 1, 2], ctx)
         const removed = r.run(chain, [], "splice", [1, count.promise], ctx, mutation)
+        const region = ArrayView.region(r.lookupPath(chain, [], ctx), ctx)
+        // Request the shared backing version as an indexed observer does.
+        // A direct point reader can take a narrower, owner-independent route.
+        const version = region.versionAt(1)
+        assert(version.transition)
+        assert.equal(requireMeta(region.producers, ctx).pinCount ?? 0, 0)
         const point = r.lookupPath(chain, [1], ctx)
         r.assignPath(chain, [], null, ctx)
         verifyRefCounts(ctx, retained._state)

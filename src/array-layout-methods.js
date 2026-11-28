@@ -4,11 +4,11 @@ import { CHAIN_MODE } from "./chain.js"
 import { retainPlacement } from "./property-versions.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { readLanguagePlacement } from "./language-properties.js"
-import { capacitySequence, captureSequence, concatSequence, denseSequence, fixed, inRange, publishFixedCopy, publishLayout, publishSequence, reversedSequence,
-    takeSequence, trimmedSequence } from "./array-sequence.js"
+import { capacitySequence, captureSequence, concatSequence, denseSequence, displacedRange, fixed, inRange, publishFixedCopy, publishLayout, publishSequence, reversedSequence,
+    hasUnmarkedRange, takeSequence, trimmedSequence } from "./array-sequence.js"
 import { continueGraphTransition } from "./internal-step.js"
-import { anyPresent, MAX_ARRAY_LENGTH, MAX_COUNT, capacityError, capacityFailure, captureLayout, denseLayout, layoutFromRemap, join,
-    possibleWrites, projectCapacity, restrict, reverseLayout, span } from "./array-layout.js"
+import { anyPresent, MAX_ARRAY_LENGTH, MAX_COUNT, capacityCause, capacityError, captureLayout, denseLayout, individualFixedSlots, layoutFromRemap, join,
+    possibleWrites, projectCapacity, reportCapacityLoss, restrict, reverseLayout, span } from "./array-layout.js"
 import { arrayInput, copyPhysicalArray, createRangeOutput } from "./array-remap.js"
 
 function partialEndpoint(work) {
@@ -30,7 +30,8 @@ function copyFixedRanges(work, length, at, cut, inserted) {
     const { receiver, operationContext: ctx, method } = work
     if (length === undefined || length > MAX_ARRAY_LENGTH || length - cut + inserted.length > MAX_ARRAY_LENGTH) return
     const region = ArrayView.region(receiver, ctx)
-    if (region ? !region.fixedCoordinates : !inserted.some(p => p.sourceVersion) && !ArrayView.hasStoredVersions(receiver, ctx)) return
+    const interiorInsertion = (method === "splice" || method === "toSpliced") && !cut && inserted.length && at < length
+    if (region ? !region.fixedCoordinates : !interiorInsertion && !inserted.some(p => p.sourceVersion) && !ArrayView.hasStoredVersions(receiver, ctx)) return
     const read = (first, end) => captureLayout(receiver, ctx, length, first, end)
     let node
     if (method === "toReversed") node = reverseLayout(read(0, length))
@@ -38,6 +39,8 @@ function copyFixedRanges(work, length, at, cut, inserted) {
     if (method === "toReversed" || method === "toSpliced" || method === "with") node = denseLayout(node, ctx)
     return publishFixedCopy(node, ctx)
 }
+
+const returnLength = length => () => length
 
 function applyEndpoint(args, work, finish, reportWrites) {
     const ctx = work.operationContext
@@ -76,7 +79,11 @@ function applyEndpoint(args, work, finish, reportWrites) {
             reportWrites(continueGraphTransition(inRange(source, MAX_COUNT - 1, ctx), ctx, full => !full))
         const inserted = work.missingOutput ? args : fixed(layoutFromRemap(args))
         output = work.method === "push" ? concatSequence(source, inserted, ctx) : concatSequence(inserted, source, ctx)
-        result = () => output.length
+        result = returnLength(output.length)
+        // A settled edit of a captured layout already has disjoint slots.
+        // Keep its persistent prefix/suffix for the next capture.
+        if (!borrowed && ArrayView.region(work.receiver, ctx) && output.node?.fixedPresence && output.maximum <= MAX_ARRAY_LENGTH &&
+            individualFixedSlots(output.node, ctx)) return finish(publishFixedCopy(output.node, ctx), result)
         break
     }
     case "pop": case "shift": {
@@ -99,18 +106,15 @@ function applyEndpoint(args, work, finish, reportWrites) {
         break
     }
     if (output.maximum <= MAX_ARRAY_LENGTH) return finish(publishSequence(output, ctx, release, borrowed), result)
-    let loss
-    const cause = () => loss ??= capacityError(ctx)
+    const cause = capacityCause(ctx)
     const view = publishSequence(capacitySequence(output, ctx, cause), ctx, release, borrowed)
     if (!work.mutation) return finish(view)
-    const lossInTail = () => continueGraphTransition(output.ready, ctx, node => capacityFailure(node, ctx, cause))
-    const grows = (work.method === "push" || work.method === "unshift") && args.length
-    const pushLimit = work.missingOutput ? MAX_COUNT : MAX_ARRAY_LENGTH
-    const error = appending ?
-        continueGraphTransition(inRange(source, pushLimit - args.length, ctx), ctx, lost => lost ? cause() : undefined) :
-        grows ? continueGraphTransition(inRange(source, MAX_COUNT - args.length, ctx), ctx,
-            clipped => clipped ? cause() : lossInTail()) : lossInTail()
-    return finish(view, result, error)
+    let lost
+    if (appending) lost = inRange(source, (work.missingOutput ? MAX_COUNT : MAX_ARRAY_LENGTH) - args.length, ctx)
+    else if (work.method === "unshift" && args.length)
+        lost = anyPresent([inRange(source, MAX_COUNT - args.length, ctx), hasUnmarkedRange(displacedRange(source, args.length, ctx), ctx)], ctx)
+    else if (work.method === "reverse") lost = hasUnmarkedRange(trimmedSequence(output, MAX_ARRAY_LENGTH, 0, ctx), ctx)
+    return finish(view, result, reportCapacityLoss(lost, cause, ctx))
 }
 
 // A dense copy can publish a selected slot while another is still being
@@ -118,7 +122,8 @@ function applyEndpoint(args, work, finish, reportWrites) {
 function copyDense(args, work, finish) {
     const ctx = work.operationContext
     const copy = () => publish(ArrayView.readyLength(work.receiver, ctx))
-    return work.mode === CHAIN_MODE.Complete ? checkArrayCapacity(MAX_ARRAY_LENGTH, work, copy) : copy()
+    return work.method === "toReversed" && work.mode === CHAIN_MODE.Complete
+        ? checkArrayCapacity(MAX_ARRAY_LENGTH, work, copy) : copy()
 
     function publish(length) {
         const receiver = work.receiver

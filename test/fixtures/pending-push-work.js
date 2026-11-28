@@ -35,7 +35,7 @@ const substitutions = new Map([
         ['function retainBackingCounter(version, owner, key, operationContext) {', '$&\n    globalThis.__pendingPushCounts().counterMemberships++;'],
     ]],
     ['language-values.js', [
-        ['return Reflect.apply(then, value, [deliver(onFulfilled), deliver(onRejected)])', 'globalThis.__pendingPushCounts().subscriptions++; $&'],
+        ['return Reflect.apply(then, value, [fulfill, reject])', 'globalThis.__pendingPushCounts().subscriptions++; $&'],
     ]],
     ['thenable-subscription.js', [
         ['promise.then(ignore, ignore)', 'globalThis.__pendingPushCounts().handledSubscriptions++; $&'],

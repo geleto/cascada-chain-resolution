@@ -26,7 +26,8 @@ function logicalPlacements(owner, context) {
     const array = meta.type === metadata.TYPE.Array
     const view = meta.arrayRange
     const offset = view?.start ?? 0
-    const length = view ? view.lengthState.minimum ?? view.lengthState : undefined
+    const length = view ? Math.min(view.lengthState.minimum ?? view.lengthState,
+        Math.max(0, (view.retainedEnd ?? Infinity) - offset)) : undefined
     const backing = array && metadata.metaOf(view?.backing ?? owner, context)?.arrayBacking
     const borrowed = view?.borrowed
     const storage = borrowed?.record.array ?? view?.backing ?? owner
@@ -83,6 +84,7 @@ function logicalVersion(owner, key, context) {
         if (index >= ((backing?.region ? shape.maximum : shape.minimum) ?? shape)) return
     }
     const physical = index + (range?.start ?? 0)
+    if (physical >= (range?.retainedEnd ?? Infinity)) return
     const borrowed = range?.borrowed
     if (borrowed && physical < borrowed.length)
         return metadata.metaOf(borrowed.record.producers, context)?.outgoingPlacements?.get(String(borrowed.start + physical))
@@ -128,6 +130,10 @@ function verifyParents(context, ...roots) {
         if (meta.arrayRange?.borrowed && !meta.arrayRange.borrowed.record.owners.has(owner)) fail("Missing borrowed prefix owner")
         if (backings.has(array)) return
         backings.add(array)
+        const region = record?.region
+        for (const [index, gate] of region?.gates ?? [])
+            if (gate.owner !== record.producers || metadata.metaOf(gate.owner, context)?.outgoingPlacements?.get(String(index)) !== gate.version)
+                fail("Open Array point lacks its backing producer")
         for (const registered of record?.owners ?? []) {
             const registeredMeta = metadata.metaOf(registered, context)
             if (!registeredMeta?.relationshipsActive ||
@@ -161,7 +167,8 @@ function verifyParents(context, ...roots) {
                 if (prefix && index - prefix.start >= prefix.length) return false
                 const logical = index - (range?.start ?? 0) - (prefix?.start ?? 0)
                 const length = range ? range.lengthState.minimum ?? range.lengthState : array.length
-                return logical >= 0 && logical < length && !logicalVersion(registered, String(logical), context)
+                return logical >= 0 && logical < length && index - (prefix?.start ?? 0) < (range?.retainedEnd ?? Infinity) &&
+                    !logicalVersion(registered, String(logical), context)
             })
             if (!captured && exposed) fail("Missing exposed backing occurrence")
             if (captured) walk(child)

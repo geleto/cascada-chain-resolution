@@ -130,7 +130,7 @@ export const SAFEGUARDS = [
         id: "selection-gate-publishes-new-version",
         guards: "A selection gate publishes the selected placement without inheriting its own unfinished transition.",
         faults: [edit("src/mutations.js", "value: next, sourceVersion: undefined", "value: next")],
-        witnesses: ["matches a sequential model across seeded placement schedules"],
+        witnesses: ["publishes a deferred length through a resolved root and a later-selected key"],
     },
     {
         id: "metadata-captures-issuance-view",
@@ -152,8 +152,9 @@ export const SAFEGUARDS = [
     },
     {
         id: "placement-delivery-releases-version",
-        guards: "Completed root placement delivery releases its source version and consumer after handing off the captured value.",
-        faults: [edit("src/property-versions.js", "        } finally { version = onReady = undefined }", "        } finally {}")],
+        guards: "Completed visible placement delivery releases its source version and consumer after handing off the captured value.",
+        faults: [edit("src/property-versions.js", "} finally { version = onReady = undefined }\n    }, undefined, placementValue)",
+            "} finally {}\n    }, undefined, placementValue)")],
         witnesses: ["checks placement-capture-failure-retention at stack limit 1000"],
     },
     {
@@ -194,10 +195,31 @@ export const SAFEGUARDS = [
         witnesses: ["checks array-validation-retention at stack limit 1000"],
     },
     {
-        id: "array-with-releases-replacement",
-        guards: "A completed Array bounds decision releases the captured replacement while preserving successful delivery.",
-        faults: [edit("src/array-methods.js", "            } finally { replacement = undefined }", "            } finally {}")],
+        id: "array-with-releases-spent-index",
+        guards: "A consumed with index releases its captured input while the bounds decision still waits.",
+        faults: [edit("src/array-methods.js", "    if (args.length) args[0] = undefined")],
         witnesses: ["checks array-validation-retention at stack limit 1000"],
+    },
+    {
+        id: "array-model-requires-final-error-query",
+        guards: "A healthy final Array must complete its Error query before the generated replay can pass.",
+        faults: [edit("src/index.js", "return runOperation(operationContext, getErrorsCore, [chain, path, operationContext, firstDynamicSegment])",
+            "return Promise.resolve(runOperation(operationContext, getErrorsCore, [chain, path, operationContext, firstDynamicSegment]))" +
+            ".then(value => value === null ? new Promise(() => {}) : value)")],
+        witnesses: ["matches an Array slot model across entries, failures, structure, and observation routes"],
+    },
+    {
+        id: "array-width-releases-inactive-publication",
+        guards: "Length results can settle after unused Array data and its publication destination are released.",
+        faults: [edit("src/array-region.js", "        this.publication.region = undefined\n")],
+        witnesses: ["releases data held only for a numeric shape and protects outstanding data captures"],
+    },
+    {
+        id: "array-capture-preserves-concat-operands",
+        guards: "A join carries its selected inputs' copy-on-write protection to a retained derived range.",
+        faults: [edit("src/array-sequence.js", "operands: combineOperands(left.operands, right.operands)",
+            "operands: combineOperands(left.node ? undefined : left.operands, right.node ? undefined : right.operands)")],
+        witnesses: ["retains a fixed concat child while an earlier part is pending"],
     },
     {
         id: "array-concat-releases-prepared-parts",
@@ -222,8 +244,8 @@ export const SAFEGUARDS = [
     {
         id: "array-concat-releases-input-source",
         guards: "Concat argument capture releases its own source binding independently of the inner remap capture.",
-        faults: [edit("src/array-methods.js", "return arrayRemaps.createRemap(value, ctx)\n        } finally { value = undefined }",
-            "return arrayRemaps.createRemap(value, ctx)\n        } finally {}")],
+        faults: [edit("src/array-methods.js", "return sequence\n        } finally { value = undefined }",
+            "return sequence\n        } finally {}")],
         witnesses: ["checks array-remap-failure-retention at stack limit 1000"],
     },
     {
@@ -275,7 +297,7 @@ export const SAFEGUARDS = [
         id: "array-range-preserves-complete-baseline",
         guards: "Range writes capture changed placements before physical writes so scope recovery restores the complete old value.",
         faults: [edit("src/array-remap.js",
-            "propertyVersions.copyPlacement(languageProperties.readLanguagePlacement(source, key, operationContext),\n                        snapshot, key, operationContext, false)",
+            "propertyVersions.copyPlacement(languageProperties.readLanguagePlacement(source, key, ctx), snapshot, key, ctx, false)",
             "void key")],
         witnesses: ["restores the complete fill baseline after required placement inspection fails", "restores the complete copyWithin baseline after required placement inspection fails"],
     },
@@ -290,8 +312,8 @@ export const SAFEGUARDS = [
     {
         id: "array-range-bounds-point-work",
         guards: "Exclusive point replacements avoid remapping unrelated Array placements.",
-        faults: [edit("src/array-remap.js", "if (canShare && work.preserveReceiverBaseline(source => {",
-            "if (false && canShare && work.preserveReceiverBaseline(source => {")],
+        faults: [edit("src/array-remap.js", "if (length === undefined) return patchedView(receiver, start, entries, length, operationContext)",
+            "if (length !== undefined) return createArrayFromRemap(patchedRemap(receiver, start, entries, length, operationContext), operationContext)\n    $&")],
         witnesses: ["bounds repeated point replacements by the selected range"],
     },
     {
@@ -311,7 +333,7 @@ export const SAFEGUARDS = [
     {
         id: "sort-releases-impossible-comparator",
         guards: "A known poison candidate needs no comparator even while the remaining candidate count is pending.",
-        faults: [edit("src/array-methods.js", "                    if (errorUtils.isPoisonError(record.value)) comparator = undefined\n")],
+        faults: [edit("src/array-methods.js", "                if (errorUtils.isPoisonError(record.value)) comparator = undefined\n")],
         witnesses: ["checks preparation-output-release at stack limit 1000"],
     },
     {
@@ -996,8 +1018,8 @@ export const SAFEGUARDS = [
     {
         id: "public-operation-releases-inputs",
         guards: "Ordinary and expression boundaries release issued input captures.",
-        faults: [edit("src/operation-result.js", "return runReceivingCommand(operationContext, () => finish(operationContext, work(...args)))\n    } finally { args = work = undefined }",
-            "return runReceivingCommand(operationContext, () => finish(operationContext, work(...args)))\n    } finally { work = undefined }")],
+        faults: [edit("src/operation-result.js", "work(...args), evidence))\n    } finally { args = work = undefined }",
+            "work(...args), evidence))\n    } finally { work = undefined }")],
         witnesses: ["checks public-surface-release at stack limit 1000"],
     },
     {
@@ -1061,8 +1083,8 @@ export const SAFEGUARDS = [
     {
         id: "query-recognizes-guaranteed-virtual-error",
         guards: "A guaranteed virtual slot answers hasError while getErrors awaits its actual cause.",
-        faults: [edit("src/array-region.js", "if (part.minimum > Math.max(first, MAX_ARRAY_LENGTH)) fail()", "if (false) fail()")],
-        witnesses: ["bounds capture and expansion with normal control"],
+        faults: [edit("src/array-sequence.js", "if (end > MAX_ARRAY_LENGTH) fail()", "if (false) fail()")],
+        witnesses: ["proves a cropped virtual slot obstructed with its original cause still undecided"],
     },
     {
         id: "search-groups-shared-status",
@@ -1081,7 +1103,7 @@ export const SAFEGUARDS = [
         guards: "A captured placement shared through unequal branches stays compact at publication.",
         faults: [edit("src/array-layout.js", "(placements.get(part.placement) ?? 0) + n * part.length",
             "(placements.get(part.placement) ?? 0) + part.length")],
-        witnesses: ["bounds capture and expansion with normal control"],
+        witnesses: ["counts the same placement reached through unequal layout branches"],
     },
     {
         id: "layout-shares-repeated-flags",
@@ -1130,7 +1152,8 @@ export const SAFEGUARDS = [
     {
         id: "flat-discards-capacity-poison",
         guards: "A retained capacity Error cannot retain the completed successful placement capture.",
-        faults: [edit("src/array-flat-stream.js", "finally { release() }", "finally { if (node.length <= MAX_ARRAY_LENGTH) release() }")],
+        faults: [edit("src/array-flat-stream.js", "finally { release() }\n            }, work)",
+            "finally { if (node.length <= MAX_ARRAY_LENGTH) release() }\n            }, work)")],
         witnesses: ["checks flat-completion at stack limit 1000"],
     },
     {
@@ -1324,14 +1347,15 @@ export const SAFEGUARDS = [
     {
         id: "copy-bounds-wake-earlier-failure-queries",
         guards: "A prior graph query sees a proved failure while another copy control is still pending.",
-        faults: [edit("src/array-interval.js", "questions.add(update)", "void update")],
+        faults: [edit("src/array-interval.js", "questions.add(update)\n                    return () => questions.delete(update)",
+            "return () => questions.delete(update)")],
         witnesses: ["releases an earlier failure query and a captured marker prefix"],
     },
     {
         id: "complete-skips-preserve-first-cause",
         guards: "An ordered skip batch flags a Complete output with the cause at its first position.",
         faults: [edit("src/array-invocation.js", "markers.point(0, false)", "markers.point(0, true)")],
-        witnesses: ["publishes skipped positions in order across output modes: deferred"],
+        witnesses: ["publishes skipped positions in order across output modes: repeated"],
     },
     {
         id: "skipped-status-becomes-permanent-output",
@@ -1366,7 +1390,7 @@ export const SAFEGUARDS = [
         faults: [edit("src/property-versions.js",
             "        if (isLivePlacementVersion(owner, key, version, operationContext)) releaseCapture?.()\n",
             "        releaseCapture?.()\n")],
-        witnesses: ["ownership isolation across pending work protects another owner from a displaced"],
+        witnesses: ["protects the only remaining owner when a displaced writer receives its child"],
     },
     {
         id: "array-extension-respects-pending-growth",
@@ -1467,7 +1491,7 @@ export const SAFEGUARDS = [
         id: "backing-owners-retain",
         guards: "Array backing storage stays live while a registered logical owner uses it.",
         faults: [edit("src/parent-placements.js",
-            "    if (meta?.backingOwners) for (const owner of meta.backingOwners)\n        if (visit(owner) === false) return false\n")],
+            "    if (meta?.backingOwners) yield* meta.backingOwners\n")],
         witnesses: [
             "Array native equivalence matches observation",
         ],
@@ -1521,8 +1545,7 @@ export const SAFEGUARDS = [
         id: "retirement-unregisters-backing-owner",
         guards: "A retired Array owner leaves the backing registry, restoring storage eligibility for others.",
         faults: [edit("src/parent-placements.js",
-            "            record.owners.delete(owner)\n            reconsider(record, operationContext)\n",
-            "            reconsider(record, operationContext)\n")],
+            "            record.owners.delete(owner)\n")],
         witnesses: [
             "Array native equivalence matches owned in-place mutation",
         ],
@@ -1580,8 +1603,8 @@ export const SAFEGUARDS = [
     {
         id: "regional-hole-releases-counter-projection",
         guards: "When a pending Array selection proves absent, its counter projection ends with the backing placement.",
-        faults: [edit("src/array-region.js", "if (placementPresent(gate.version)) return gate.version", "return gate.version")],
-        witnesses: ["captured splice regions releases an indexed splice position when its captured source proves to be a hole"],
+        faults: [edit("src/array-region.js", " ?? this.gates?.get(index)?.version")],
+        witnesses: ["distinguishes historical, blocked and surviving writes after a splice"],
     },
     {
         id: "retirement-detaches-backing-counter-memberships",
@@ -1629,7 +1652,7 @@ export const SAFEGUARDS = [
         guards: "A canonical producer writes its authorized physical coordinate even when pending logical growth has not extended the storage cache.",
         faults: [edit("src/array-view.js", "(range.backing === array || meta.backingOwners)",
             "range.backing === array")],
-        witnesses: ["publishes an authorized backing slot before physical growth, delivery="],
+        witnesses: ["uses the authorized physical coordinate of a backing producer before growth"],
     },
     {
         id: "backing-length-dispatch-uses-metadata",
@@ -1819,8 +1842,8 @@ export const SAFEGUARDS = [
         id: "pending-delivery-outlives-reactions",
         guards: "Pending delivery releases only after the outward Promise's direct reactions run.",
         faults: [edit("src/operation-result.js",
-            "const release = () => queueMicrotask(() => releaseDetached(operationContext, delivery.release))",
-            "const release = () => releaseDetached(operationContext, delivery.release)")],
+            "queueMicrotask(() => releaseDetached(operationContext, delivery.release))",
+            "releaseDetached(operationContext, delivery.release)")],
         witnesses: [
             "root promises preserves pending handoff through direct reactions:",
         ],
@@ -1876,9 +1899,7 @@ export const SAFEGUARDS = [
         id: "arguments-held-through-pending-use",
         guards: "Inputs a pending observation still reads stay leased until its result.",
         faults: [edit("src/invocation.js", "            if (!pendingInputUse) {", "            if (true) {")],
-        witnesses: [
-            "flat keeps depth conditional until a top-level occurrence needs discovery",
-        ],
+        witnesses: ["lastIndexOf excludes later replacements and growth from an unsuccessful search"],
     },
 
     // --- Captured generation identity -----------------------------------------

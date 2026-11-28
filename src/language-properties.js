@@ -1,7 +1,7 @@
 import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { capturePlacement, getPlacementVersion, ownPlacementVersionEntries, placementValue, placementPresent } from "./property-versions.js"
+import { captureObservedPoint, capturePlacement, getPlacementVersion, ownPlacementVersionEntries, placementValue, placementPresent } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 import { continueGraphTransition } from "./internal-step.js"
 
@@ -197,6 +197,11 @@ function readLanguagePlacement(parent, key, operationContext) {
     return capturePlacement(parent, key, operationContext)
 }
 
+function readObservedPlacement(parent, key, ctx) {
+    const point = ArrayView.capturePoint(parent, key, ctx)
+    return point ? captureObservedPoint(point, ctx) : readLanguagePlacement(parent, key, ctx)
+}
+
 function hasLanguageProperty(parent, key, operationContext) {
     key = String(key)
     const propertyKind = classifyLanguageProperty(parent, key, operationContext)
@@ -240,9 +245,9 @@ function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end
             if (separateRegion) {
                 const offset = meta.arrayRange?.start ?? 0
                 keys = outsideRegion(keys, part, offset)
-                if (part.pending && part.gates) {
-                    const limit = end ?? ArrayView.maximumLength(value, operationContext)
-                    const points = Array.from(part.gates.keys(), i => i - offset).filter(i => i >= start && i < limit)
+                if (part.pending) {
+                    const limit = Math.min(end ?? Infinity, ArrayView.retainedLength(value, operationContext))
+                    const points = Array.from(part.pointKeys(Math.max(part.start, start + offset), Math.min(part.end, limit + offset)), i => i - offset)
                     keys = mergeArrayKeys(keys, points.sort((a, b) => a - b).map(String))
                 }
             } else keys = mergeArrayKeys(keys, ArrayView.regionKeys(value, part, operationContext, start, end))
@@ -322,6 +327,7 @@ export {
     propertyValidationError,
     readLanguageProperty,
     readLanguagePlacement,
+    readObservedPlacement,
     requiresRepresentationCopyForPropertyMutation,
     writeLanguageProperty,
 }

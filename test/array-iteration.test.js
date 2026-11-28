@@ -610,6 +610,193 @@ describe("captured Array iteration", () => {
         }
     })
 
+    it("keeps a closed cursor's issued pull waiting for its own window credit", async () => {
+        const ctx = context(), chain = new r.Chain(["A", "B"], ctx, r.CHAIN_MODE.Unordered)
+        const a = r.iterate(chain, [], ctx, { windowEnd: 1, metadata: ["index0", "last"] })
+        const b = r.iterate(chain, [], ctx)
+        assert.equal(payload(await a.next(), ctx), "A")
+        assert.equal(payload(await b.next(), ctx), "A")
+        let delivered
+        const pending = a.next().then(step => { delivered = step })
+        assert((await a.return()).done)
+        r.assignPath(chain, [], ["later"], ctx)
+        assert.equal(payload(await b.next(), ctx), "B")
+        assert((await b.next()).done)
+        assert((await a.next()).done)
+        assert.equal(delivered, undefined)
+        a.setWindow(1, 2)
+        await pending
+        assert.equal(delivered.done, false)
+        assert.equal(payload(delivered, ctx), "B")
+        assert.deepEqual(delivered.metadata, { index0: 1, last: true })
+        assert.deepEqual(r.export(chain, [], ctx), ["later"])
+    })
+
+    it("advances one bounded reader through a nested open issuer before the later parent push", async () => {
+        const ctx = context(), source = new r.Chain(["A"], ctx), hold = Promise.withResolvers()
+        const push = (owner, value) => r.run(owner, [], "push", [value], ctx, { mutationScopeDepth: 0 })
+        let inside, nested, outerPush
+        const entry = r.enter(source, [], ctx, { mayPoisonScope: false, maximumCount: 2 }, outer => {
+            nested = r.enter(outer, [], ctx, { mayPoisonScope: false, maximumCount: 1 }, inner => {
+                inside = inner
+                return hold.promise
+            })
+            outerPush = push(outer, "B")
+        })
+        const saved = r.capturePath(source, [], ctx), metadata = ["index0", "last"]
+        const bounded = r.iterate(saved, [], ctx, { windowEnd: 1, metadata })
+        const unrestricted = r.iterate(saved, [], ctx, { metadata })
+        const parentPush = push(source, "P")
+        assert.equal(payload(await bounded.next(), ctx), "A")
+        assert.equal(payload(await unrestricted.next(), ctx), "A")
+        const early = await unrestricted.next()
+        assert.equal(payload(early, ctx), "B")
+        assert.equal(early.metadata.last, true)
+        assert(r.isPending(early.metadata.index0, ctx))
+        let next
+        const pending = bounded.next().then(item => { next = item })
+        assert((await bounded.return()).done)
+        bounded.setWindow(1, 2)
+        await new Promise(setImmediate)
+        assert.equal(next, undefined)
+        assert(r.isPending(parentPush, ctx))
+        assert.equal(push(inside, "N"), 2)
+        await pending
+        assert.equal(payload(next, ctx), "N")
+        assert.deepEqual(next.metadata, { index0: 1, last: false })
+        assert((await bounded.next()).done)
+        assert.equal(payload(await unrestricted.next(), ctx), "N")
+        assert.equal(await early.metadata.index0, 2)
+        hold.resolve()
+        await Promise.all([entry, nested])
+        assert.equal(await outerPush, 3)
+        assert.equal(await parentPush, 4)
+        assert((await unrestricted.next()).done)
+        assert.deepEqual(await r.export(saved, [], ctx), ["A", "N", "B"])
+        assert.deepEqual(await r.export(source, [], ctx), ["A", "N", "B", "P"])
+    })
+
+    for (const producer of Object.values(r.CHAIN_MODE)) for (const consumer of Object.values(r.CHAIN_MODE))
+    for (const recovered of [false, true]) for (const timing of ["ready", "sync", "deferred"])
+        it(`keeps the private failure distinct from the outside captures in ${producer}/${consumer}/${recovered}/${timing}`, async () => {
+            const ctx = context(), cause = r.validationError("private failure", ctx, r.ERROR_KIND.OperationInputFailed)
+            const source = new r.Chain({ scope: { items: ["A", , "B"], tag: 0 }, side: "S" }, ctx, producer)
+            const effects = []
+            const host = new r.ContextChain({ log: r.externalState({ note(value) { effects.push(value) } }) }, ctx, { log: {} })
+            const earlier = r.iterate(source, ["scope", "items"], ctx)
+            const hold = new OrderedThenable()
+            const decision = timing === "ready" ? recovered : timing === "sync" ? ready(recovered) : hold
+            let nested, prefix
+            r.enter(source, ["scope"], ctx, true, outer => {
+                nested = r.enter(outer, [], ctx, true, inside => {
+                    r.poisonPath(inside, [], cause, ctx)
+                    prefix = r.iterate(inside, ["items"], ctx).next().catch(error => error)
+                    return r.continueOperation(decision, ctx, repair => {
+                        if (!repair) return
+                        r.repairPath(inside, [], ctx)
+                        r.run(inside, ["items"], "push", ["N"], ctx, { mutationScopeDepth: 1 })
+                    })
+                })
+            })
+            const transfer = r.capturePath(source, ["scope", "items"], ctx, consumer)
+            const a = r.iterate(transfer, [], ctx, { windowEnd: 1 })
+            const b = r.iterate(transfer, [], ctx, { metadata: ["last", "index0"] })
+            const active = new Set()
+            function observe(step, name) {
+                return step.then(item => {
+                    active.add(name)
+                    const value = payload(item, ctx)
+                    if (name === "first") r.run(host, ["log"], "note", [value], ctx, { mutationScopeDepth: 1 })
+                    return { value, metadata: item.metadata }
+                }, error => error)
+            }
+            const first = observe(a.next(), "first")
+            const second = observe(b.next(), "second")
+            await b.return()
+            r.assignPath(source, ["scope", "tag"], 9, ctx)
+            const repaired = r.repairPath(source, ["scope"], ctx)
+            const appended = r.run(source, ["scope", "items"], "push", ["P"], ctx, { mutationScopeDepth: 2 })
+            r.assignPath(source, ["side"], "independent", ctx)
+            assert.equal(await prefix, cause)
+            assert.equal(payload(await earlier.next(), ctx), "A")
+            assert.equal(r.lookupPath(source, ["side"], ctx), "independent")
+            if (timing === "deferred") {
+                assert.equal(active.size, 0)
+                assert.deepEqual(effects, [])
+                assert(r.isPending(repaired, ctx))
+                assert(r.isPending(appended, ctx))
+                hold.resolve(recovered)
+            }
+            await nested
+            await repaired
+            if (recovered) {
+                assert.equal((await first).value, "A")
+                assert.deepEqual(await second, { value: "A", metadata: { last: false, index0: 0 } })
+                assert.deepEqual(await r.export(transfer, [], ctx), ["A", , "B", "N"])
+            } else {
+                assert.equal(await first, cause)
+                assert.equal(await second, cause)
+            }
+            assert.equal(await appended, recovered ? 5 : 4)
+            assert.deepEqual(effects, recovered ? ["A"] : [])
+            assert.deepEqual(await r.export(source, ["scope"], ctx), {
+                tag: recovered ? 9 : 0, items: recovered ? ["A", , "B", "N", "P"] : ["A", , "B", "P"],
+            })
+            await a.return()
+            await earlier.return()
+        })
+
+    for (const producer of Object.values(r.CHAIN_MODE)) for (const consumer of Object.values(r.CHAIN_MODE))
+    for (const reject of [false, true]) for (const timing of ["ready", "sync", "deferred"])
+        it(`keeps the splice producer's failure footprint after handoff in ${producer}/${consumer}/${reject}/${timing}`, async () => {
+            const ctx = context(), control = new OrderedThenable()
+            const cause = r.validationError("count", ctx, r.ERROR_KIND.OperationInputFailed)
+            const count = timing === "ready" ? (reject ? cause : 1) : timing === "sync" ? (reject ? rejected(cause) : ready(1)) : control
+            const source = new r.Chain(["A", "B"], ctx, producer), whole = producer === r.CHAIN_MODE.Complete
+            const previous = r.capturePath(source, [], ctx, consumer)
+            const change = r.run(source, [], "splice", [1, count], ctx, { mutationScopeDepth: 0 })
+            const successor = r.capturePath(source, [], ctx, consumer)
+            const cursor = r.iterate(successor, [], ctx)
+            let first
+            const pull = cursor.next().then(step => { first = payload(step, ctx) }, error => { first = error })
+            const repair = r.repairPath(source, [], ctx)
+            const replaced = r.assignPath(source, [], ["new"], ctx)
+            const sibling = new r.Chain(["live"], ctx, consumer)
+            const independent = r.lookupPath(sibling, [0], ctx)
+            if (timing === "deferred") {
+                await new Promise(setImmediate)
+                assert.equal(first, whole ? undefined : "A")
+                assert.deepEqual(r.export(previous, [], ctx), ["A", "B"])
+                assert.equal(independent, "live")
+                if (reject) control.reject(cause)
+                else control.resolve(1)
+            }
+            await pull
+            if (reject) {
+                assert.equal(await change, cause)
+                if (whole) {
+                    assert.equal(first, cause)
+                    assert((await cursor.next()).done)
+                    assert.equal(await r.repairPath(successor, [], ctx), undefined)
+                    assert.deepEqual(r.export(successor, [], ctx), ["A", "B"])
+                } else {
+                    assert.equal(first, "A")
+                    await assert.rejects(cursor.next(), error => error === cause)
+                    assert.equal(await r.lookupPath(successor, [1], ctx), cause)
+                    assert.equal(await r.repairPath(successor, [1], ctx), undefined)
+                    assert.equal(await r.lookupPath(successor, [1], ctx), cause)
+                }
+            } else {
+                assert.equal(first, "A")
+                assert((await cursor.next()).done)
+                assert.deepEqual(r.export(successor, [], ctx), ["A"])
+            }
+            assert.equal(await repair, undefined)
+            await replaced
+            assert.deepEqual(r.export(source, [], ctx), ["new"])
+            assert.deepEqual(r.export(previous, [], ctx), ["A", "B"])
+        })
+
     it("closes an unused pending selection before its path is consumed", async () => {
         const ctx = context(), source = Promise.withResolvers()
         const cursor = r.iterate(new r.Chain(source.promise, ctx), ["a"], ctx)

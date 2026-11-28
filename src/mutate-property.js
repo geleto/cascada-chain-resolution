@@ -16,8 +16,8 @@ import { ArrayView, isArrayIndex, isArrayView } from "./array-view.js"
 import { visitParentPlacements } from "./parent-placements.js"
 import { IdentityPublication } from "./captured-identity.js"
 import { CHAIN_MODE } from "./chain.js"
-import { MAX_ARRAY_LENGTH, capacityError, captureLayout, structuralPlacement } from "./array-layout.js"
-import { publishLayout } from "./array-sequence.js"
+import { MAX_ARRAY_LENGTH, capacityError, captureLayout, individualFixedSlots, structuralPlacement } from "./array-layout.js"
+import { publishFixedCopy, publishLayout } from "./array-sequence.js"
 import { indexValueIfSourceIndexed } from "./refcounts.js"
 
 function prepareAssignment(placement, key, operationContext) {
@@ -143,7 +143,11 @@ function assignManagedPath(
                         indexValueIfSourceIndexed(array, resized, operationContext)
                         return resized
                     }
-                    if (region?.layout) return publishLayout(captureLayout(array, operationContext, length), operationContext)
+                    if (region?.layout) {
+                        const kept = captureLayout(array, operationContext, length)
+                        return individualFixedSlots(kept, operationContext) ? publishFixedCopy(kept, operationContext) :
+                            publishLayout(kept, operationContext)
+                    }
                     // Scope rollback retains this Array or an ancestor. Build the
                     // final range directly, preserving retained children and leaving
                     // discarded placements on the baseline without consuming them.

@@ -70,6 +70,8 @@ function buildRefIndex(value, operationContext, canIndex) {
                 ;(span.region.indexed ??= new Set()).add(node)
             }
         }
+        // Replaying settled values must see every new owner of a shared region.
+        for (const { span } of staged.values()) span?.region.indexFixed()
         return value
     } finally { staged.clear(); active.clear(); value = undefined }
 
@@ -231,7 +233,8 @@ function releaseBackingCounter(version, owner, operationContext) {
 
 function retireRefIndex(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
-    meta.indexedRegion?.indexed?.delete(owner)
+    const region = meta.indexedRegion
+    region?.removeIndex(owner)
     delete meta.indexedRegion
     for (const parents of meta.counterChildren ?? []) parents.delete(owner)
     for (const version of meta.backingCounterVersions ?? [])

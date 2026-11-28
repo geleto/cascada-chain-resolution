@@ -3,6 +3,7 @@ import { Chain, assignPath, deletePath, import as importValue, lookupPath, run, 
 import { verifyRefCounts } from "./verify-refcounts.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
+import { getParentPlacements } from "../src/parent-placements.js"
 
 describe("Array structure after pending key selection", () => {
     for (const reverse of [false, true]) it(`publishes consecutive selected lengths without self-waits, reverse=${reverse}`, async () => {
@@ -329,6 +330,65 @@ describe("Array native equivalence", () => {
             Object.keys(ARRAY_METHODS).sort(),
         )
     })
+
+    for (const mode of Object.values(runtime.CHAIN_MODE))
+        it(`keeps a clipped region absent through indexed regrowth in mode ${mode}`, async () => {
+            for (const method of ["pop", "slice", "splice"]) for (const delivery of ["ready", "synchronous", "deferred"]) {
+                const ctx = { execution: new Execution(), errorContext: method }
+                const width = Promise.withResolvers(), payload = Promise.withResolvers()
+                const input = delivery === "ready" ? 0 : delivery === "synchronous" ? { then: resolve => resolve(0) } : width.promise
+                const chain = new Chain(["A", , "C"], ctx, mode), mutation = { mutationScopeDepth: 0 }
+                const pending = run(chain, [], "splice", [1, input], ctx, mutation)
+                width.resolve(0)
+                await pending
+                const before = runtime.capturePath(chain, [], ctx)
+                const args = method === "pop" ? [] : method === "slice" ? [0, 2] : [2, 1]
+                const result = run(chain, [], method, args, ctx, method === "slice" ? {} : mutation)
+                const target = method === "slice" ? new Chain(result, ctx, mode) : chain
+                const clipped = runtime.capturePath(target, [], ctx)
+                assignPath(target, [4], payload.promise, ctx)
+                assert.equal(runtime.lookupPath(target, [2], ctx), undefined, `${method}, ${delivery}`)
+                assert.equal(runtime.lookupPath(target, ["length"], ctx), 5)
+                assert.deepEqual(runtime.export(clipped, [], ctx), ["A", ,])
+                assert.deepEqual(runtime.export(before, [], ctx), ["A", , "C"])
+                payload.resolve("S")
+                assert.deepEqual(await runtime.export(target, [], ctx), ["A", , , , "S"])
+                if (method === "pop") assert.equal(await result, "C")
+                if (method === "splice") assert.deepEqual(runtime.export(new Chain(await result, ctx), [], ctx), ["C"])
+            }
+        })
+
+    for (const mode of [runtime.CHAIN_MODE.Sequential, runtime.CHAIN_MODE.Unordered])
+        it(`keeps shifted backing bounds through direct and entered growth in mode ${mode}`, async () => {
+            for (const entered of [false, true]) for (const flagged of [false, true]) {
+                const ctx = { execution: new Execution(), errorContext: "clipped backing" }
+                const wrap = value => new Chain(value, ctx, mode)
+                const width = Promise.withResolvers(), tail = { n: 3 }, source = wrap(["L", "A", , tail])
+                const cause = runtime.validationError("discarded flag", ctx, runtime.ERROR_KIND.OperationInputFailed)
+                if (flagged) runtime.poisonPath(source, [3], cause, ctx)
+                const prior = run(source, [], "splice", [2, width.promise], ctx, { mutationScopeDepth: 0 })
+                width.resolve(0)
+                await prior
+                const before = runtime.capturePath(source, [], ctx)
+                const clipped = wrap(run(source, [], "slice", [1, 3], ctx, {}))
+                const added = { n: 4 }
+                if (entered) await runtime.enter(clipped, [4], ctx, true, ref => assignPath(ref, [], added, ctx))
+                else assignPath(clipped, [4], added, ctx)
+                const raw = lookupPath(clipped, [], ctx)
+                assert.equal(lookupPath(clipped, [2], ctx), undefined)
+                assert(!getParentPlacements(tail, ctx).some(({ parent }) => parent === raw))
+                assert(getParentPlacements(added, ctx).some(({ parent, key }) => parent === raw && key === "4"))
+                assert.equal(run(clipped, [], "includes", [tail], ctx, {}), false)
+                assert.equal(run(clipped, [], "lastIndexOf", [added], ctx, {}), 4)
+                assert.equal(runtime.getErrors(clipped, [], ctx), null)
+                assert.deepEqual(runtime.export(clipped, [], ctx), ["A", , , , added])
+                const cursor = runtime.iterate(clipped, [], ctx, { metadata: ["index0"] }), items = []
+                for (let item = await cursor.next(); !item.done; item = await cursor.next())
+                    items[await item.metadata.index0] = lookupPath(item.value, [], ctx)
+                assert.deepEqual(items, ["A", undefined, undefined, undefined, added])
+                assert.equal(lookupPath(before, [3], ctx), flagged ? cause : tail)
+            }
+        })
 
     for (const mode of ARRAY_MODES) {
         it(`matches ${mode.name}`, async () => {

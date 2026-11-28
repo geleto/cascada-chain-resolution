@@ -230,8 +230,11 @@ function sliceOutput(source, start, end, operationContext) {
     if (range?.borrowed && end <= ArrayView.prefixLength(source, operationContext)) {
         const offset = range.borrowed.start + range.start
         view = new ArrayView(range.borrowed.record.array, operationContext, offset + start, offset + end)
-    } else if (ArrayView.tryShareStorage(source, operationContext)) view = new ArrayView(source, operationContext, start, end)
-    else return createArrayFromRemap(createRemap(source, operationContext, start, end), operationContext)
+    } else if (ArrayView.tryShareStorage(source, operationContext)) {
+        view = new ArrayView(source, operationContext, start, end)
+        if (ArrayView.region(source, operationContext) && end < ArrayView.minimumLength(source, operationContext))
+            ArrayView.clipBacking(view, operationContext)
+    } else return createArrayFromRemap(createRemap(source, operationContext, start, end), operationContext)
     return PlacementConstruction.initializeAndPublish(view, operationContext, view => {
         propertyVersions.copyArrayOverlays(
             source,

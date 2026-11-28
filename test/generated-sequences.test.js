@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { modelPublications } from "./fixtures/publication-model.js"
+import { CHAIN_MODE } from "../src/index.js"
 import { enabled as traceEnabled } from "./trace-state.js"
 
 // Semantic models and delivery differentials have the distinct scopes described
@@ -99,11 +100,16 @@ describe("generated operation sequences", () => {
 
     it("matches a sequential model for conflicting commands on one placement", function () {
         const full = process.env.CASCADA_CONFLICT_MATRIX === "full"
-        this.timeout(full ? 7200000 : 60000)
-        const coverage = runFixture("conflict-matrix.js", full ? 7100000 : 55000)
+        this.timeout(full ? 7200000 : 180000)
+        const coverage = runFixture("conflict-matrix.js", full ? 7100000 : 165000)
         assert.equal(coverage.triples, 10 * 17 * 17)
         assert.equal(coverage.absentTriples, coverage.triples)
         assert(coverage.paired > 0, "compare runs with and without intermediate reads")
+        assert.equal(coverage.runs, (coverage.cases + 2 * coverage.paired) * 3)
+        if (full) {
+            assert.equal(coverage.cases, coverage.triples * 2 * 3 * 3 * 2)
+            assert.equal(coverage.runs, coverage.cases * 3 * 3)
+        }
         for (const dimension of product(["container"], ["array", "record"])
             .concat(product(["target"], ["absent", "present"]), product(["sibling"], [1, 2, 3]),
                 product(["release"], ["predecessor-first", "predecessor-last"]), product(["observed"], [false, true]),
@@ -112,10 +118,11 @@ describe("generated operation sequences", () => {
     })
 
     it("matches an Array slot model across entries, failures, structure, and observation routes", function () {
-        this.timeout(120000)
-        const { programs, runs, coverage } = runFixture("array-sequences.js", 110000)
+        this.timeout(240000)
+        const { programs, runs, coverage } = runFixture("array-sequences.js", 230000)
         assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6)
-        assert.equal(runs, programs * 3)
+        assert.equal(runs, programs * 3 * 3)
+        const timings = ["ready", "synchronous", "native", "ordered"]
         const required = [
             ...harnessModes,
             ...product(["policy"], ["Complete", "Sequential", "Unordered"]),
@@ -126,6 +133,10 @@ describe("generated operation sequences", () => {
             ...product(["observe"], ["direct", "entry", "snapshot"], ["before-release", "after-release", "after-settle"]),
             ...product(["delivery"], ["native", "ordered"]),
             "length", "read", "settle", "owners:1", "owners:2", "owner:0", "owner:1", "multi-owner:pending-mutation",
+            ...product(["splice-controls"], timings, ["direct", "entry"]),
+            ...product(["splice-control-pair"], timings, timings),
+            ...product(["failed-splice"], Object.values(CHAIN_MODE), ["start", "count"], timings),
+            ...product(["splice-backing"], ["native", "borrowed-prefix"], ["deferred", "immediate"]),
             "iterator:skipped", "iterator:done",
             ...product(["keys"], ["ready", "synchronous", "native", "ordered"]),
         ]

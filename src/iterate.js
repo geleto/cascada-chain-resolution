@@ -88,6 +88,8 @@ class ArrayCursor extends OperationOwner {
             const ctx = this.operationContext, index = this.index
             const member = this.length === undefined ? ArrayView.captureInRange(this.array, index, ctx) : index < this.length
             if (member === false) return done
+            const point = ArrayView.capturePoint(this.array, index, ctx)
+            if (point) return this.bindSlot(point.placement, member, point.release)
             if (isPending(member, ctx)) {
                 this.releaseConsumedPrefix()
                 // A selected version and its membership question survive
@@ -108,21 +110,23 @@ class ArrayCursor extends OperationOwner {
         return this.bindSlot(selected, true)
     }
 
-    bindSlot(selected, member) {
+    bindSlot(selected, member, release) {
         const ctx = this.operationContext, index = this.index++
         // A pending structural transition owns its eventual binding; an ordinary
         // pending payload transfers immediately. Neither needs the old Array.
         const binding = this.bindingContext
         const metadata = this.project(index)
-        const bind = () => consumePlacementTransition(selected, ctx, placement => this.item(placement, binding, metadata))
-        const protect = member !== true && retainPlacement(selected, ctx)
+        const bind = () => continueGraphTransition(selected, ctx, selected =>
+            consumePlacementTransition(selected, ctx, placement => this.item(placement, binding, metadata)))
+        const protect = member !== true && !isPending(selected, ctx) && retainPlacement(selected, ctx)
         const step = member === true ? bind() : continueGraphTransition(member, ctx, found => {
-            try { return found ? bind() : done } finally { protect() }
+            try { return found ? bind() : done } finally { if (protect) protect() }
         })
+        const result = !release ? step : continueGraphTransition(step, ctx, result => { release(); return result })
         this.reading = false
         if (this.stopped || this.index === this.length) this.stop()
-        if (this.array && isPending(step, ctx)) this.releaseConsumedPrefix()
-        return step
+        if (this.array && isPending(result, ctx)) this.releaseConsumedPrefix()
+        return result
     }
 
     item(placement, binding, metadata) {

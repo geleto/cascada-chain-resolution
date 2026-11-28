@@ -17,19 +17,20 @@ import { verifyRefCounts } from "../verify-refcounts.js"
 
 // Slots: { value } is data, { error } is rejected-payload poison, and { poison,
 // baseline, absent } a failed prefix retaining the slot it replaced.
-function applyElement(slots, index, effect, value) {
+function applyElement(slots, index, effect, value, diagnostic) {
     const current = slots[index]
     const present = index in slots
     if (effect === "set") slots[index] = { value }
     else if (effect === "delete") delete slots[index]
-    else if (effect === "reject") slots[index] = { error: true }
+    else if (effect === "reject") slots[index] = { error: true, diagnostic }
     else if (effect === "poison") {
-        if (!current?.poison) slots[index] = { poison: true, baseline: current, absent: !present }
+        if (!current?.poison) slots[index] = { poison: true, baseline: current, absent: !present, diagnostic }
     }
     else if (effect === "prefix") {
         if (current?.error || current?.poison) return
         if (present && typeof current.value === "object" && current.value !== null) slots[index] = { value: { ...current.value, x: value } }
-        else slots[index] = { poison: true, baseline: current, absent: !present }
+        else slots[index] = { poison: true, baseline: current, absent: !present, diagnostic: diagnostic &&
+            { context: diagnostic.context, kind: current?.value === undefined ? r.ERROR_KIND.NullLookup : r.ERROR_KIND.ScalarLookup } }
     } else if (effect === "repair" && current?.poison) {
         if (current.absent) delete slots[index]
         else slots[index] = current.baseline
@@ -46,14 +47,17 @@ function values(slots) {
 }
 
 function display(value) {
-    if (value === ERROR || Error.isError(value)) return "ERR"
+    if (value === ERROR || r.isPoisonError(value)) return "ERR"
+    if (Error.isError(value)) return `native Error(${value.message})`
     if (value === undefined) return "u"
     if (Array.isArray(value)) {
         if (Object.values(value).includes(ERROR)) return "ERR"
         return `[${value.length}:${[...Array(value.length).keys()].map(index => index in value ? display(value[index]) : "_").join(",")}]`
     }
-    if (typeof value === "object" && value !== null) return `{x:${value.x}}`
-    return Number.isNaN(value) ? "NaN" : String(value)
+    if (typeof value === "object" && value !== null) return `{x:${display(value.x)}}`
+    if (typeof value === "bigint") return `${value}n`
+    if (Object.is(value, -0)) return "-0"
+    return typeof value === "string" ? JSON.stringify(value) : String(value)
 }
 
 // Guard the model and comparison against drift on transitions the contracts fix.
@@ -68,6 +72,8 @@ function display(value) {
     assert.equal(display(values(slots)), "ERR")
     assert.notEqual(display([, 7]), display([undefined, 7]))
     assert.notEqual(display([3, 7]), display([, 7]))
+    assert.notEqual(display(7), display("7"))
+    assert.notEqual(display(undefined), display("u"))
 }
 
 const VALUES = [0, 1, 2, undefined, NaN, "x", 7]
@@ -86,6 +92,7 @@ const STRUCTURAL = {
 }
 const OBSERVATIONS = ["includes", "indexOf", "lastIndexOf", "at", "slice", "with", "concat"]
 const ROUTES = ["direct", "entry", "snapshot"]
+const CONTROL_TIMINGS = ["ready", "synchronous", "native", "ordered"]
 
 function generate(random) {
     const pick = list => list[randomInteger(random, list.length)]
@@ -116,7 +123,15 @@ function generate(random) {
     // unfinished work. Choose owners last to preserve operation coverage.
     const ownerCount = random() < 0.5 ? 1 : 2
     for (const step of steps) step.owner = randomInteger(random, ownerCount)
-    return { initial, delivery, ownerCount, steps }
+    const split = initial.length > 1 && random() < 0.5
+    for (const step of steps) {
+        step.keyTiming = randomInteger(random, CONTROL_TIMINGS.length)
+        if (step.kind === "structural" && step.name.startsWith("splice"))
+            step.controls = [pick(CONTROL_TIMINGS), pick(CONTROL_TIMINGS)]
+    }
+    const failure = { control: pick(["start", "count"]), timing: pick(CONTROL_TIMINGS), other: pick(CONTROL_TIMINGS),
+        step: randomInteger(random, steps.length), owner: randomInteger(random, ownerCount), index: 1 + randomInteger(random, 2) }
+    return { initial, delivery, ownerCount, steps, split, failure }
 }
 
 function observation(random, pick) {
@@ -159,25 +174,39 @@ async function outcome(value) {
 }
 
 async function describeOutcome(value, ctx) {
-    const { result, error, blocked } = await outcome(value)
-    if (blocked) return "BLOCKED"
-    if (error) return `REJECTED:${error.message}`
+    const receipt = await outcome(value)
+    if (receipt.blocked) return "BLOCKED"
+    if (Object.hasOwn(receipt, "error")) return `REJECTED:${String(receipt.error)}`
+    const { result } = receipt
     if (result !== null && typeof result === "object" && !Error.isError(result)) {
         const exported = await outcome(r.export(new r.Chain(result, ctx), [], ctx))
         if (exported.blocked) return "BLOCKED"
-        return exported.error ? `REJECTED:${exported.error.message}` : display(exported.result)
+        return Object.hasOwn(exported, "error") ? `REJECTED:${String(exported.error)}` : display(exported.result)
     }
     return display(result)
 }
 
-async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, coverage, chainMode) {
+function matchesDiagnostic(value, diagnostic) {
+    if (!r.isPoisonError(value)) return false
+    if (diagnostic.exact) return value === diagnostic.exact
+    return value.kind === diagnostic.kind && value.errorContext === diagnostic.context &&
+        Object.getOwnPropertyDescriptor(value, "cause")?.value === diagnostic.cause
+}
+
+function matchesCollection(value, diagnostics) {
+    const leaves = value instanceof r.CompoundPoisonError ? value.errors : value === null ? [] : [value]
+    return leaves.length === diagnostics.size &&
+        [...diagnostics].every(diagnostic => leaves.some(leaf => matchesDiagnostic(leaf, diagnostic)))
+}
+
+async function runProgram({ initial, delivery, ownerCount, steps, split, failure }, seed, mode, coverage, chainMode) {
     const observed = mode === "observed", instrumented = mode !== "bare"
     coverage.add(`harness:${mode}`)
     const random = createRandom(seed ^ 0x5bd1e995)
     const slots = initial.map(value => ({ value }))
     for (let index = 0; index < initial.length; index++) if (!(index in initial)) delete slots[index]
     const ctx = { execution: new r.Execution(), errorContext: {} }
-    const data = structuredClone(initial), split = data.length > 1 && seed % 4 === 0
+    const data = structuredClone(initial)
     const chain = new r.Chain({ a: split ? concatFromInterior(data, ctx) : data }, ctx, chainMode)
     coverage.add(split ? "backing:borrowed-prefix" : "backing:native")
     const owners = [{ chain, slots }]
@@ -195,35 +224,47 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
         return held.promise
     }
     // Pending payloads use native Promises or ordered custom thenables.
-    const input = (value, rejected, timing = delivery) => {
+    const input = (value, reason, timing = delivery) => {
+        if (timing === "ready") return value
+        if (timing === "synchronous") return ready(value)
         if (timing === "native") {
             const held = Promise.withResolvers()
             held.promise.catch(() => {})
-            holds.push({ release: () => rejected ? held.reject(new Error("rejected payload")) : held.resolve(value) })
+            holds.push({ release: () => reason ? held.reject(reason) : held.resolve(value) })
             return held.promise
         }
         const source = new OrderedThenable()
-        holds.push({ release: () => rejected ? source.reject(new Error("rejected payload")) : source.resolve(value) })
+        holds.push({ release: () => reason ? source.reject(reason) : source.resolve(value) })
         return source
     }
     let keySequence = 0
     const keys = path => {
         if (!path.length) return path
-        const timing = ["ready", "synchronous", "native", "ordered"][keySequence++ % 4]
+        const timing = CONTROL_TIMINGS[keySequence++ % CONTROL_TIMINGS.length]
         coverage.add(`keys:${timing}`)
         return path.map((key, index) => index !== path.length - 1 || timing === "ready" ? key :
-            timing === "synchronous" ? ready(key) : input(key, false, timing))
+            input(key, undefined, timing))
     }
-    const element = (target, path, effect, value) => {
+    let effectSequence = 0
+    const prepareEffect = (slots, index, effect, value) => {
+        const context = `effect:${effectSequence++}:${effect}`
+        const operation = { execution: ctx.execution, errorContext: context }
+        let diagnostic
+        if (effect === "poison") diagnostic = { exact: r.validationError("flag", operation, r.ERROR_KIND.OperationInputFailed) }
+        else if (effect === "reject") diagnostic = { context, kind: r.ERROR_KIND.AssignmentValueFailed, cause: new Error("rejected payload") }
+        else if (effect === "prefix") diagnostic = { context }
+        applyElement(slots, index, effect === "pending" ? "set" : effect, value, diagnostic)
+        return (target, path) => element(target, path, effect, value, operation, diagnostic)
+    }
+    const element = (target, path, effect, value, operation, diagnostic) => {
         path = keys(path)
-        if (effect === "set") return r.assignPath(target, path, value, ctx)
-        if (effect === "pending") return r.assignPath(target, path, input(value), ctx)
-        if (effect === "delete") return r.deletePath(target, path, ctx)
-        if (effect === "prefix") return r.assignPath(target, [...path, "x"], value, ctx)
-        if (effect === "repair") return r.repairPath(target, path, ctx)
-        if (effect === "reject") return r.assignPath(target, path, input(undefined, true), ctx)
-        if (effect === "poison") return r.poisonPath(target, path,
-            input(r.validationError("flag", ctx, r.ERROR_KIND.OperationInputFailed)), ctx)
+        if (effect === "set") return r.assignPath(target, path, value, operation)
+        if (effect === "pending") return r.assignPath(target, path, input(value), operation)
+        if (effect === "delete") return r.deletePath(target, path, operation)
+        if (effect === "prefix") return r.assignPath(target, [...path, "x"], value, operation)
+        if (effect === "repair") return r.repairPath(target, path, operation)
+        if (effect === "reject") return r.assignPath(target, path, input(undefined, diagnostic.cause), operation)
+        if (effect === "poison") return r.poisonPath(target, path, input(diagnostic.exact), operation)
         return undefined
     }
     const keep = (value, expected, label) => {
@@ -257,7 +298,53 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
             }
         } while (holds.length)
     }
-    for (const step of steps) {
+    let checkFailure
+    for (const [position, step] of steps.entries()) {
+        if (position === failure.step) {
+            // An independent branch shares the generated owner's gates and
+            // delivery schedule. Its all-ready splice has a mode-specific
+            // publication, even though every direct result is the same cause.
+            const target = owners[failure.owner].chain, child = { seed }
+            const historical = [child, , "C"], name = "failedSplice"
+            r.assignPath(target, [name], historical, ctx)
+            const snapshot = r.capturePath(target, [name], ctx)
+            roots.push(snapshot)
+            const poison = r.validationError("splice control", ctx, r.ERROR_KIND.OperationInputFailed)
+            const failedStart = failure.control === "start", at = failure.index
+            const bad = input(poison, undefined, failure.timing), good = input(failedStart ? 0 : at, undefined, failure.other)
+            const args = failedStart ? [bad, good, "X"] : [good, bad, "X"]
+            const result = r.run(target, [name], "splice", args, ctx, { mutationScopeDepth: 1 })
+            const root = r.isPoisoned(target, [name], ctx), report = r.getErrors(target, [name], ctx)
+            const points = Array.from({ length: 4 }, (_, i) => r.lookupPath(target, [name, i], ctx))
+            coverage.add(`failed-splice:${chainMode}:${failure.control}:${failure.timing}`)
+            checkFailure = async () => {
+                const complete = chainMode === r.CHAIN_MODE.Complete
+                const displaced = failedStart && chainMode === r.CHAIN_MODE.Sequential
+                const expected = historical.slice()
+                if (!complete) {
+                    if (failedStart) expected.push("X")
+                    else {
+                        expected.splice(at, 0, "X")
+                        expected.fill(poison, at + 1)
+                    }
+                }
+                assert.equal(await result, poison)
+                assert.equal(await root, complete)
+                assert.equal(await report, complete || displaced || !failedStart ? poison : null)
+                for (const [i, point] of points.entries()) assert.equal(await point, complete || displaced ? poison : expected[i])
+                assert.equal(await r.lookupPath(snapshot, [0], ctx), child)
+                assert.deepEqual(await r.export(snapshot, [], ctx), historical)
+                await r.repairPath(target, [name], ctx)
+                for (let i = 0; i < 4; i++) await r.repairPath(target, [name, i], ctx)
+                assert.equal(await r.lookupPath(target, [name, "length"], ctx), expected.length)
+                for (let i = 0; i < expected.length; i++) assert.equal(await r.lookupPath(target, [name, i], ctx), expected[i])
+                const exported = await r.export(target, [name], ctx)
+                if (expected.includes(poison)) assert.equal(exported, poison)
+                else assert.deepEqual(exported, expected)
+                return [complete, displaced, expected.length, expected.includes(poison)]
+            }
+        }
+        keySequence = step.keyTiming
         const { chain, slots } = owners[step.owner]
         coverage.add(`owner:${step.owner}`)
         if (["entry", "direct", "structural", "length", "conflict"].includes(step.kind) &&
@@ -265,25 +352,33 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
         const after = phase
         if (step.kind === "entry") {
             coverage.add(`entry:${step.effect}:${step.delayed ? "delayed" : "ready"}`)
-            applyElement(slots, step.index, step.effect === "pending" ? "set" : step.effect, step.value)
-            const act = inside => element(inside, [], step.effect, step.value)
+            const apply = prepareEffect(slots, step.index, step.effect, step.value)
+            const act = inside => apply(inside, [])
             keep(r.enter(chain, keys(["a", step.index]), ctx, true, inside => step.delayed ? hold(chain).then(() => act(inside)) : act(inside)))
         } else if (step.kind === "direct") {
             coverage.add(`direct:${step.effect}`)
-            applyElement(slots, step.index, step.effect === "pending" ? "set" : step.effect, step.value)
-            keep(element(chain, ["a", step.index], step.effect, step.value))
+            const apply = prepareEffect(slots, step.index, step.effect, step.value)
+            keep(apply(chain, ["a", step.index]))
         } else if (step.kind === "structural") {
             coverage.add(`structural:${step.name}:${step.route}`)
             const [args, apply, returnsReceiver] = STRUCTURAL[step.name]
             const method = step.name.startsWith("splice") ? "splice" : step.name
+            let issuedArgs = args
+            if (step.controls) {
+                issuedArgs = [input(args[0], undefined, step.controls[0]), input(args[1], undefined, step.controls[1]), ...args.slice(2)]
+                for (const timing of step.controls) coverage.add(`splice-controls:${timing}:${step.route}`)
+                coverage.add(`splice-control-pair:${step.controls.join(":")}`)
+                coverage.add(`splice-backing:${split ? "borrowed-prefix" : "native"}:${step.controls.some(timing =>
+                    timing === "native" || timing === "ordered") ? "deferred" : "immediate"}`)
+            }
             const nativeResult = apply(slots)
             const expected = returnsReceiver ? display(values(slots))
                 : Array.isArray(nativeResult) ? display(values(nativeResult))
                     : typeof nativeResult === "number" ? String(nativeResult)
                         : nativeResult === undefined ? "u" : failed(nativeResult) ? "ERR" : display(nativeResult.value)
             const call = step.route === "direct"
-                ? r.run(chain, keys(["a"]), method, args, ctx, { mutationScopeDepth: 1 })
-                : r.enter(chain, keys(["a"]), ctx, true, inside => r.run(inside, [], method, args, ctx, { mutationScopeDepth: 0 }))
+                ? r.run(chain, keys(["a"]), method, issuedArgs, ctx, { mutationScopeDepth: 1 })
+                : r.enter(chain, keys(["a"]), ctx, true, inside => r.run(inside, [], method, issuedArgs, ctx, { mutationScopeDepth: 0 }))
             keep(call, expected, `${step.route} ${method}(${args})`)
         } else if (step.kind === "length") {
             coverage.add("length")
@@ -303,12 +398,14 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
             }
         } else if (step.kind === "conflict") {
             coverage.add(`conflict:${step.predecessor}:${step.first}:${step.nested ? "nested" : "ready"}`)
-            for (const effect of [step.predecessor, step.first]) applyElement(slots, step.index, effect, step.value)
-            keep(r.enter(chain, keys(["a", step.index]), ctx, true, inside => hold(chain).then(() => element(inside, [], step.predecessor, step.value))))
-            keep(element(chain, ["a", step.index], step.first, step.value))
-            keep(step.nested
-                ? r.enter(chain, keys(["a"]), ctx, true, inside => r.enter(inside, keys([step.index]), ctx, true, () => undefined))
-                : r.enter(chain, keys(["a", step.index]), ctx, true, () => undefined))
+            const predecessor = prepareEffect(slots, step.index, step.predecessor, step.value)
+            const first = prepareEffect(slots, step.index, step.first, step.value)
+            keep(r.enter(chain, keys(["a", step.index]), ctx, true, inside => hold(chain).then(() => predecessor(inside, []))))
+            keep(first(chain, ["a", step.index]))
+            const entryPath = keys(step.nested ? ["a"] : ["a", step.index])
+            const childPath = step.nested ? keys([step.index]) : undefined
+            keep(r.enter(chain, entryPath, ctx, true, inside =>
+                childPath && r.enter(inside, childPath, ctx, true, () => undefined)))
         } else if (step.kind === "settle") {
             // Later commands issue after complete draining as well as during settlement.
             coverage.add("settle")
@@ -321,9 +418,13 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
             const expected = Array.from({ length: slots.length }, (_, i) => slots[i]?.poison ? null : display(want[i]))
             const first = cursor.next()
             first.catch(() => {})
-            cursors.push({ cursor, first, expected })
-            for (let index = 0; index < want.length + 2; index++)
+            const blocked = slots.filter(slot => slot.poison).map(slot => slot.diagnostic)
+            const diagnostics = new Set(chainMode === r.CHAIN_MODE.Unordered ? blocked : blocked.slice(0, 1))
+            cursors.push({ cursor, first, expected, diagnostics })
+            for (let index = 0; index < want.length + 2; index++) {
                 keep(r.lookupPath(chain, keys(["a", index]), ctx), index in want ? display(want[index]) : "u", `read a[${index}]`)
+                checks.at(-1).diagnostic = slots[index]?.diagnostic
+            }
             keep(r.lookupPath(chain, keys(["a", "length"]), ctx), String(want.length), "read length")
         }
         coverage.add(`step:${after}`)
@@ -340,14 +441,15 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
     coverage.add(`delivery:${delivery}`)
     await settle()
     const errors = []
-    for (const { cursor, first, expected } of cursors) {
+    for (const { cursor, first, expected, diagnostics } of cursors) {
         const items = new Map()
         let pull = await outcome(first)
         while (pull.result && !pull.result.done) {
             const step = pull.result
             const index = (await outcome(step.metadata.index0)).result
-            if (items.has(index) || !(index >= 0 && index < expected.length)) {
-                errors.push(`iterator repeated or invalid index ${index}`)
+            if (!Number.isInteger(index) || index < 0 || index >= expected.length || items.has(index) ||
+                chainMode !== r.CHAIN_MODE.Unordered && index !== items.size) {
+                errors.push(`iterator delivered unexpected index ${index} on pull ${items.size}`)
                 break
             }
             items.set(index, await describeOutcome(r.lookupPath(step.value, [], ctx), ctx))
@@ -356,15 +458,19 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
         const stop = expected.indexOf(null)
         const visible = chainMode !== r.CHAIN_MODE.Unordered && stop >= 0 ? expected.slice(0, stop) : expected
         const actual = Array.from({ length: visible.length }, (_, i) => items.get(i) ?? null)
-        const ending = pull.result?.done ? "done" : r.isPoisonError(pull.error) ? "skipped" : "blocked"
+        const ending = pull.result?.done === true ? "done" : r.isPoisonError(pull.error) ? "skipped" : "blocked"
+        if (ending === "skipped" && !matchesCollection(pull.error, diagnostics))
+            errors.push("iterator reported incorrect terminal causes")
         if (ending !== (stop >= 0 ? "skipped" : "done") || items.size !== visible.filter(x => x !== null).length ||
             JSON.stringify(actual) !== JSON.stringify(visible))
             errors.push(`iterator got ${JSON.stringify(actual)} with ${ending}, expected ${JSON.stringify(visible)}`)
         coverage.add(`iterator:${ending}`)
     }
-    for (const { got, want, label } of checks) {
+    for (const { got, want, label, diagnostic } of checks) {
         const actual = await describeOutcome(got, ctx)
         if (actual !== want) errors.push(`${label}: got ${actual} want ${want}`)
+        else if (diagnostic && !matchesDiagnostic((await outcome(got)).result, diagnostic))
+            errors.push(`${label}: incorrect failure kind, origin or cause`)
     }
     const finals = []
     for (const [index, { chain, slots }] of owners.entries()) {
@@ -373,11 +479,17 @@ async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, 
         if (final !== expectedFinal) errors.push(`owner ${index} final: got ${final} want ${expectedFinal}`)
         const length = await outcome(r.lookupPath(chain, ["a", "length"], ctx))
         if (length.result !== slots.length) errors.push(`owner ${index} final length: got ${length.result} want ${slots.length}`)
+        const diagnostics = new Set(slots.flatMap(slot => slot.diagnostic ? [slot.diagnostic] : []))
+        const collection = await outcome(r.getErrors(chain, ["a"], ctx))
+        assert(Object.hasOwn(collection, "result"), `owner ${index} final getErrors ${collection.blocked ? "stayed pending" : "rejected"}`)
+        const collected = collection.result
+        if (!matchesCollection(collected, diagnostics))
+            errors.push(`owner ${index} final diagnostics: expected ${diagnostics.size} exact causes`)
         finals.push(final)
     }
     verify()
     assert.equal(ctx.execution.fatalError, null)
-    return { errors, final: finals.join("|") }
+    return { errors, final: JSON.stringify([finals, await checkFailure()]) }
 }
 
 const programs = readIntegerSetting("CASCADA_SEQUENCE_SEEDS", 16, 1, Math.floor(Number.MAX_SAFE_INTEGER / 6)) * 6
@@ -391,12 +503,13 @@ const totals = await runGeneratedCases({
         const coverage = new Set()
         const seed = (0x2c1b3c6d + Math.imul(index, 0x9e3779b9)) >>> 0
         const program = generate(createRandom(seed))
-        const [policy, chainMode] = Object.entries(r.CHAIN_MODE)[index % 3]
-        coverage.add(`policy:${policy}`)
-        const finals = []
         const modes = ["observed", "verified", "bare"]
-        for (const [modeIndex, mode] of modes.entries()) {
-            reportGeneratedStage({ seed, harness: mode, remainingReplays: modes.slice(modeIndex + 1) })
+        const replays = Object.entries(r.CHAIN_MODE).flatMap(([policy, chainMode]) => modes.map(mode => ({ policy, chainMode, mode })))
+        const finals = new Map()
+        for (const [replayIndex, { policy, chainMode, mode }] of replays.entries()) {
+            coverage.add(`policy:${policy}`)
+            reportGeneratedStage({ seed, policy, harness: mode,
+                remainingReplays: replays.slice(replayIndex + 1).map(replay => `${replay.policy}/${replay.mode}`) })
             let result
             try {
                 result = await runProgram(program, seed, mode, coverage, chainMode)
@@ -404,13 +517,14 @@ const totals = await runGeneratedCases({
                 result = { errors: [`threw ${error?.stack ?? error}`] }
             }
             if (result.errors.length) {
-                throw new Error(`program ${index} (seed ${seed}, harness=${mode}) failed:\n  ${result.errors.join("\n  ")}\n` +
+                throw new Error(`program ${index} (seed ${seed}, policy=${policy}, harness=${mode}) failed:\n  ${result.errors.join("\n  ")}\n` +
                     `program: ${JSON.stringify(program, (key, value) => typeof value === "number" && !Number.isFinite(value) ? String(value) : value)}`)
             }
-            finals.push(result.final)
+            if (finals.has(policy) && finals.get(policy) !== result.final)
+                throw new Error(`program ${index} (seed ${seed}): harness modes disagree in ${policy}`)
+            finals.set(policy, result.final)
         }
-        if (new Set(finals).size !== 1) throw new Error(`program ${index} (seed ${seed}): harness modes disagree: ${JSON.stringify(finals)}`)
-        return { runs: finals.length, coverage: [...coverage] }
+        return { runs: replays.length, coverage: [...coverage] }
     },
     onPass(result) {
         runs += result.runs

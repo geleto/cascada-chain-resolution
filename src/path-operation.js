@@ -1,4 +1,5 @@
 import { MetadataCapture, MetadataSelection, empty, nativeMutation } from "./external-metadata.js"
+import { certainPoison } from "./error-evidence.js"
 import { initializeHolder } from "./parent-placements.js"
 import * as errors from "./error.js"
 import * as externalTree from "./external-mutation-tree.js"
@@ -363,6 +364,9 @@ function poisonPath(chain, path, cause, operationContext, firstDynamicSegment = 
                 target.replaceReceiver(failure)
                 return failure
             }
+            // At this exact placement either the old flag wins or this
+            // operation installs one. Only the cause and retained data wait.
+            operation.scopeEvidence = { inspect: certainPoison }
             return transformProperty(target, operationContext, (_value, state) => {
                 const before = state.baseline
                 if (before.ownFailure) return { placement: before, result: versions.placementValue(before), published: false }
@@ -416,7 +420,7 @@ function walkObservationPath(
                     return walkObservationValue(value, operation, onResolved,
                         onUserCodeFailure, reflectionKind, options, versions.placementPresent(ready))
                 } finally { ready = undefined }
-            }, operation, options.onPlacement)
+            }, operation, options.onPlacement, !operation.route.path.length)
         }, operationContext, reflectionKind, onUserCodeFailure)
     } finally { placement = chain = undefined }
 }
@@ -482,14 +486,14 @@ function walkObservationValue(
         }
         if (properties.classifyLanguageProperty(parent, key, operationContext) === properties.ARRAY_LENGTH)
             return ArrayView.resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
-        const placement = properties.readLanguagePlacement(parent, key, operationContext)
+        const placement = properties.readObservedPlacement(parent, key, operationContext)
         if (onPlacement && index === end && index !== externalDepth) return onPlacement(placement)
         return versions.observePlacement(
             placement, operationContext,
             (propertyValue, captured) => {
                 try { return runTraversal(() => walkValue(propertyValue, index, versions.placementPresent(captured))) }
                 finally { propertyValue = captured = undefined }
-            }, owner, onPlacement,
+            }, owner, onPlacement, index === end,
         )
     }
 

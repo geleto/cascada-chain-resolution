@@ -1,7 +1,10 @@
-import { MAX_ARRAY_LENGTH, MAX_COUNT, anyPresent, capacityError, capacityFailure, captureLayout, denseLayout, flagPositions, layoutFromRemap, join,
-    layoutAt, materializeIndividualSlots, projectCapacity, restrict, span, structuralPlacement } from "./array-layout.js"
-import { afterFailedWidth, capacitySequence, captureSequence, concatSequence, denseSequence, fixed, inRange,
-    obstructedSequence, pendingSequence, publishLayout, publishSequence, refine, retainLayout, selectionReceipt, SelectionQuestions, takeSequence, trimmedSequence, watch } from "./array-sequence.js"
+import { MAX_ARRAY_LENGTH, MAX_COUNT, anyPresent, capacityCause, capacityError, captureLayout, denseLayout, inheritSpliceSlots, join,
+    layoutFromRemap, materializeIndividualSlots, projectCapacity, reportCapacityLoss, restrict, span } from "./array-layout.js"
+import { combineOperands, retainOperands, SelectedOperands, selectionReceipt } from "./array-sequence-layout.js"
+import { afterFailedWidth, capacitySequence, captureSequence, concatSequence, denseSequence, displacedRange, fixed, holesWithExtent, inRange,
+    obstructedSequence, pendingSequence, publishLayout, publishSequence, valueSignal,
+    hasUnmarkedRange, selectedExtent, selectedSequence, sequenceExtent, takeSequence, trimmedSequence } from "./array-sequence.js"
+import { projectedCount, sumExtent } from "./array-width.js"
 import { appendView, arrayInput, createRangeOutput, createRemap, createArrayFromRemap, copyPhysicalArray, sliceOutput } from "./array-remap.js"
 import { copyFixedRanges } from "./array-layout-methods.js"
 import { ArrayView } from "./array-view.js"
@@ -9,10 +12,10 @@ import { broadRange, normalizeIndex } from "./array-interval.js"
 import { CHAIN_MODE } from "./chain.js"
 import { combineErrors, isPoisonError } from "./error.js"
 import { collectInputs, continueGraphTransition, decideInputs } from "./internal-step.js"
-import { createLeaseLedger } from "./ownership.js"
 import { isPending } from "./language-values.js"
-import { densePlacement, PendingFailure } from "./property-versions.js"
-import { OperationOwner } from "./operation-lifecycle.js"
+import { isNumericPrimitive, toIntegerOrInfinity } from "./language-conversion.js"
+import { PendingFailure, retainPlacement } from "./property-versions.js"
+import { OperationOwner, releaseOnClose } from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { checkArrayCapacity, numericInput, resolveArrayLength, runArrayStep } from "./array-methods.js"
 
@@ -22,37 +25,77 @@ function replacesPrefixRange(start, count, width, work) {
         count === width && start + count <= length && !broadRange(count, work.receiver, length, ctx)
 }
 
+// Kept length is nondecreasing in source length for a fixed signed start
+// and count. A failed control can only succeed where it removes no slots.
+function cannotFitInsertion(length, start, count, width) {
+    const at = typeof start === "number" ? normalizeIndex(start, length) : 0
+    const cut = isPoisonError(start) || isPoisonError(count) ? 0 :
+        Math.min(length - at, typeof count === "number" ? Math.max(0, count) : length)
+    return width > MAX_ARRAY_LENGTH - (length - cut)
+}
+
 function prepareSpliceArguments(work) {
     let args = work.args
     const ctx = work.operationContext
+    const immediateCount = args.length >= 2 && isNumericPrimitive(args[1])
+        ? toIntegerOrInfinity(args[1], work) : undefined
+    const countKnownZero = !args.length || immediateCount <= 0
     if (!work.receiverCapture && ArrayView.hasPendingLength(work.receiver, ctx)) {
         const controls = new OperationOwner(ctx), maximum = ArrayView.maximumLength(work.receiver, ctx)
-        const argc = args.length, inserted = []
-        const read = i => numericInput(work.takeArgument(i, args), controls)
-        let start = argc ? read(0) : 0
-        if (start === undefined) start = 0
-        const count = !argc || typeof start === "number" && start >= maximum ? 0 : argc === 1 ? Infinity : read(1)
-        for (let i = 2; i < argc; i++) inserted.push(work.prepareArgument(i, args))
-        if (work.mode === CHAIN_MODE.Complete && maximum > MAX_ARRAY_LENGTH && replacesPrefixRange(start, count, inserted.length, work))
-            return checkArrayCapacity(MAX_ARRAY_LENGTH, work, () => ({ start, count, inserted, controls }))
-        return { start, count, inserted, controls }
+        const argc = args.length, width = Math.max(0, argc - 2), inserted = []
+        const read = i => numericInput(work.takeArgument(i, args), controls, 0)
+        const start = !width && countKnownZero ? 0 : read(0)
+        const count = countKnownZero || typeof start === "number" && start >= maximum ? 0 :
+            argc === 1 ? Infinity : immediateCount ?? read(1)
+        const complete = work.mode === CHAIN_MODE.Complete
+        const waitsForBoth = complete && width && isPending(count, ctx) && (isPending(start, ctx) || isPoisonError(start))
+        const nonempty = waitsForBoth ? ArrayView.captureInRange(work.receiver, 0, ctx, controls) : undefined
+        const inputs = [start, count, nonempty]
+        const select = ([at, cut, present]) => {
+            if (present === false) at = cut = 0
+            const command = { start: at, count: cut, inserted, controls }
+            if (complete && maximum > MAX_ARRAY_LENGTH && replacesPrefixRange(at, cut, width, work))
+                return checkArrayCapacity(MAX_ARRAY_LENGTH, work, () => command)
+            if (!complete || !width) return command
+            const minimum = ArrayView.minimumLength(work.receiver, ctx)
+            const failed = minimum > 0 && (isPoisonError(at) ||
+                isPoisonError(cut) && typeof at === "number" && at < minimum)
+            if (failed || cannotFitInsertion(minimum, at, cut, width)) {
+                work.discardArgumentsFrom(2)
+                inserted.length = 0
+                // A known relevant failure has the same causes at every
+                // possible length. Only a conditional control needs live bounds.
+                const shape = failed || typeof at === "number" && typeof cut === "number" ? fixed(span(minimum)) :
+                    captureSequence(work.receiver, ctx, { limit: 0, keepExtent: true })
+                const selected = spliceSides(shape, at, cut, width, false, ctx)
+                const failure = controlFailure(continueGraphTransition(selected, ctx, cutOf), controls, ctx)
+                if (!isPending(failure, ctx)) return failure ?? capacityError(ctx)
+                work.preparationFailed()
+                return new PendingFailure(continueGraphTransition(failure, ctx, error => error ?? capacityError(ctx)), ctx)
+            }
+            // A failed start on a nonempty Array rules out all data while
+            // the count can still add a cause. Empty input ignores both controls.
+            if (waitsForBoth && isPending(cut, ctx) && isPending(at, ctx)) return
+            return command
+        }
+        const selected = select(inputs)
+        if (!isPoisonError(selected) && !(selected instanceof PendingFailure))
+            for (let i = 2; i < argc; i++) inserted.push(work.prepareArgument(i, args))
+        args = undefined
+        return selected ?? decideInputs(inputs, ctx, select, work)
     }
     const prepared = resolveArrayLength(work, length => {
         work.arrayLength = length
-        const argc = args.length, inserted = args.slice(2), width = inserted.length
-        const countInput = args[1]
+        const argc = args.length, width = Math.max(0, argc - 2), inserted = []
         // The producer can outlive an observation returning its partial Array.
         const controls = new OperationOwner(ctx)
         const normalized = (index, normalize) => continueGraphTransition(
-            numericInput(work.prepareArgument(index, args), controls), ctx,
-            value => isPoisonError(value) ? value : normalize(value ?? 0), undefined, controls)
-        for (let index = 2; index < argc; index++) inserted[index - 2] = work.prepareArgument(index, args)
-        const countKnownZero = argc === 0 || argc >= 2 &&
-            (countInput == null || typeof countInput === "number" && !(Math.trunc(countInput) > 0))
-        let start = length === 0 || !inserted.length && countKnownZero ? 0 : normalized(0, value => normalizeIndex(value, length))
-        let count = length === 0 || start === length || countKnownZero ? 0 : argc < 2 ? length :
-            normalized(1, value => Math.max(0, Math.min(length, value)))
-        args = undefined
+            numericInput(work.prepareArgument(index, args), controls, 0), ctx,
+            value => isPoisonError(value) ? value : normalize(value), undefined, controls)
+        const start = length === 0 || !width && countKnownZero ? 0 : normalized(0, value => normalizeIndex(value, length))
+        const clampCount = value => Math.max(0, Math.min(length, value))
+        const count = length === 0 || start === length || countKnownZero ? 0 : argc < 2 ? length :
+            immediateCount === undefined ? normalized(1, clampCount) : clampCount(immediateCount)
         const streaming = work.mode !== CHAIN_MODE.Complete
         const select = ([start, count]) => {
             if (start === length) count = 0
@@ -60,12 +103,12 @@ function prepareSpliceArguments(work) {
             if (!streaming) {
                 const waiting = isPending(start, ctx) || isPending(count, ctx)
                 const failedStart = isPoisonError(start) && (width || typeof count === "number" && count > 0)
-                const maxCut = isPoisonError(count) || isPoisonError(start) ? 0 : Math.min(typeof count === "number" ? count : length,
-                    length - (typeof start === "number" ? start : 0))
-                const cannotFit = !work.receiverCapture && width > MAX_ARRAY_LENGTH - (length - maxCut)
-                if (failedStart || waiting && cannotFit) {
+                const cannotFit = !work.receiverCapture && cannotFitInsertion(length, start, count, width)
+                const failure = waiting ? undefined : spliceControlFailure(start, count, width, length)
+                if (failedStart || cannotFit || failure) {
                     inserted.length = 0
-                    for (let index = 2; index < argc; index++) work.discardArgument(index)
+                    work.discardArgumentsFrom(2)
+                    if (!waiting) return failure ?? capacityError(ctx)
                     work.preparationFailed()
                 }
                 if (waiting && !failedStart && !cannotFit) return
@@ -82,7 +125,14 @@ function prepareSpliceArguments(work) {
             return { start, count, inserted, width, length, controls }
         }
         const inputs = [start, count]
-        return select(inputs) ?? decideInputs(inputs, ctx, select, controls)
+        const selected = select(inputs)
+        if (!isPoisonError(selected) && !(selected instanceof PendingFailure))
+            for (let index = 2; index < argc; index++) inserted[index - 2] = work.prepareArgument(index, args)
+        args = undefined
+        return continueGraphTransition(selected ?? decideInputs(inputs, ctx, select, controls), ctx, result => {
+            if (isPoisonError(result)) controls.close()
+            return result
+        })
     })
     if (args) work.prepareArgumentFrontier(args.length, args)
     return prepared
@@ -94,6 +144,131 @@ function spliceControlFailure(start, count, width, length) {
     return failedStart && failedCount ? combineErrors([failedStart, failedCount]) : failedStart ?? failedCount
 }
 
+const cutOf = choice => choice.cutResult
+const keptAfter = cut => cut.after
+const prefixOf = choice => choice.prefix
+const prefixExtent = (choice, ctx) => sequenceExtent(choice.prefix, ctx)
+const suffixExtent = (choice, ctx) => sequenceExtent(choice.after, ctx)
+const failureOf = cut => cut.failure
+
+function controlFailure(cut, controls, ctx) {
+    const failure = continueGraphTransition(cut, ctx, failureOf)
+    markPromiseHandled(continueGraphTransition(failure, ctx, () => controls.close()), ctx)
+    return failure
+}
+
+const KEEP_ALL_SLOTS = 1
+
+function survivingExtent(source, selected, count, ctx) {
+    if (typeof count === "number" && count <= 0) return { extent: sequenceExtent(source, ctx) }
+    const minimum = typeof count === "number" ? Math.max(0, source.minimum - count) : 0
+    const decision = isPending(count, ctx) ? decideInputs([selected, count], ctx, ([s, c]) =>
+        typeof c === "number" && c <= 0 ? KEEP_ALL_SLOTS : isPending(s, ctx) ? undefined : s) : selected
+    const extent = selectedExtent(decision, choice => choice === KEEP_ALL_SLOTS ? sequenceExtent(source, ctx) :
+        sumExtent(sequenceExtent(choice.prefix, ctx), sequenceExtent(choice.after, ctx), ctx), source, ctx, minimum)
+    return { decision, extent }
+}
+
+// A pending delete count only selects from the suffix. The established
+// prefix belongs to the output, and can retire before the removed result.
+function captureSpliceSource(receiver, start, count, dense, options, ctx) {
+    const sequence = captureSequence(receiver, ctx, options)
+    if (sequence.node?.length && typeof start === "number" && start > 0 && isPending(count, ctx)) {
+        const length = Math.min(start, sequence.node.length)
+        const prefix = restrict(sequence.node, 0, length)
+        const array = materializeIndividualSlots(dense ? denseLayout(prefix, ctx) : prefix, ctx)
+        if (array) return {
+            source: fixed(join(span(length), restrict(sequence.node, length, sequence.node.length))),
+            borrowed: { source: array, range: ArrayView.borrowPrefix(array, length, ctx) },
+        }
+    }
+    return { source: sequence }
+}
+
+function publishRemoved(sequence, work, cause, ctx) {
+    if (work.mode === CHAIN_MODE.Complete && sequence.maximum > MAX_ARRAY_LENGTH)
+        return continueGraphTransition(inRange(sequence, MAX_ARRAY_LENGTH, ctx), ctx, over =>
+            over ? cause() : work.retainOutput(publishSequence(sequence, ctx)))
+    return work.retainOutput(publishSequence(sequence, ctx))
+}
+
+function emptyRemoved(work, cause, ctx) {
+    return () => publishRemoved(fixed(span(0)), work, cause, ctx)
+}
+
+function beforeStart(source, at, ctx) {
+    return at < 0 ? trimmedSequence(source, 0, -at, ctx) : takeSequence(source, at, false, ctx)
+}
+
+function fromStart(source, at, ctx) {
+    return at < 0 ? takeSequence(source, -at, true, ctx) : trimmedSequence(source, at, 0, ctx)
+}
+
+function oldPrefix(source, choice, ctx) {
+    if (!isPoisonError(choice.start)) return beforeStart(source, choice.start, ctx)
+    return selectedSequence(source.operands, sequenceExtent(choice.prefix, ctx), valueSignal(choice.cutResult, ctx), cut =>
+        cut.obstructed ? cut.prefix : afterFailedWidth(source, choice.insertFailure && cut.failure, ctx), ctx, choice.blocksOld)
+}
+
+function oldSuffix(source, choice, ctx) {
+    if (isPoisonError(choice.start)) return fixed(span(0))
+    const rest = fromStart(source, choice.start, ctx)
+    return selectedSequence(rest.operands, sequenceExtent(choice.after, ctx), valueSignal(choice.cutResult, ctx), cut =>
+        isPoisonError(cut.count) ? cut.after : trimmedSequence(rest, cut.count, 0, ctx), ctx)
+}
+
+// Only mutating splice owes removed data. A known start drops the prefix
+// immediately and a zero or failed count drops every remaining candidate.
+function captureRemoved(candidate, start, count, cut, work, cause, ctx) {
+    if (typeof count === "number" && count <= 0) return emptyRemoved(work, cause, ctx)
+    let started = false, width, release = retainOperands(candidate.operands, ctx)
+    function narrow(next) {
+        if (next === candidate) return
+        const previous = release
+        candidate = next
+        release = retainOperands(candidate.operands, ctx)
+        previous?.()
+    }
+    markPromiseHandled(continueGraphTransition(start, ctx, at => {
+        started = true
+        const rest = isPoisonError(at) ? fixed(span(0)) : fromStart(candidate, at, ctx)
+        narrow(width === undefined ? rest : takeSequence(rest, width, false, ctx))
+    }, undefined, work), ctx)
+    markPromiseHandled(continueGraphTransition(count, ctx, value => {
+        width = isPoisonError(value) ? 0 : Math.max(0, value)
+        if (!width || started) narrow(takeSequence(candidate, width, false, ctx))
+    }, undefined, work), ctx)
+    releaseOnClose(work, () => { release?.(); candidate = undefined })
+    return () => continueGraphTransition(cut, ctx, () => publishRemoved(candidate, work, cause, ctx))
+}
+
+function streamingSpliceResult(failure, capacity, removed, ctx) {
+    return () => collectInputs([failure, capacity], ctx, ([error, loss]) =>
+        error && loss ? combineErrors([error, loss]) : error ?? loss ?? removed())
+}
+
+function spliceCapacity(source, selected, cut, count, width, cause, ctx) {
+    const boundary = MAX_ARRAY_LENGTH - width
+    // If the insertion fits, only original slots from [MAX-width+d, MAX)
+    // can move into the virtual tail after deleting d. A count extending
+    // beyond the end leaves no old suffix to displace.
+    const lost = [continueGraphTransition(selected, ctx, s => inRange(s.prefix, boundary, ctx))]
+    if (!isPoisonError(count) && !(typeof count === "number" && count >= width)) {
+        const fringe = displacedRange(source, width, ctx)
+        lost.push(continueGraphTransition(cut, ctx, c => typeof c.count === "number" && c.count < width &&
+            hasUnmarkedRange(trimmedSequence(fringe, c.count, 0, ctx), ctx)))
+    }
+    if (width > MAX_COUNT - source.maximum) {
+        const at = continueGraphTransition(selected, ctx, choice => choice.start)
+        const amount = continueGraphTransition(cut, ctx, choice => choice.count)
+        lost.push(collectInputs([source.length, at, amount], ctx, ([n, start, count]) => {
+            const deleted = typeof count === "number" ? Math.min(count, n - normalizeIndex(start, n)) : 0
+            return width > MAX_COUNT - (n - deleted)
+        }))
+    }
+    return reportCapacityLoss(anyPresent(lost, ctx), cause, ctx)
+}
+
 function spliceArray({ start, count, inserted, width, length, controls }, work, finish) {
     const ctx = work.operationContext, complete = work.mode === CHAIN_MODE.Complete
     for (let i = 0; i < inserted.length; i++) inserted[i] = arrayInput(inserted[i], ctx)
@@ -103,10 +278,9 @@ function spliceArray({ start, count, inserted, width, length, controls }, work, 
         controls.close()
         return replaceRange(start, count)
     }
-    if (length === undefined || work.mode === CHAIN_MODE.Unordered && width &&
-        (isPending(start, ctx) || isPoisonError(start))) return spliceSequence(start, count, inserted, controls, work, finish)
-    if (!complete && (isPending(start, ctx) || isPending(count, ctx) || isPoisonError(start) || isPoisonError(count)))
-        return streamSplice(start, count, inserted, length, controls, work, finish)
+    if (length === undefined || !complete &&
+        (isPending(start, ctx) || isPending(count, ctx) || isPoisonError(start) || isPoisonError(count)))
+        return spliceSequence(start, count, inserted, controls, work, finish)
     return runArrayStep(work, () => {
         const failure = spliceControlFailure(start, count, width, length)
         controls.close()
@@ -118,19 +292,24 @@ function spliceArray({ start, count, inserted, width, length, controls }, work, 
             inserted.length = 0
             return capacityError(ctx)
         }
-        if (!dense && length <= MAX_ARRAY_LENGTH && (prefix || !ArrayView.region(work.receiver, ctx))) {
+        if (!dense && length <= MAX_ARRAY_LENGTH) {
+            const region = ArrayView.region(work.receiver, ctx)
             const slice = (first, end) => sliceOutput(work.receiver, first, end, ctx)
-            if (!width && (!at || at + cut === length) && ArrayView.tryShareStorage(work.receiver, ctx))
+            if (!width && (!at || at + cut === length) && (prefix || !region?.pending) && ArrayView.tryShareStorage(work.receiver, ctx))
                 return finish(at ? slice(0, at) : slice(cut, length), () => work.retainOutput(cut && cut <= kept ?
                     createArrayFromRemap(createRemap(work.receiver, ctx, at, at + cut), ctx) : slice(at, at + cut)))
-            if (width && width === cut && ArrayView.tryShareStorage(work.receiver, ctx)) return replaceRange(at, cut)
-            if (at === length && width <= MAX_ARRAY_LENGTH - length) {
-                const extended = appendView(work.receiver, [inserted], length, width, ctx)
-                if (extended) return finish(extended, () => work.retainOutput(slice(at, at)))
+            if (prefix || !region) {
+                if (width && width === cut && ArrayView.tryShareStorage(work.receiver, ctx)) return replaceRange(at, cut)
+                if (at === length && width <= MAX_ARRAY_LENGTH - length) {
+                    const extended = appendView(work.receiver, [inserted], length, width, ctx)
+                    if (extended) return finish(extended, () => work.retainOutput(slice(at, at)))
+                }
             }
         }
-        const shared = dense && copyFixedRanges(work, length, at, cut, inserted)
-        if (shared) return finish(shared)
+        if (dense || !cut && width && at < length) {
+            const shared = copyFixedRanges(work, length, at, cut, inserted)
+            if (shared) return finish(shared, work.mutation && (() => work.retainOutput(createArrayFromRemap([], ctx))))
+        }
         const copy = copyPhysicalArray(work, length, finish, at, cut, inserted)
         if (copy !== undefined) return copy
         // Mutation also needs the removed result. An observation consumes
@@ -160,219 +339,222 @@ function spliceSequence(start, count, values, controls, work, finish) {
         const earliest = normalizeIndex(start, minimum)
         omitEnd = earliest + Math.min(count, minimum - earliest)
     }
-    const source = captureSequence(work.receiver, ctx, { omitStart, omitEnd })
-    const added = fixed(layoutFromRemap(values)), empty = fixed(span(0)), width = values.length
+    const dense = work.method === "toSpliced"
     const complete = work.mode === CHAIN_MODE.Complete, sequential = work.mode === CHAIN_MODE.Sequential
-    const leases = createLeaseLedger(ctx)
-    leases.acquire(work.receiver)
-    for (const p of values) leases.acquire(p.value)
+    // A failed start with a required cut or insertion succeeds only on empty
+    // input. A failed count succeeds only when the start reaches the end.
+    let limit
+    if (complete && isPoisonError(start) && (values.length || typeof count === "number" && count > 0 || isPoisonError(count))) limit = 0
+    else if (complete && isPoisonError(count) && typeof start === "number") limit = Math.max(0, start)
+    const { source, borrowed } = captureSpliceSource(work.receiver, start, count, dense,
+        { omitStart, omitEnd, limit, keepExtent: limit !== undefined }, ctx)
+    const added = fixed(layoutFromRemap(values))
+    const width = values.length
+    const pendingControls = isPending(start, ctx) || isPending(count, ctx)
+    const coordinates = pendingControls ? holesWithExtent(source, ctx) : source
+    values.length = 0
     values = undefined
-    const select = s => {
-        s ??= 0
-        const failedStart = isPoisonError(s), at = failedStart ? Infinity : s
-        const left = at < 0 ? trimmedSequence(source, 0, -at, ctx) : takeSequence(source, at, false, ctx)
-        const rest = at < 0 ? takeSequence(source, -at, true, ctx) : trimmedSequence(source, at, 0, ctx)
-        const cut = !failedStart && rest.maximum === 0 ? 0 : count
-        const decide = c => {
-            c ??= 0
-            const failedCount = isPoisonError(c)
-            if (failedStart) {
-                const cause = failedCount ? combineErrors([s, c]) : s
-                const failure = width || failedCount || c > 0 ? continueGraphTransition(inRange(source, 0, ctx), ctx,
-                    present => present ? cause : undefined) : undefined
-                const old = failedCount || c > 0 ? obstructedSequence(source, cause, ctx) :
-                    sequential ? afterFailedWidth(source, failure, ctx) : source
-                const insert = sequential ? afterFailedWidth(added, failure, ctx) : added
-                return { prefix: old, insert, after: empty, removed: empty, failure }
-            }
-            if (failedCount) return { after: obstructedSequence(rest, c, ctx), removed: empty,
-                failure: continueGraphTransition(inRange(rest, 0, ctx), ctx, present => present ? c : undefined) }
-            const n = Math.max(0, c)
-            return { after: trimmedSequence(rest, n, 0, ctx), removed: takeSequence(rest, n, false, ctx) }
-        }
-        const cutResult = continueGraphTransition(cut, ctx, decide)
-        const prefix = failedStart ? pendingSequence(cutResult, r => r.prefix, ctx, source.minimum, source.maximum) : left
-        if (failedStart && isPending(cutResult, ctx)) {
-            prefix.length = source.length
-            watch(source, (lo, hi, active) => refine(prefix, lo, hi, active), ctx)
-        }
-        const insert = failedStart && sequential ? pendingSequence(cutResult, r => r.insert, ctx, width, width) : added
-        const after = failedStart ? empty : pendingSequence(cutResult, r => r.after, ctx, 0, rest.maximum)
-        return { output: concatSequence(concatSequence(prefix, insert, ctx), after, ctx), prefix, after, cutResult }
-    }
     // A zero-width, zero-deletion splice still prescribes its length write.
     if (!width && typeof count === "number" && count <= 0) start = 0
+    else if (!width && isPending(start, ctx) && isPending(count, ctx))
+        start = decideInputs([start, count], ctx, ([at, n]) =>
+            typeof n === "number" && n <= 0 ? 0 : isPending(at, ctx) ? undefined : at)
     if (!source.minimum && isPending(start, ctx))
         start = decideInputs([start, inRange(source, 0, ctx)], ctx, ([at, nonempty]) =>
             nonempty === false ? 0 : isPending(at, ctx) ? undefined : at)
-    const selected = continueGraphTransition(start, ctx, select)
-    const insertion = typeof count === "number" && count <= 0, dense = work.method === "toSpliced"
-    const addWidth = n => n + Math.min(width, MAX_COUNT - n)
-    const keep = typeof count === "number" ? Math.max(0, source.minimum - Math.max(0, count)) : 0
-    const order = pendingSequence(selected, s => s.output, ctx, addWidth(keep), addWidth(source.maximum))
+    const selected = spliceSides(coordinates, start, count, width, sequential, ctx)
     const movable = width && !complete && !sequential && isPending(start, ctx) && width <= MAX_COUNT - source.maximum
-    if (movable || insertion && isPending(start, ctx)) {
-        // Inserted slots survive every cut. The old slots depend on the
-        // selected removal, unless a zero count proves all of them survive.
-        const survivors = insertion ? source : pendingSequence(decideInputs([selected, count], ctx, ([s, c]) =>
-            typeof c === "number" && c <= 0 ? source :
-                isPending(s, ctx) ? undefined : concatSequence(s.prefix, s.after, ctx)), seq => seq, ctx, keep, source.maximum)
-        order.length = continueGraphTransition(survivors.length, ctx, addWidth)
-        watch(survivors, (lo, hi, active) => refine(order, addWidth(lo), addWidth(hi), active), ctx)
-        if (movable) order.origins = insertionOrigins(survivors, added.node, selected, ctx)
-    }
+    const order = pendingControls ? spliceOrder(source, added, selected, coordinates, count, movable, ctx) :
+        joinSplice(selected.prefix, added, selected.after, selected.insertFailure, ctx)
+    if (typeof start === "number" && start >= 0 && typeof count === "number" && count >= 0 &&
+        start + count <= source.head.length && order.head.length === source.head.length - count + width)
+        inheritSpliceSlots(order.head, source.head, added.node, ctx)
     const output = dense ? denseSequence(order, ctx) : order
-    const cut = continueGraphTransition(selected, ctx, s => s.cutResult)
-    const failure = continueGraphTransition(cut, ctx, r => r.failure)
-    markPromiseHandled(continueGraphTransition(failure, ctx, () => controls.close()), ctx)
-    let lost
-    const cause = () => lost ??= capacityError(ctx)
-    const make = sequence => publishSequence(sequence, ctx, leases.release)
-    const removed = () => continueGraphTransition(cut, ctx, r =>
-        complete && r.removed.maximum > MAX_ARRAY_LENGTH ? continueGraphTransition(inRange(r.removed, MAX_ARRAY_LENGTH, ctx), ctx, over =>
-            over ? cause() : work.retainOutput(publishSequence(r.removed, ctx))) :
-            work.retainOutput(publishSequence(r.removed, ctx)))
+    const cut = continueGraphTransition(selected, ctx, cutOf)
+    const failure = controlFailure(cut, controls, ctx)
+    const cause = capacityCause(ctx)
+    const removed = work.mutation && captureRemoved(source, start, count, cut, work, cause, ctx)
     if (complete) {
+        // Until whole-Array validation succeeds there is no public destination
+        // for these operands. The removed result has its own restricted use.
+        const release = retainOperands(output.operands, ctx)
+        const releasePrefix = borrowed && retainPlacement({ present: true, value: borrowed.source }, ctx)
+        if (!work.mutation) work.releaseReceiverLeases()
         return decideInputs([failure, inRange(output, MAX_ARRAY_LENGTH, ctx)], ctx, ([error, over]) => {
             if (isPoisonError(error) || over === true) {
-                leases.release()
+                release?.()
+                releasePrefix?.()
                 if (isPending(error, ctx))
-                    return new PendingFailure(continueGraphTransition(error, ctx, reason => reason ?? cause()), ctx).outcome(work.mutation)
+                    return new PendingFailure(continueGraphTransition(error, ctx, reason => reason ?? cause()), ctx).outcome(work)
                 return error ?? cause()
             }
             if (isPending(error, ctx) || isPending(over, ctx)) return
-            return finish(make(output), removed)
+            try { return finish(publishSequence(output, ctx, undefined, borrowed), removed) }
+            finally { release?.(); releasePrefix?.() }
         })
     }
-    const view = make(capacitySequence(output, ctx, cause))
+    const view = publishSequence(capacitySequence(output, ctx, cause), ctx, undefined, borrowed)
     if (!work.mutation) return finish(view)
-    let capacity
-    if (output.maximum > MAX_ARRAY_LENGTH) capacity = continueGraphTransition(output.ready, ctx, node => {
-        const loss = capacityFailure(node, ctx, cause)
-        if (width <= MAX_COUNT - source.maximum) return loss
-        const clipped = collectInputs([source.length, continueGraphTransition(cut, ctx, r => r.removed.length)], ctx,
-            ([n, deleted]) => width > MAX_COUNT - (n - deleted))
-        return continueGraphTransition(anyPresent([clipped, continueGraphTransition(loss, ctx, Boolean)], ctx), ctx,
-            failed => failed ? cause() : undefined)
+    const capacity = width && output.maximum > MAX_ARRAY_LENGTH ?
+        spliceCapacity(source, selected, cut, count, width, cause, ctx) : undefined
+    return finish(view, streamingSpliceResult(failure, capacity, removed, ctx))
+}
+
+// Control settlement selects old occurrences and the possible failure of the
+// insertion. Only a consumer of the output needs the inserted values.
+function spliceSides(source, start, count, width, sequential, ctx) {
+    return continueGraphTransition(start, ctx, s => {
+        s ??= 0
+        if (!isPoisonError(s)) {
+            const left = beforeStart(source, s, ctx), rest = fromStart(source, s, ctx)
+            const cutResult = selectCut(rest, countForSuffix(rest, count, ctx), ctx)
+            return { start: s, prefix: left, after: pendingSequence(cutResult, keptAfter, ctx, 0, rest.maximum), cutResult }
+        }
+        const cutResult = continueGraphTransition(countForSuffix(source, count, ctx), ctx, c => {
+            c ??= 0
+            const failedCount = isPoisonError(c)
+            const cause = failedCount ? combineErrors([s, c]) : s
+            const failure = width || failedCount || c > 0 ? continueGraphTransition(inRange(source, 0, ctx), ctx,
+                present => present ? cause : undefined) : undefined
+            const prefix = failedCount || c > 0 ? obstructedSequence(source, cause, ctx) :
+                sequential ? afterFailedWidth(source, failure, ctx) : source
+            return { prefix, failure, obstructed: failedCount || c > 0 }
+        })
+        const prefix = selectedSequence(source.operands, sequenceExtent(source, ctx), valueSignal(cutResult, ctx), prefixOf, ctx)
+        return { start: s, prefix, after: fixed(span(0)), cutResult, blocksOld: sequential && width > 0,
+            insertFailure: sequential && continueGraphTransition(cutResult, ctx, failureOf) }
     })
-    return finish(view, () => collectInputs([failure, capacity], ctx, ([error, loss]) =>
-        error && loss ? combineErrors([error, loss]) : error ?? loss ?? removed()))
 }
 
-// A cut can be addressed from either end. Keep just the widths for rank
-// futures, independently of the payloads retained by the selected layouts.
-function insertionOrigins(source, added, selected, ctx) {
-    const width = side => {
-        const cut = { minimum: 0, maximum: source.maximum }
-        cut.length = continueGraphTransition(selected, ctx, choice => {
-            const part = choice[side]
-            refine(cut, part.minimum, part.maximum)
-            watch(part, (lo, hi, active) => refine(cut, lo, hi, active), ctx)
-            return part.length
-        })
-        watch(source, (_, hi, active) => refine(cut, cut.minimum, Math.min(cut.maximum, hi), active), ctx)
-        return cut
-    }
-    return { source, added, cut: width("prefix"), backCut: width("after"), context: ctx }
+function joinSplice(prefix, added, after, failure, ctx, blocked = false) {
+    return concatSequence(concatSequence(prefix, afterFailedWidth(added, failure, ctx, blocked), ctx), after, ctx)
 }
 
-function streamSplice(start, count, values, length, controls, work, finish) {
-    const ctx = work.operationContext, dense = work.method === "toSpliced", sequential = work.mode === CHAIN_MODE.Sequential
-    let source = captureSequence(work.receiver, ctx), borrowed
-    // Each side of the cut can outlive the other. Give the established
-    // prefix its own backing. Repeated or virtual ranges stay compact.
-    if (source.node && typeof start === "number" && start > 0 && isPending(count, ctx)) {
-        const prefix = restrict(source.node, 0, start)
-        const array = materializeIndividualSlots(dense ? denseLayout(prefix, ctx) : prefix, ctx)
-        if (array) {
-            borrowed = { source: array, range: ArrayView.borrowPrefix(array, start, ctx) }
-            source = fixed(join(span(start), restrict(source.node, start, length)))
+// Both readers share the cut. An Unordered reader of only old occurrences
+// retains these operands. The positional result transfers its own inputs.
+class SpliceRanges extends SelectedOperands {
+    constructor(source, ctx) {
+        super(source.operands)
+        this.source = source
+        this.ctx = ctx
+    }
+    read = (choice, added) => {
+        if (this.source) {
+            if (choice === KEEP_ALL_SLOTS) return this.source
+            this.prefix = oldPrefix(this.source, choice, this.ctx)
+            this.after = oldSuffix(this.source, choice, this.ctx)
+            this.source = undefined
+            this.pointInputs = undefined
+            this.select(combineOperands(this.prefix.operands, this.after.operands), this.ctx)
         }
+        return added ? joinSplice(this.prefix, added, this.after, choice.insertFailure, this.ctx, choice.blocksOld && this.prefix.minimum > 0) :
+            concatSequence(this.prefix, this.after, this.ctx)
     }
-    const added = layoutFromRemap(values), width = added.length
-    const leases = createLeaseLedger(ctx)
-    const selections = new SelectionQuestions()
-    const releaseSuffix = borrowed ? retainLayout([source.node], ctx) : undefined
-    if (!borrowed) leases.acquire(work.receiver)
-    for (const p of values) leases.acquire(p.value)
-    let seq, completed, signal, result
-    const addWidth = n => n + Math.min(width, MAX_COUNT - n)
-    const bounds = () => {
-        const s = typeof start === "number" ? start : 0, S = typeof start === "number" ? start : length
-        const c = typeof count === "number" ? count : 0, C = typeof count === "number" ? count : length
-        return [addWidth(length - Math.min(C, length - s)), addWidth(length - Math.min(c, length - S))]
+
+    capturePoint = (index, back) => {
+        const source = this.source, inputs = this.pointInputs
+        if (!inputs || index >= source.maximum + inputs.added.length) return
+        const { added, start, count } = inputs
+        const { old, additions } = splicePointInputs(source, added, count.pending ?? count.value, index, back, this.ctx)
+        if (!count.pending && old === source && additions.node === added) return
+        return retainSplicePoint(old, additions, start, count, index, back, this.ctx)
     }
-    function update() {
-        if (completed) return
-        if (start === length) count = 0
-        if (count === 0 && !width) start = 0
-        if (seq) refine(seq, ...bounds())
-        if (isPending(start, ctx) || isPending(count, ctx)) { selections.changed(); return }
-        completed = true
-        controls.close()
-        const failures = [start, count].filter(isPoisonError)
-        const failure = failures.length ? combineErrors(failures) : undefined
-        const at = isPoisonError(start) ? length : start, cut = isPoisonError(count) ? 0 : Math.min(count, length - at)
-        result = continueGraphTransition(source.ready, ctx, node => {
-            let prefix = restrict(node, 0, at), suffix = restrict(node, at + cut, length), insertion = added
-            if (isPoisonError(start)) {
-                if (count !== 0) prefix = span(at, structuralPlacement(failure))
-                else if (sequential) prefix = flagPositions(prefix, start, ctx)
-                if (sequential) insertion = flagPositions(added, start, ctx)
-            } else if (isPoisonError(count)) suffix = span(length - at, structuralPlacement(count))
-            const mapped = join(join(prefix, insertion), suffix)
-            const projected = projectCapacity(dense ? denseLayout(mapped, ctx) : mapped, ctx, width > MAX_COUNT - (length - cut))
-            return { node: projected.node, failure: work.mutation && continueGraphTransition(projected.failure, ctx, loss =>
-                failure && loss ? combineErrors([failure, loss]) : failure ?? loss),
-                removed: work.mutation && !failure && restrict(node, at, at + cut) }
-        })
-        signal?.resolve(result)
-        selections.changed()
+}
+
+// A requested position can have an old prefix value, an insertion, or an
+// old suffix value. Preserve their original coordinates for the common cut.
+function splicePointInputs(source, inserted, count, index, back, ctx) {
+    const size = source.maximum, width = inserted.length
+    const insertFirst = Math.min(width, Math.max(0, index - size)), insertEnd = Math.min(width, index + 1)
+    // Rank from either end keeps the adjacent old candidate. Across the
+    // insertion, a rear rank can move by any clipped deletion count. A
+    // front rank has no surviving suffix if a numeric count gets clipped.
+    const delta = index - width
+    const pending = isPending(count, ctx)
+    const failed = isPoisonError(count), maximumDeleted = pending ? size : failed ? 0 : Math.max(0, count ?? 0)
+    const first = delta < 0 || failed && !back ? size : Math.min(size, delta + (back || pending ? 0 : maximumDeleted))
+    const end = first === size ? size : Math.min(size, delta + maximumDeleted + 1)
+    const point = Math.min(index, size), pointEnd = Math.min(index + 1, size)
+    const ranges = [[point, pointEnd], [first, end]].filter(([lo, hi]) => lo < hi).sort((a, b) => a[0] - b[0])
+    if (ranges.length === 2 && ranges[0][1] >= ranges[1][0])
+        ranges[0][1] = Math.max(ranges[0][1], ranges.pop()[1])
+    const lo = back ? width - insertEnd : insertFirst, hi = back ? width - insertFirst : insertEnd
+    const additions = fixed(!lo && hi === width ? inserted : join(join(span(lo), restrict(inserted, lo, hi)), span(width - hi)))
+    if (!size || ranges[0]?.[0] === 0 && ranges[0][1] === size) return { old: source, additions }
+    // Gaps retain their original, possibly open, width without any placements.
+    const shape = holesWithExtent(source, ctx)
+    const append = (a, b) => back ? concatSequence(b, a, ctx) : concatSequence(a, b, ctx)
+    const skip = (part, n) => trimmedSequence(part, back ? 0 : n, back ? n : 0, ctx)
+    const portion = (part, lo, hi) => skip(takeSequence(part, hi, back, ctx), lo)
+    let old = fixed(span(0)), next = 0
+    for (const [lo, hi] of ranges) {
+        if (lo > next) old = append(old, portion(shape, next, lo))
+        old = append(old, portion(source, lo, hi))
+        next = hi
     }
-    update()
-    if (!completed) {
-        signal = Promise.withResolvers()
-        if (isPending(start, ctx)) markPromiseHandled(continueGraphTransition(start, ctx, s => { start = s; update() }, undefined, controls), ctx)
-        if (isPending(count, ctx)) markPromiseHandled(continueGraphTransition(count, ctx, c => { count = c; update() }, undefined, controls), ctx)
+    old = append(old, skip(shape, next))
+    return { old, additions }
+}
+
+function retainSplicePoint(old, additions, start, count, index, back, ctx) {
+    // This callback can outlive the backing. Its operands are the point's
+    // actual candidate placements and the common shape-only cut decision.
+    let releaseOld = retainOperands(old.operands, ctx)
+    const releaseAdded = retainOperands(additions.operands, ctx)
+    const unwatch = count.pending && (count.watch ??= selectionReceipt(count.pending, ctx))(() => {
+        const narrowed = splicePointInputs(old, additions.node, count.value, index, back, ctx).old
+        const previous = releaseOld
+        old = narrowed
+        releaseOld = retainOperands(old.operands, ctx)
+        previous?.()
+    })
+    const release = () => { unwatch?.(); old = additions = undefined; releaseOld?.(); releaseAdded?.() }
+    const placement = continueGraphTransition(start.pending, ctx, () => {
+        unwatch?.()
+        if (!old) return { present: false, value: undefined }
+        const ranges = new SpliceRanges(old, ctx), inserted = additions
+        old = additions = undefined
+        return ranges.read(start.value, inserted).point(index, back)
+    })
+    return { placement, release }
+}
+
+// The start chooses both sides at once. A count can still narrow the suffix
+// after the prefix and insertion have become available.
+function spliceOrder(source, added, selected, coordinates, count, movable, ctx) {
+    const ranges = new SpliceRanges(source, ctx)
+    if (!isPending(selected, ctx)) return ranges.read(selected, added)
+    const start = valueSignal(selected, ctx)
+    const { decision, extent } = survivingExtent(coordinates, selected, count, ctx)
+    const size = projectedCount(extent, added.node.length, ctx)
+    const order = selectedSequence(combineOperands(source.operands, added.operands), size, start, choice => ranges.read(choice, added), ctx)
+    ranges.pointInputs = { added: added.node, start, count: valueSignal(count, ctx) }
+    order.capturePoint = ranges.capturePoint
+    if (movable) {
+        const survival = decision && (decision === selected ? start : valueSignal(decision, ctx))
+        const old = survival ? selectedSequence(ranges, extent, survival, ranges.read, ctx) : source
+        order.origins = { source: old, added: added.node,
+            cut: selectedExtent(selected, prefixExtent, coordinates, ctx),
+            backCut: selectedExtent(selected, suffixExtent, coordinates, ctx), context: ctx }
     }
-    const completion = result ?? signal.promise, ready = continueGraphTransition(completion, ctx, item => item.node)
-    if (isPending(ready, ctx)) {
-        const [minimum, maximum] = bounds()
-        const knownStart = typeof start === "number"
-        let head = knownStart ? restrict(source.head, 0, Math.min(start, source.head.length)) : span(0)
-        if (knownStart && head.length === start) head = join(head, added)
-        if (dense) head = denseLayout(head, ctx)
-        const hole = { value: undefined, present: false }, point = (index, back) => selections.read(() => {
-            if (!back && typeof start === "number") {
-                if (index < start) return continueGraphTransition(source.point(index, false), ctx,
-                    p => dense ? densePlacement(p, ctx) : p)
-                if (index - start < width) return layoutAt(added, index - start)
-            }
-            if (completed) return continueGraphTransition(ready, ctx, node => index < node.length ?
-                layoutAt(node, back ? node.length - 1 - index : index) ?? hole : hole)
-        })
-        seq = { minimum, maximum, length: minimum === maximum ? minimum : continueGraphTransition(ready, ctx, node => node.length),
-            head, tail: span(0), ready, point }
-        if (source.node) {
-            // Before start is known no numeric slot is selected. Once it is
-            // known, the old prefix and the insertion are one fixed run.
-            const chosenStart = isPending(start, ctx) && start
-            const receipt = selectionReceipt(ready, ctx)
-            seq.awaitSelection = chosenStart ? selectionReceipt(chosenStart, ctx) : receipt
-            if (chosenStart) markPromiseHandled(continueGraphTransition(chosenStart, ctx, at => {
-                if (typeof at === "number") {
-                    head = join(restrict(source.node, 0, at), added)
-                    seq.head = dense ? denseLayout(head, ctx) : head
-                }
-                seq.awaitSelection = receipt
-            }), ctx)
-            markPromiseHandled(continueGraphTransition(ready, ctx, node => { seq.current = fixed(node) }), ctx)
-        }
-    } else seq = fixed(ready)
-    const output = publishSequence(seq, ctx, () => { releaseSuffix?.(); leases.release() }, borrowed)
-    return finish(output, () => continueGraphTransition(completion, ctx, item =>
-        continueGraphTransition(item.failure, ctx, failure =>
-            failure ?? work.retainOutput(publishLayout(projectCapacity(item.removed, ctx).node, ctx)))))
+    return order
+}
+
+// A count is unused at the end, including an end proved after issuance.
+function countForSuffix(rest, count, ctx) {
+    if (!rest.maximum) return 0
+    if (rest.minimum || !isPending(count, ctx)) return count
+    return decideInputs([count, inRange(rest, 0, ctx)], ctx, ([n, present]) =>
+        present === false ? 0 : isPending(n, ctx) ? undefined : n)
+}
+
+function selectCut(rest, count, ctx) {
+    return continueGraphTransition(count, ctx, value => {
+        if (isPoisonError(value)) return { count: value, after: obstructedSequence(rest, value, ctx),
+            failure: continueGraphTransition(inRange(rest, 0, ctx), ctx, present => present ? value : undefined) }
+        const n = Math.max(0, value ?? 0)
+        return { count: n, after: trimmedSequence(rest, n, 0, ctx) }
+    })
 }
 
 export { prepareSpliceArguments, spliceArray }

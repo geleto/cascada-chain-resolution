@@ -302,30 +302,30 @@ if (process.env.CASCADA_CONFLICT_MATRIX !== undefined && process.env.CASCADA_CON
     throw new Error("CASCADA_CONFLICT_MATRIX must be full when set")
 const full = process.env.CASCADA_CONFLICT_MATRIX === "full"
 const [partIndex, partCount] = readShard(process.env.CASCADA_CONFLICT_PART ?? "0/1", "CASCADA_CONFLICT_PART")
+const policies = Object.entries(r.CHAIN_MODE)
 const coverage = { mode: full ? "full" : "sampled", cases: 0, runs: 0, paired: 0, triples: new Set(), absentTriples: new Set(), dimensions: new Set() }
 const failures = []
 let position = 0
 for (const testCase of full ? completeCases() : sampledCases()) {
     if (position++ % partCount !== partIndex) continue
-    const [policy, chainMode] = Object.entries(r.CHAIN_MODE)[(position - 1) % 3]
-    coverage.dimensions.add(`policy:${policy}`)
     const modes = testCase.paired ? ["observed", "verified", "bare"] : [testCase.observed ? "observed" : "verified"]
-    const finals = []
-    for (const mode of modes) {
-        const { errors, final } = await runCase({ ...testCase, mode, chainMode, stepwise: full || testCase.stepwise })
-        coverage.runs++
-        coverage.dimensions.add(`harness:${mode}`)
-        coverage.dimensions.add(`observed:${mode === "observed"}`)
-        finals.push(final)
-        const label = `${testCase.array ? "array" : "record"} target=${testCase.target} predecessor=${testCase.predecessor.name} ` +
-            `first=${testCase.first.name} second=${testCase.second.name} sibling@${testCase.sibling} ${testCase.release} harness=${mode}`
-        if (errors.length) failures.push(`${label}\n    ${errors.join("\n    ")}`)
+    for (const [policy, chainMode] of policies) {
+        coverage.dimensions.add(`policy:${policy}`)
+        const finals = new Set()
+        for (const mode of modes) {
+            const { errors, final } = await runCase({ ...testCase, mode, chainMode, stepwise: full || testCase.stepwise })
+            coverage.runs++
+            coverage.dimensions.add(`harness:${mode}`)
+            coverage.dimensions.add(`observed:${mode === "observed"}`)
+            if (final !== undefined) finals.add(final)
+            const label = `${testCase.array ? "array" : "record"} target=${testCase.target} predecessor=${testCase.predecessor.name} ` +
+                `first=${testCase.first.name} second=${testCase.second.name} sibling@${testCase.sibling} ${testCase.release} policy=${policy} harness=${mode}`
+            if (errors.length) failures.push(`${label}\n    ${errors.join("\n    ")}`)
+        }
+        if (finals.size > 1)
+            failures.push(`harness modes disagree in ${policy} for ${testCase.predecessor.name}/${testCase.first.name}/${testCase.second.name}: ${JSON.stringify([...finals])}`)
     }
-    if (modes.length > 1) {
-        coverage.paired++
-        if (new Set(finals.filter(value => value !== undefined)).size > 1)
-            failures.push(`harness modes disagree for ${testCase.predecessor.name}/${testCase.first.name}/${testCase.second.name}: ${JSON.stringify(finals)}`)
-    }
+    if (modes.length > 1) coverage.paired++
     coverage.cases++
     const triple = `${testCase.predecessor.name}/${testCase.first.name}/${testCase.second.name}`
     coverage.triples.add(triple)

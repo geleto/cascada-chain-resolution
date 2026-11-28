@@ -742,21 +742,22 @@ describe("entry structural publication", () => {
         const ctx = context(), hold = Promise.withResolvers(), data = Promise.withResolvers()
         const chain = new r.Chain([{ n: 1 }], ctx), suffix = [{ n: 2 }]
         const argument = new r.Chain(suffix, ctx)
-        let inside, output
+        let inside
         const entry = r.enter(chain, [3], ctx, true, entered => { inside = entered; return hold.promise })
-        const completed = Promise.resolve(r.run(chain, [], "concat", [suffix], ctx, {}))
-            .then(value => { output = new r.Chain(value, ctx) })
+        // Receive a ready view in the next graph transition. A Promise callback
+        // scheduled after the two writes would miss that handoff.
+        const output = new r.Chain(r.run(chain, [], "concat", [suffix], ctx, {}), ctx)
         try {
             r.assignPath(chain, [0, "n"], 9, ctx)
             r.assignPath(argument, [0, "n"], 8, ctx)
             r.assignPath(inside, [], data.promise, ctx)
             await tick()
-            assert(output, "Known length must expose the result before entry and element data finish")
+            assert(!r.isPending(r.lookupPath(output, [], ctx), ctx), "Known length must expose the result before entry and element data finish")
             assert.equal(r.lookupPath(output, ["length"], ctx), 5)
             assert.equal(r.lookupPath(output, [0, "n"], ctx), 1)
             assert.equal(r.lookupPath(output, [4, "n"], ctx), 2)
         } finally { hold.resolve(); data.resolve(7) }
-        await Promise.all([entry, completed])
+        await entry
         assert.deepEqual(await r.export(output, [], ctx), [{ n: 1 }, , , 7, { n: 2 }])
         verifyRefCounts(ctx, chain._state, argument._state, output._state)
     })

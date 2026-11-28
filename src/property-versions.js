@@ -1,4 +1,5 @@
 import { releaseOnClose } from "./operation-lifecycle.js"
+import { certainPoison, followErrorEvidence, supplyErrorEvidence } from "./error-evidence.js"
 import { createLeaseLedger, releaseDetached, retainWriter, releasePin } from "./ownership.js"
 import { ArrayView, isArrayView } from "./array-view.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
@@ -10,7 +11,7 @@ import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
 import { beginPlacementStructure, preparePlacementStructure, defineCopyProperty } from "./placement-structure.js"
 import { receiveValue } from "./input-preparations.js"
-import { CONSTRUCTION_STATE, recordLogicalPlacement, destinationOf } from "./parent-placements.js"
+import { CONSTRUCTION_STATE, recordLogicalPlacement, destinationOf, activateRelationships, linkRetentionParent, unlinkRetentionParent } from "./parent-placements.js"
 
 // Only a failed structural selection creates this role. The same Error used
 // as an explicit value is an ordinary payload, even at another Array index.
@@ -74,7 +75,10 @@ class PendingFailure {
         trackVersionPublication(version, publication, ctx)
     }
     get value() { return this.version.value }
-    outcome(mutation) { return mutation ? { failure: this, result: this.value } : this.value }
+    outcome(work) {
+        supplyErrorEvidence(work.resultEvidence, certainPoison)
+        return work.mutation ? { failure: this, result: this.value } : this.value
+    }
 }
 
 // Status belongs to this placement, independently of its retained data. Only
@@ -197,12 +201,25 @@ function projectPlacement(placement, ctx, project) {
     return placementFromSelection(resolvePlacementTransition(placement, ctx, project), ctx, placement)
 }
 
-function placementFromSelection(selected, ctx, input) {
-    if (!languageValues.isPending(selected, ctx)) return selected
+function placementFromSelection(selected, ctx, input, releaseSelection) {
+    if (!languageValues.isPending(selected, ctx)) {
+        releaseSelection?.()
+        return selected
+    }
     const release = input && retainPlacement(input, ctx)
     const transition = { selection: true, promise: selected }
     const version = { present: true, transition }
-    version.value = internalSteps.continueGraphTransition(selected, ctx, p => {
+    version.value = internalSteps.continueGraphTransition(selected, ctx, next => {
+        // The chosen point can itself be awaiting its flag, presence or role.
+        // Expose that transition to structural readers and publish the final
+        // selection's status alongside its captured data.
+        transition.placement = next
+        return resolvePlacementTransition(next, ctx, publish)
+    })
+    trackVersionPublication(version, version.value, ctx)
+    return capturePlacementFromVersion(version)
+
+    function publish(p) {
         const { present, ownFailure, role } = p
         try {
             commitPlacementVersion(undefined, undefined, version, createVersionFromPlacement(p), ctx, false)
@@ -216,10 +233,12 @@ function placementFromSelection(selected, ctx, input) {
             })
             trackVersionPublication(version, publication, ctx)
             return ownFailure ? placementValue(p) : publication
-        } finally { release?.() }
-    })
-    trackVersionPublication(version, version.value, ctx)
-    return capturePlacementFromVersion(version)
+        } finally { release?.(); releaseSelection?.() }
+    }
+}
+
+function captureObservedPoint(point, ctx) {
+    return placementFromSelection(point.placement, ctx, undefined, point.release)
 }
 
 function densePlacement(placement, ctx) {
@@ -259,7 +278,21 @@ function observePlacementCapture(placement, accept) {
     }
 }
 
-function retainPlacement(placement, operationContext) {
+function retainPlacement(placement, operationContext, retentionParent) {
+    if (retentionParent) {
+        let values
+        const unsubscribe = observePlacementCapture(placement, value => {
+            if (!metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type) || values?.has(value)) return
+            ;(values ??= new Set()).add(value)
+            linkRetentionParent(value, retentionParent, operationContext)
+            activateRelationships(value, operationContext)
+        })
+        return () => {
+            unsubscribe()
+            for (const value of values ?? []) unlinkRetentionParent(value, retentionParent, operationContext)
+            values = undefined
+        }
+    }
     const leases = createLeaseLedger(operationContext)
     const unsubscribe = observePlacementCapture(placement, leases.acquire)
     return () => { unsubscribe(); leases.release() }
@@ -634,10 +667,23 @@ function continueCapturedPromiseVersion(promise, promiseVersion, operationContex
     return result
 }
 
-function observePlacement(placement, operationContext, onValue, operation, onBlocked) {
+function observePlacementEvidence(placement, operation, terminal, blocked = blockedPlacement(placement)) {
+    if (blocked) return operation.receiveEvidence(certainPoison, terminal)
+    const evidence = placement.transition ? placement.transition.errorEvidence :
+        operation.operationContext.execution._pendingErrorEvidence?.get(placement.value)
+    if (evidence) followErrorEvidence(evidence, operation, (inspect, queue) => {
+        if (operation.open) operation.receiveEvidence(inspect, terminal, queue)
+    })
+}
+
+function observePlacement(placement, operationContext, onValue, operation, onBlocked, terminal = true) {
     if (operation && !operation.open) return undefined
     const blocked = blockedPlacement(placement)
     if (blocked && operation?.found?.()) return true
+    if (operation?.receiveEvidence) {
+        observePlacementEvidence(placement, operation, terminal, blocked)
+        if (!operation.open) return operation.result
+    }
     if (blocked && onBlocked) {
         if (placement.transition) {
             const cause = resolvePlacementTransition(placement, operationContext, structuralFailure)
@@ -651,8 +697,8 @@ function observePlacement(placement, operationContext, onValue, operation, onBlo
     if (placement.transition) {
         operation?.beforeWait?.()
         return consumePlacementTransition(placement, operationContext, selected =>
-            observePlacement(selected, operationContext, onValue, operation, onBlocked), operation,
-            !blocked && (onBlocked || operation?.found) ? blockedPlacement : undefined)
+            observePlacement(selected, operationContext, onValue, operation, onBlocked, terminal), operation,
+            !blocked && (onBlocked || operation?.found || operation?.receiveEvidence) ? blockedPlacement : undefined)
     }
     placement = visiblePlacement(placement)
     let promise = placementValue(placement), promiseVersion = placement.sourceVersion
@@ -951,6 +997,7 @@ export {
     retainCopiedDelivery,
     releaseCopiedDelivery,
     observePlacementCapture,
+    observePlacementEvidence,
     installPlacementGate,
     completePlacementGate,
     publishPlacementFailure,
@@ -960,6 +1007,7 @@ export {
     createVersionFromPlacement,
     resolvePlacement,
     consumePlacementTransition,
+    captureObservedPoint,
     resolvePlacementTransition,
     retainPlacement,
     copyPlacement,

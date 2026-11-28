@@ -116,6 +116,23 @@ describe("ownership isolation across pending work", () => {
         })
     }
 
+    it("protects the only remaining owner when a displaced writer receives its child", async () => {
+        for (const ordered of [false, true]) {
+            const ctx = context(), input = ordered ? new OrderedThenable() : Promise.withResolvers()
+            const owner = new r.Chain({ k: "import" }, ctx)
+            r.assignPath(owner, ["k"], "retained", ctx)
+            const child = r.lookupPath(owner, [], ctx)
+            const array = new r.Chain([ordered ? input : input.promise], ctx)
+            const writer = r.assignPath(array, [0, "k"], "writer", ctx)
+            r.deletePath(array, [0], ctx)
+            await turn()
+            input.resolve(child)
+            await writer
+            assert.deepEqual(await r.export(owner, [], ctx), { k: "retained" })
+            assert.deepEqual(await r.export(array, [], ctx), new Array(1))
+        }
+    })
+
     for (const ticks of [false, true]) it(`preserves a read-only entry across displaced writers, ticks=${ticks}`, async () => {
         const ctx = context(), before = Promise.withResolvers(), read = Promise.withResolvers()
         const source = new r.Chain([{ k: "orig" }], ctx)

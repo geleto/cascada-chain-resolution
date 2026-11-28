@@ -113,6 +113,8 @@ function transformProperty(target, operationContext, transform, { replace = fals
     const failure = errorUtils.catchExternalThrow(() => {
         const captured = propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
         gate = propertyVersions.installPlacementGate(parent, key, operationContext, captured, target.sourceVersion)
+        const evidence = target.operation.scopeEvidence
+        if (evidence) gate.version.transition.errorEvidence = evidence
         target.publication.suspend()
     }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
     if (errorUtils.isPoisonError(failure)) {

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import * as r from '../../src/index.js'
 import { ready, OrderedThenable } from '../ordered-thenable.js'
+import { readLanguagePlacement } from '../../src/language-properties.js'
+import { resolvePresentPlacement } from '../../src/property-versions.js'
 
 assert(globalThis.gc)
 const rows = []
@@ -151,7 +153,21 @@ for (const method of ['join', 'flat', 'sort', 'toSorted']) {
 async function collect() {
     for (let turn = 0; turn < 30; turn++) { await new Promise(setImmediate); globalThis.gc() }
 }
+async function failAfterPresence() {
+    const ctx = { execution: new r.Execution(), errorContext: 'selected placement' }
+    const input = Promise.withResolvers(), source = new r.Chain([input.promise], ctx), child = { n: 1 }
+    const placement = readLanguagePlacement(r.lookupPath(source, [], ctx), 0, ctx)
+    const report = resolvePresentPlacement(placement, ctx, () =>
+        r.createPoisonError(new Error('selected child failed inspection'), ctx, r.ERROR_KIND.InvocationFailed))
+    input.resolve(child)
+    const poison = await report
+    r.assignPath(source, [], null, ctx)
+    return { poison, ref: new WeakRef(child) }
+}
+const selectedFailure = await failAfterPresence()
 await collect()
+assert.equal(selectedFailure.poison.cause.message, 'selected child failed inspection')
+assert.equal(selectedFailure.ref.deref(), undefined, 'The unformatted diagnostic retained the delivered placement')
 for (const row of rows) for (let index = 0; index < row.weak.length; index++)
     assert.equal(row.weak[index].deref() !== undefined, row.live, `${row.label}: retained source or payload ${index}`)
 for (const row of rows.filter(row => row.live)) {

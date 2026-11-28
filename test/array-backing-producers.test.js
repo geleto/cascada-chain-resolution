@@ -19,6 +19,17 @@ function producer(chain, ctx) {
 }
 
 describe('shared Array backing producers', () => {
+    it('uses the authorized physical coordinate of a backing producer before growth', () => {
+        const ctx = context(), source = new r.Chain([1, 2, 3, 4, 5], ctx)
+        const count = Promise.withResolvers()
+        r.run(source, [], 'splice', [0, count.promise], ctx, { mutationScopeDepth: 0 })
+        const target = ArrayView.region(r.lookupPath(source, [], ctx), ctx).producers
+        const destination = ArrayView.mutationTarget(target, '4', ctx, true)
+        assert.equal(destination.parent, target.backing.array)
+        assert.equal(destination.key, '4')
+        assert(target.backing.array.length < 5)
+        count.resolve(0)
+    })
     it('keeps the selected flag on every copy of a repeated pending payload', async () => {
         for (const delayed of [false, true]) {
             const ctx = context(), hold = Promise.withResolvers(), data = Promise.withResolvers()

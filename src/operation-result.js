@@ -4,12 +4,13 @@ import * as languageValues from "./language-values.js"
 import { createPoisonedValue } from "./poisoned-value.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { continueGraphTransition } from "./internal-step.js"
+import { publishResultEvidence, resultEvidence } from "./error-evidence.js"
 
 // Core work owns its captures after issuance. Retained unformatted Error frames
 // must not keep obsolete inputs through the receiving callback's closure.
-function runOperation(operationContext, work, args, finish = returnOperationResult) {
+function runOperation(operationContext, work, args, finish = returnOperationResult, evidence) {
     try {
-        return runReceivingCommand(operationContext, () => finish(operationContext, work(...args)))
+        return runReceivingCommand(operationContext, () => finish(operationContext, work(...args), evidence))
     } finally { args = work = undefined }
 }
 
@@ -46,7 +47,11 @@ function returnOperationResult(operationContext, result, delivery) {
         resolve(value)
     })
     if (delivery) {
-        const release = () => queueMicrotask(() => releaseDetached(operationContext, delivery.release))
+        const clear = delivery.carriesEvidence && publishResultEvidence(outward, resultEvidence(delivery), operationContext)
+        const release = () => {
+            if (clear) clear()
+            queueMicrotask(() => releaseDetached(operationContext, delivery.release))
+        }
         // Observe this exact Promise before exposing it. Direct receivers run
         // before the queued release; never return the observer's derived Promise.
         outward.then(release, release)
@@ -54,11 +59,16 @@ function returnOperationResult(operationContext, result, delivery) {
     return outward
 }
 
-function returnExpressionResult(operationContext, result) {
+function returnExpressionResult(operationContext, result, evidence) {
     if (isFatalError(result)) failExecution(operationContext, result)
     if (isPoisonError(result)) return createPoisonedValue(result)
     if (!languageValues.isPending(result, operationContext)) return result
-    return returnPendingResult(operationContext, result, settleRejecting)
+    const outward = returnPendingResult(operationContext, result, settleRejecting)
+    if (evidence) {
+        const clear = publishResultEvidence(outward, resultEvidence(evidence), operationContext)
+        outward.then(clear, clear)
+    }
+    return outward
 }
 
 function settleRejecting(value, resolve, reject) {

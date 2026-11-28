@@ -3,7 +3,7 @@ import { captureLayout, layoutAt, layoutCause, MAX_ARRAY_LENGTH, restrict, searc
 import { captureIdentity, compareIdentities } from "./captured-identity.js"
 import { combineErrors, isPoisonError } from "./error.js"
 import { continueGraphTransition, decideInputs } from "./internal-step.js"
-import { toIntegerOrInfinity } from "./language-conversion.js"
+import { isNumericPrimitive, toIntegerOrInfinity } from "./language-conversion.js"
 import { enumerableLanguageKeyCandidates, readLanguagePlacement } from "./language-properties.js"
 import { isPending } from "./language-values.js"
 import { consumePlacementTransition, placementValue, resolveVisiblePlacement, structuralFailure } from "./property-versions.js"
@@ -19,7 +19,10 @@ function prepareSearch(work) {
     let args = work.args, needle, bound
     let hasNeedle = false, hasBound = false
     const inputs = {
-        simpleBound: args.length < 2 || args[1] == null || typeof args[1] === "number",
+        simpleBound: isNumericPrimitive(args[1]),
+        // A ready comparison can exclude its position without consuming an
+        // expensive bound. If the needle also needs preparation, try range first.
+        prepareRangeFirst: args[0] !== null && (typeof args[0] === "object" || typeof args[0] === "function"),
         unrestricted: args.length < 2 || args[1] == null || args[1] === 0 || args[1] === -Infinity,
         needle() {
             if (hasNeedle) return needle
@@ -50,7 +53,6 @@ function prepareSearch(work) {
                 value => { bound = value }, undefined, work), ctx)
             return bound
         },
-        capture() { inputs.needle(); inputs.bound() },
     }
     work.discardPreparedOutput = () => { args = needle = bound = undefined }
     if (work.receiverCapture) work.prepareArgumentFrontier(2, args)
@@ -115,14 +117,28 @@ function search(inputs, work) {
     // When the prefix ends, resume at the first position in the suffix.
     const physicalEnd = !region ? length : ArrayView.hasSparsePrefix(source, prefix, ctx) ? prefix : 0
     let index = 0, end, keys, runs, resumeIndex, searched, keyIndex = 0, remaining = 1, errors, result, deferred, unavailable
+    let inspectionFailure
     const transition = (value, next) => continueGraphTransition(value, ctx, next, undefined, work)
-    const bound = inputs.simpleBound || backwards && length === undefined ? inputs.bound() : undefined
-    if (backwards) index = Math.min(ArrayView.maximumLength(source, ctx) - 1, typeof bound === "number" ? bound : Infinity)
+    const maximum = length ?? ArrayView.maximumLength(source, ctx)
+    if (!maximum) return miss
+    let bound
+    if (inputs.simpleBound || backwards && length === undefined ||
+        inputs.prepareRangeFirst && (any || region || ArrayView.storedIndexes(source, ctx) ||
+            ArrayView.hasStoredVersions(source, ctx))) bound = inputs.bound()
+    const excludesAll = start => typeof start === "number" && (backwards ? start < 0 : start >= maximum)
+    if (excludesAll(bound)) { releaseSource(); return miss }
+    if (backwards) index = Math.min(maximum - 1, typeof bound === "number" ? bound : Infinity)
     else if (typeof bound === "number") index = bound
     scan()
     if (result !== undefined) return result
-    inputs.capture()
+    bound = inputs.bound()
+    if (excludesAll(bound)) { releaseSource(); return miss }
     deferred = Promise.withResolvers()
+    if (isPending(bound, ctx)) markPromiseHandled(transition(bound, start => {
+        bound = start
+        if (excludesAll(start)) finish(miss)
+    }), ctx)
+    inputs.needle()
     return deferred.promise
 
     function compare(placement) {
@@ -140,7 +156,8 @@ function search(inputs, work) {
     }
 
     function eligible(low, high, position, within) {
-        return transition(inputs.bound(), start => {
+        bound = inputs.bound()
+        return transition(bound, start => {
             if (isPoisonError(start)) return start
             if (backwards ? high <= start : low >= start) return true
             if (backwards ? low > start : high < start) return false
@@ -150,10 +167,7 @@ function search(inputs, work) {
     }
 
     function candidate(low, high, position, read, within) {
-        if (inputs.simpleBound) {
-            const start = inputs.bound()
-            if (typeof start === "number" && (backwards ? low > start : high < start)) return false
-        }
+        if (typeof bound === "number" && (backwards ? low > bound : high < bound)) return false
         const placement = read()
         const evaluate = () => {
             const matches = transition(placement, compare)
@@ -217,7 +231,7 @@ function search(inputs, work) {
         for (const key of candidates) {
             const at = Number(key)
             if (first < at) yield { first, node: span(at - first) }
-            yield { first: at, node: span(1, readLanguagePlacement(source, key, ctx)) }
+            yield { first: at, point: true }
             first = at + 1
         }
         if (first < stop) yield { first, node: span(stop - first) }
@@ -230,6 +244,13 @@ function search(inputs, work) {
     }
 
     function scan() {
+        let inspecting
+        const readPoint = at => {
+            inspecting = at
+            const placement = readLanguagePlacement(source, at, ctx)
+            inspecting = undefined
+            return placement
+        }
         const failed = runArrayStep(work, () => {
             for (;;) {
                 let current, comparison, location
@@ -307,7 +328,7 @@ function search(inputs, work) {
                         runs = keys = resumeIndex = undefined
                         continue
                     }
-                    if (run) {
+                    if (run && !run.point) {
                         const { node, first } = run, last = first + node.length - 1
                         current = backwards ? first : last
                         index = backwards ? first - 1 : last + 1
@@ -316,15 +337,18 @@ function search(inputs, work) {
                                 () => node.placement ?? { present: false, value: undefined })
                         if (!any) location = () => transition(inputs.bound(), from =>
                             backwards ? Math.min(last, from) : Math.max(first, from))
+                    } else if (run) {
+                        current = run.first
+                        index = current + 1
                     } else if (keys) current = keys[keyIndex++]
                     else {
                         if (backwards ? index < 0 : index >= (end ?? ArrayView.minimumLength(source, ctx))) break
                         current = index
                         index += backwards ? -1 : 1
                     }
-                    if (!run) {
-                        comparison = candidate(current, current, () => current, () => readLanguagePlacement(source, current, ctx))
-                        if (any && index < physicalEnd) {
+                    if (!run || run.point) {
+                        comparison = candidate(current, current, () => current, () => readPoint(current))
+                        if (any && !run && index < physicalEnd) {
                             runs = sparseRuns(index, physicalEnd)
                             resumeIndex = end !== physicalEnd ? physicalEnd : undefined
                         }
@@ -347,7 +371,25 @@ function search(inputs, work) {
             if (checkUnavailable()) return finish(true)
             exhausted()
         })
-        if (isPoisonError(failed)) finish(failed)
+        if (isPoisonError(failed)) {
+            // Inspection of a possible candidate can fail before its range is
+            // known. Preserve that failure only if the search reaches it.
+            const required = inspecting === undefined ? transition(inputs.bound(), from => !excludesAll(from)) :
+                eligible(inspecting, inspecting, () => inspecting)
+            markPromiseHandled(transition(required, needed => {
+                if (!needed) {
+                    if (inspecting === undefined || excludesAll(inputs.bound())) finish(miss)
+                    else scan()
+                    return
+                }
+                inspectionFailure = isPoisonError(needed) ? combineErrors([needed, failed]) : failed
+                if (!any) return finish(inspectionFailure)
+                // An earlier match would have stopped the all-ready scan
+                // before this failed inspection. Only those comparisons remain.
+                if (checkUnavailable()) finish(true)
+                else exhausted()
+            }), ctx)
+        }
     }
 
     function checkUnavailable() {
@@ -370,7 +412,7 @@ function search(inputs, work) {
         if (result !== undefined) return
         if (equal === true) return finish(true)
         if (isPoisonError(equal)) (errors ??= new Set()).add(equal)
-        if (!--remaining) finish(errors ? combineErrors(errors) : false)
+        if (!--remaining) finish(inspectionFailure ?? (errors ? combineErrors(errors) : false))
     }
     function finish(value) {
         releaseSource()

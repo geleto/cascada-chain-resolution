@@ -65,11 +65,85 @@ function sortCapture(method, live) {
     return { ctx, weak, comparator, holder, output }
 }
 const sorts = ["sort", "toSorted"].flatMap(method => [false, true].map(live => sortCapture(method, live)))
+function withCapture(mode, live) {
+    const ctx = { execution: new r.Execution(), errorContext: "with index retention" }
+    const source = new r.Chain(["A"], ctx, mode), hold = Promise.withResolvers()
+    let inside
+    const entry = r.enter(source, [], ctx, { maximumCount: 1, mayPoisonScope: false }, reference => {
+        inside = reference
+        return hold.promise
+    })
+    const index = [1], ignored = { unused: true }
+    const result = r.run(source, [], "with", [index, "X", ignored], ctx, {})
+    assert(r.isPending(result, ctx))
+    const output = new r.Chain(result, ctx, mode)
+    const holders = live && [new r.Chain(index, ctx), new r.Chain(ignored, ctx)]
+    return { ctx, output, holders, index: new WeakRef(index), ignored: new WeakRef(ignored), async finish() {
+        r.run(inside, [], "push", ["B"], ctx, { mutationScopeDepth: 0 })
+        hold.resolve()
+        await entry
+    } }
+}
+const replacements = Object.values(r.CHAIN_MODE).flatMap(mode => [false, true].map(live => withCapture(mode, live)))
+function failedInsertion(method, mutation, keep) {
+    const ctx = { execution: new r.Execution(), errorContext: "conditional splice insertion" }
+    const source = new r.Chain(["A", "B"], ctx, r.CHAIN_MODE.Sequential), earlier = Promise.withResolvers()
+    r.run(source, [], "splice", [1, earlier.promise], ctx, { mutationScopeDepth: 0 })
+    const receiver = r.capturePath(source, [], ctx, r.CHAIN_MODE.Complete)
+    const start = Promise.withResolvers(), count = Promise.withResolvers()
+    const failure = r.validationError("start", ctx, r.ERROR_KIND.OperationInputFailed)
+    const payload = { n: 1 }, ref = new WeakRef(payload), holder = keep && new r.Chain(payload, ctx)
+    const result = r.run(receiver, [], method, [start.promise, count.promise, payload], ctx, mutation ? { mutationScopeDepth: 0 } : {})
+    start.resolve(failure)
+    return { ctx, earlier, count, failure, ref, holder, result, receiver, mutation }
+}
+const insertions = [false, true].flatMap(keep => [failedInsertion("splice", true, keep),
+    failedInsertion("splice", false, keep), failedInsertion("toSpliced", false, keep)])
+
+function diagnosticCapture(method, live, before) {
+    const ctx = { execution: new r.Execution(), errorContext: "conditional validation" }
+    const child = { n: 1 }, end = Promise.withResolvers(), index = Promise.withResolvers()
+    const cause = r.validationError("index", ctx, r.ERROR_KIND.OperationInputFailed)
+    const source = new r.Chain([child], ctx, r.CHAIN_MODE.Unordered)
+    const array = new r.Chain(r.run(source, [], "slice", [0, end.promise], ctx, {}), ctx, r.CHAIN_MODE.Complete)
+    const failed = before ? cause : index.promise
+    const args = method === "with" ? [failed, "X"] : [0, failed, "X"]
+    const result = r.run(array, [], method, args, ctx, {})
+    r.assignPath(source, [], null, ctx)
+    if (!live) r.assignPath(array, [], null, ctx)
+    index.resolve(cause)
+    return { ctx, array, end, result, cause, method, live, ref: new WeakRef(child) }
+}
+const conditional = ["with", "splice", "toSpliced"].flatMap(method => [false, true].flatMap(live =>
+    [false, true].map(before => diagnosticCapture(method, live, before))))
 for (let turn = 0; turn < 30; turn++) { await new Promise(setImmediate); globalThis.gc() }
+for (const { ctx, end, result, cause, method, ref, live } of conditional) {
+    assert.equal(Boolean(ref.deref()), live, method)
+    end.resolve(live ? 1 : 0)
+    const value = await result
+    if (live) assert.equal(value, cause)
+    else if (method === "with") assert.equal(value.kind, r.ERROR_KIND.InvalidArrayOperation)
+    else assert.deepEqual(await r.export(new r.Chain(value, ctx), [], ctx), ["X"])
+}
+for (const { ctx, earlier, count, failure, ref, holder, result, receiver, mutation } of insertions) {
+    assert.equal(Boolean(ref.deref()), Boolean(holder), "failed start releases its insertion before count diagnostics")
+    if (mutation) assert.equal(await r.hasError(receiver, [], ctx), true)
+    count.resolve(0)
+    assert.equal(await result, failure)
+    if (mutation) await r.repairPath(receiver, [], ctx)
+    earlier.resolve(0)
+    assert.deepEqual(await r.export(receiver, [], ctx), ["A", "B"])
+}
 for (const { ctx, weak, comparator, holder, output } of sorts) {
     assert.equal(Boolean(weak.deref()), Boolean(holder), ctx.errorContext)
     comparator.resolve((left, right) => left.n - right.n)
     assert.deepEqual(await r.export(output, [], ctx), [{ n: 1 }, { n: 2 }])
+}
+for (const { ctx, output, holders, index, ignored, finish } of replacements) {
+    assert.equal(Boolean(index.deref()), Boolean(holders), "captured index")
+    assert.equal(Boolean(ignored.deref()), Boolean(holders), "unused argument")
+    await finish()
+    assert.deepEqual(await r.export(output, [], ctx), ["A", "X"])
 }
 const retained = rows.filter(row => !row.live && row.weak.some(weak => weak.deref()))
     .map(row => ({ label: row.label, live: row.weak.map(weak => !!weak.deref()) }))

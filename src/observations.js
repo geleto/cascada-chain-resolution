@@ -12,6 +12,7 @@ import { PathOperation } from "./path-operation.js"
 import { ArrayView, isArrayView } from "./array-view.js"
 import { consumeArrayValue, MAX_ARRAY_LENGTH } from "./array-layout.js"
 import { chainFromPlacement } from "./chain.js"
+import { certainPoison, resultEvidence, supplyErrorEvidence } from "./error-evidence.js"
 
 const SHALLOW = 0, ANY = 1, COLLECT = 2
 
@@ -24,12 +25,20 @@ class ErrorQueryWork extends PathOperation {
         super(chain, path, operationContext, undefined, false, firstDynamicSegment, path.length, true)
         this.deep = kind !== SHALLOW
         if (kind === COLLECT) this.errors = new Set()
+        else this.receiveEvidence = (inspect, terminal) => {
+            if (inspect === certainPoison) return this.found()
+            if (terminal && this.deep && !this.inspectedEvidence?.has(inspect)) {
+                ;(this.inspectedEvidence ??= new WeakSet()).add(inspect)
+                inspect(this)
+            }
+        }
     }
     release() {
         super.release()
         this.errors = undefined
         this.resolveOutcome = undefined
         this.visited = undefined
+        this.inspectedEvidence = undefined
     }
     run() {
         const inspect = (value, present, depth) => {
@@ -53,15 +62,53 @@ class ErrorQueryWork extends PathOperation {
                 return this.inspectValue(undefined)
             },
             error => this.settle(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
-        return internalSteps.continueGraphTransition(result, this.operationContext,
+        const observed = internalSteps.continueGraphTransition(result, this.operationContext,
             value => this.open && errorUtils.isPoisonError(value) ? this.inspectValue(value) : value)
+        if (!this.receiveEvidence || !languageValues.isPending(observed, this.operationContext)) return observed
+        markPromiseHandled(observed, this.operationContext)
+        return this.open ? this.completion() : this.result
+    }
+    completion() {
+        return this.outcome ??= new Promise(resolve => { this.resolveOutcome = resolve })
     }
     inspectValue(value) {
         if (errorUtils.isPoisonError(value)) this.found(value)
         if (!this.open) return this.result
         if (this.deep && languageValues.isTraversable(value, this.operationContext)) collectFencedErrors(value, this)
         this.completePart()
-        return this.open ? new Promise(resolve => { this.resolveOutcome = resolve }) : this.result
+        return this.open ? this.completion() : this.result
+    }
+
+    // A gated mutation can name ranges that survive every successful write.
+    // Their errors prove this Boolean even if the mutation fails at its scope.
+    inspectArrayRange(array, first, end) {
+        if (!this.open || first >= end) return
+        const ctx = this.operationContext
+        errorUtils.catchExternalThrow(() => {
+            for (const key of languageProperties.enumerableLanguageKeys(array, ctx, first, end, undefined, true)) {
+                this.visitPlacement(languageProperties.readLanguagePlacement(array, key, ctx))
+                if (!this.open) return
+            }
+            for (const range of ArrayView.implicitRanges(array, ctx, first, end)) {
+                if (range.errors > 0) return this.found()
+                this.wait(range.region.visit(range, this, p => this.visitPlacement(p), () => this.found()))
+                if (!this.open) return
+            }
+        }, ctx, errorUtils.ERROR_KIND.QueryReflectionFailed, () => this.found())
+    }
+
+    visitPlacement(placement, walk) {
+        const ctx = this.operationContext
+        const inspect = value => {
+            if (errorUtils.isPoisonError(value)) this.found(value)
+            else if (languageValues.isTraversable(value, ctx)) collectFencedErrors(value, this)
+        }
+        const value = propertyVersions.placementValue(placement)
+        if (!languageValues.isPending(value, ctx)) {
+            if (walk && languageValues.isTraversable(value, ctx)) return walk(value)
+            return inspect(value)
+        }
+        this.wait(propertyVersions.observePlacement(placement, ctx, inspect, this))
     }
     found(error) {
         if (!this.open) return
@@ -101,6 +148,10 @@ class ErrorQueryWork extends PathOperation {
 // --- lookupPath :  = a.k.y --------------------------------------------------
 function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length, delivery) {
     const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+    if (delivery) {
+        delivery.carriesEvidence = true
+        forwardLookupEvidence(operation, delivery)
+    }
     const retain = value => {
         return delivery ? delivery.capture(value, true) : value
     }
@@ -110,11 +161,13 @@ function lookupPath(chain, path, operationContext, firstDynamicSegment = path.le
 
 function capturePath(chain, path, ctx, mode = chain._mode, firstDynamicSegment = path.length) {
     const operation = new PathOperation(chain, path, ctx, undefined, false, firstDynamicSegment)
+    forwardLookupEvidence(operation, operation)
     let gate
     const receive = placement => {
         if (!gate) return chainFromPlacement(placement, ctx, mode)
         const destination = gate
         gate = undefined
+        if (placement.transition) propertyVersions.observePlacementEvidence(placement, operation, true)
         return propertyVersions.consumePlacementTransition(placement, ctx, ready =>
             propertyVersions.completePlacementGate(destination, ready, ctx))
     }
@@ -124,14 +177,22 @@ function capturePath(chain, path, ctx, mode = chain._mode, firstDynamicSegment =
     if (!languageValues.isPending(selected, ctx)) return errorUtils.isPoisonError(selected) ? value(selected) : selected
     const empty = { value: undefined, present: true }, holder = chainFromPlacement(empty, ctx, mode)
     gate = propertyVersions.installPlacementGate(holder._state, "value", ctx, empty)
+    gate.version.transition.errorEvidence = resultEvidence(operation)
     markPromiseHandled(internalSteps.continueGraphTransition(selected, ctx, result => {
         if (errorUtils.isPoisonError(result)) value(result)
     }), ctx)
     return holder
 }
 
-function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
+function forwardLookupEvidence(operation, delivery) {
+    operation.receiveEvidence = (inspect, terminal, queue) => {
+        if (terminal || inspect === certainPoison) supplyErrorEvidence(resultEvidence(delivery), inspect, queue)
+    }
+}
+
+function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length, evidence) {
     const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+    if (evidence) forwardLookupEvidence(operation, evidence)
     const validate = value => {
         if (errorUtils.isPoisonError(value)) return value
         switch (typeof value) {
@@ -220,11 +281,11 @@ function collectFencedErrors(value, queryWork) {
                 key,
                 queryWork.operationContext,
             )
-            visit(placement)
+            queryWork.visitPlacement(placement, walk)
         }
         for (const range of ArrayView.implicitRanges(node, queryWork.operationContext)) {
             if (!queryWork.open) break
-            queryWork.wait(range.region.visit(range, queryWork, visit, error => queryWork.found(error)))
+            queryWork.wait(range.region.visit(range, queryWork, p => queryWork.visitPlacement(p, walk), error => queryWork.found(error)))
         }
     }
 
@@ -232,35 +293,6 @@ function collectFencedErrors(value, queryWork) {
         return !isArrayView(child, ctx) || ArrayView.maximumLength(child, ctx) <= MAX_ARRAY_LENGTH
     }
 
-    function visit(placement) {
-        const child = propertyVersions.placementValue(placement)
-        if (errorUtils.isPoisonError(child)) queryWork.found(child)
-        else if (languageValues.isPending(child, queryWork.operationContext)) collectPromiseErrors(placement)
-        else if (languageValues.isTraversable(child, queryWork.operationContext)) {
-            walk(child)
-        }
-    }
-
-    function collectPromiseErrors(placement) {
-        const wait = propertyVersions.observePlacement(
-            placement,
-            queryWork.operationContext,
-            value => {
-                if (!queryWork.open) return undefined
-                if (errorUtils.isPoisonError(value)) {
-                    queryWork.found(value)
-                    return undefined
-                }
-                if (!languageValues.isTraversable(value, queryWork.operationContext)) {
-                    return undefined
-                }
-
-                collectFencedErrors(value, queryWork)
-            },
-            queryWork,
-        )
-        queryWork.wait(wait)
-    }
 }
 
 function hasErrorSearchWork(counter) {

@@ -227,6 +227,52 @@ describe("Array searches with unfinished growth", () => {
         })
     }
 
+    for (const method of ["includes", "indexOf", "lastIndexOf"])
+        it(`${method} prunes a converted range before unused comparisons and qualifies speculative reflection`, async () => {
+            const ctx = context(), cause = new Error("selected descriptor"), size = 256
+            let armed = false, reads = 0, needles = 0
+            const array = new r.Chain(new Proxy(Array(size).fill("A"), {
+                getOwnPropertyDescriptor(target, key) {
+                    if (armed && /^\d+$/.test(String(key))) { reads++; throw cause }
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            }), ctx)
+            const needle = { then(resolve) { needles++; return resolve("A") } }
+            const outside = method === "lastIndexOf" ? -size - 1 : size, miss = method === "includes" ? false : -1
+            armed = true
+            for (const input of [outside, String(outside), { then: resolve => resolve(outside) }])
+                assert.equal(r.run(array, [], method, [needle, input], ctx, {}), miss)
+            assert.equal(reads, 0)
+            assert.equal(needles, 0)
+            for (const bound of [outside, 0]) {
+                const from = Promise.withResolvers(), answer = r.run(array, [], method, [needle, from.promise], ctx, {})
+                from.resolve(bound)
+                const value = await answer
+                if (bound === outside) assert.equal(value, miss)
+                else assert.equal(value.cause, cause)
+            }
+        })
+
+    it("orders a failed includes inspection after a preceding possible match", async () => {
+        for (const matches of [false, true]) {
+            const ctx = context(), first = Promise.withResolvers(), cause = new Error("second slot")
+            let armed = false
+            const source = new r.Chain(new Proxy([first.promise, 0, 7], {
+                getOwnPropertyDescriptor(target, key) {
+                    if (armed && key === "1") throw cause
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            }), ctx)
+            armed = true
+            const result = r.run(source, [], "includes", [7], ctx, {})
+            assert(r.isPending(result, ctx))
+            first.resolve(matches ? 7 : 1)
+            const value = await result
+            if (matches) assert.equal(value, true)
+            else assert.equal(value.cause, cause)
+        }
+    })
+
     for (const method of ["includes", "indexOf"]) {
         it(`${method} attributes reflection failure after growth resumes the scan`, async () => {
             const ctx = context(), hold = Promise.withResolvers(), cause = new Error("tail descriptor")

@@ -1,16 +1,19 @@
-import { capacityError, captureLayout, join, matchingLength, MAX_ARRAY_LENGTH, overlappingFailures, possibleWrites, projectCapacity, restrict, skippedLength, span, structuralPlacement } from "./array-layout.js"
-import { capacitySequence, concatSequence, captureOrder, captureSequence, fixed, forwardSkipRange, inRange, obstructedSequence, pointAt, pointSelection, publishSequence, refine, SelectionQuestions,
-    takeSequence, boundedSequence, pendingSequence, trimmedSequence, watch } from "./array-sequence.js"
+import { capacityCause, capacityError, captureLayout, join, matchingLength, MAX_ARRAY_LENGTH, overlappingFailures, possibleWrites, projectCapacity, restrict, skippedLength, span, structuralPlacement } from "./array-layout.js"
+import { capacitySequence, concatSequence, captureOrder, captureSequence, fixed, forwardSkipRange, holesWithExtent, inRange, obstructedSequence, pointAt, pointSelection, publishSequence, refine,
+    selectedSequence, SelectionQuestions, sequenceExtent, takeSequence, boundedSequence, pendingSequence, trimmedSequence, valueSignal, watch, watchBounds } from "./array-sequence.js"
 import { ArrayView } from "./array-view.js"
+import { publishWidthLength } from "./array-width.js"
+import { retainOperands } from "./array-sequence-layout.js"
 import { CHAIN_MODE } from "./chain.js"
 import { combineErrors, isPoisonError } from "./error.js"
-import { collectInputs, continueGraphTransition } from "./internal-step.js"
+import { collectInputs, continueGraphTransition, decideInputs } from "./internal-step.js"
 import { isPending } from "./language-values.js"
 import { OperationOwner, releaseOnClose } from "./operation-lifecycle.js"
 import { createLeaseLedger } from "./ownership.js"
 import { arrayInput } from "./array-remap.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { knownObstruction, placementFromSelection } from "./property-versions.js"
+import { supplyErrorEvidence } from "./error-evidence.js"
 import { checkArrayCapacity, numericInput, runArrayStep } from "./array-methods.js"
 
 const hole = Object.freeze({ present: false, value: undefined })
@@ -66,8 +69,91 @@ function sliceSequence(source, start, end, ctx) {
     if (end < 0) return trimmedSequence(takeSequence(source, -start, true, ctx), 0, -end, ctx)
     if (end >= source.maximum) return takeSequence(source, -start, true, ctx)
     if (-start >= source.maximum) return takeSequence(source, end, false, ctx)
-    // A positive end and a negative start approach from opposite ends.
-    // The common point evaluator retains both anchors for this intersection.
+}
+
+// Slice dimensions depend on normalized controls and the input count alone.
+// The last layout owner can leave while a length question keeps this alive.
+function sliceExtent(selection, source, ctx) {
+    const extent = { minimum: selection.sliceMinimum, maximum: selection.sliceMaximum, watch: watchBounds }
+    publishWidthLength(extent, selection.read(() =>
+        selection.sliceMinimum === selection.sliceMaximum ? selection.sliceMaximum : undefined), ctx)
+    if (extent.minimum === extent.maximum) return extent
+    const unwatch = selection.observeExtent(source)
+    selection.updateBounds = active => {
+        refine(extent, selection.sliceMinimum, selection.sliceMaximum, active)
+        if (extent.minimum === extent.maximum) {
+            unwatch?.()
+            selection.updateBounds = undefined
+        }
+    }
+    return extent
+}
+
+// A single bound already excludes source occurrences. Preserve their width
+// so the other bound, including a negative one, still uses the original end.
+function sliceCandidates(source, start, end, ctx) {
+    const shape = holesWithExtent(source, ctx)
+    if (start !== undefined) return concatSequence(sliceSequence(shape, 0, start, ctx),
+        sliceSequence(source, start, Infinity, ctx), ctx)
+    return concatSequence(sliceSequence(source, 0, end, ctx), sliceSequence(shape, end, Infinity, ctx), ctx)
+}
+
+function selectedSlice(selection, source, shape, extent, ctx) {
+    const [, start, end] = selection.values
+    if (selection.done) {
+        if (selection.empty) return fixed(empty)
+        const from = typeof start === "number" ? start : 0
+        const to = typeof end === "number" ? end : Infinity
+        const input = selection.failure ? holesWithExtent(source, ctx) : source
+        const selected = sliceSequence(input, from, to, ctx) ?? intersectSlice(input, shape, extent, from, to, ctx)
+        return selection.failure ? obstructedSequence(selected, selection.failure, ctx) : selected
+    }
+    const failed = selection.controls?.failed || isPoisonError(start) || isPoisonError(end)
+    const candidate = failed ? holesWithExtent(source, ctx) :
+        start === undefined && end === undefined ? source : sliceCandidates(source, start, end, ctx)
+    source = undefined
+    const choice = sliceChange(selection, start, end, failed, ctx)
+    return selectedSequence(candidate.operands, extent, choice,
+        () => selectedSlice(selection, candidate, shape, extent, ctx), ctx)
+}
+
+// Pending controls keep only the numeric question when all data owners leave.
+function sliceChange(selection, start, end, failed, ctx) {
+    return valueSignal(selection.read(() => selection.done || !failed && (selection.controls?.failed ||
+        selection.values[1] !== start || selection.values[2] !== end) || undefined), ctx)
+}
+
+function sliceCoordinates(extent, length, start, end, ctx) {
+    return valueSignal(decideInputs([extent.length, length], ctx, ([width, count]) => {
+        if (width === 0) return [0, 0]
+        if (!isPending(count, ctx)) return [normalizeIndex(start, count), normalizeIndex(end, count)]
+    }), ctx)
+}
+
+// Opposing anchors can meet inside the source's possible length range.
+// Keep the possible source interval and its independently captured shape.
+function intersectSlice(source, shape, extent, start, end, ctx) {
+    const base = normalizeIndex(start, shape.minimum)
+    let candidate = trimmedSequence(takeSequence(source, end, false, ctx), base, 0, ctx)
+    const coordinates = sliceCoordinates(extent, shape.length, start, end, ctx)
+    const selected = selectedSequence(candidate.operands, extent, coordinates, ([first, last]) => {
+        const result = first < last ? trimmedSequence(takeSequence(candidate, last - base, false, ctx),
+            first - base, 0, ctx) : fixed(empty)
+        candidate = undefined
+        return result
+    }, ctx)
+    if (coordinates.pending) {
+        const point = selected.selectPoint
+        pointSelection(selected, (index, back) => {
+            if (!candidate || !coordinates.pending) return point(index, back)
+            const first = normalizeIndex(start, shape.minimum), high = normalizeIndex(start, shape.maximum)
+            const last = normalizeIndex(end, shape.minimum), endHigh = normalizeIndex(end, shape.maximum)
+            if (index < last - high && (back ? last === endHigh : first === high))
+                return pointAt(candidate, (back ? last - 1 - index : first + index) - base, false)
+            return point(index, back)
+        }, ctx)
+    }
+    return selected
 }
 
 // Possible source indexes for one destination. All sums stay below the
@@ -183,6 +269,40 @@ class IntervalSelection extends SelectionQuestions {
         return watch(source, (lo, hi, active) => this.extent(lo, hi, active), this.ctx)
     }
 
+    observeUnchanged(work, query) {
+        let prefix = 0, suffix = Infinity, seenLength = 0
+        const check = () => {
+            if (!query.open || !work.receiver) return
+            const minimum = this.minimum
+            if (minimum > MAX_ARRAY_LENGTH) return query.found()
+            let first = minimum, end = 0
+            const copy = this.method === "copyWithin"
+            for (const n of lengthSamples(this.values, minimum, this.maximum)) {
+                const b = this.bounds(n)
+                if (!canSelect(b, n, copy)) continue
+                first = Math.min(first, copy ? b.t : b.s)
+                end = Math.max(end, copy ? copyReach(b, n) : b.E)
+            }
+            end = Math.max(first, Math.min(end, minimum))
+            // Range exclusion grows as controls and length become known.
+            const visitNew = (lo, hi) => {
+                query.inspectArrayRange(work.receiver, Math.max(lo, prefix), Math.min(hi, suffix, seenLength))
+                query.inspectArrayRange(work.receiver, Math.max(lo, seenLength), hi)
+            }
+            visitNew(0, first)
+            visitNew(end, minimum)
+            prefix = first
+            suffix = end
+            seenLength = minimum
+        }
+        check()
+        if (!query.open || this.done) return
+        const questions = this.pending ??= new Set()
+        const update = () => { check(); if (this.done) questions.delete(update) }
+        questions.add(update)
+        releaseOnClose(query, () => questions.delete(update))
+    }
+
     arguments(length, payload) {
         const [target, start, end] = this.values.map(value => normalizeIndex(value, length))
         return this.method === "slice" ? [start, Math.max(start, end)] : [this.method === "fill" ? payload : target, start, end]
@@ -190,20 +310,22 @@ class IntervalSelection extends SelectionQuestions {
 
     consider(active) {
         this.empty = true
-        let low = Infinity, high = 0, guaranteed = true
+        let low = Infinity, high = 0, fallback = Infinity, guaranteed = true
         for (const length of lengthSamples(this.values, this.minimum, this.maximum)) {
             const b = this.bounds(length)
             const possible = canSelect(b, length, this.method === "copyWithin")
             if (possible) this.empty = false
             if (b.e <= b.S) guaranteed = false
             low = Math.min(low, Math.max(0, b.e - b.S))
-            high = Math.max(high, Math.max(0, b.E - b.s))
+            const width = Math.max(0, b.E - b.s)
+            if (this.method === "slice") fallback = Math.min(fallback, width)
+            high = Math.max(high, width)
         }
         this.done = this.empty || this.indexes.every(i => this.values[i] !== undefined)
         this.guaranteed = guaranteed
         const failures = this.done && !this.empty && this.values.filter(isPoisonError)
         this.failure = failures?.length ? this.failure ?? combineErrors(failures) : undefined
-        this.sliceMinimum = low
+        this.sliceMinimum = this.failure ? fallback : low
         this.sliceMaximum = high
         this.settlePayload()
         if (this.done && this.controls) {
@@ -230,11 +352,18 @@ class IntervalSelection extends SelectionQuestions {
         if (this.empty && work.mutation) { reportWrites(false); return finish() }
         if (this.empty && slice) return finish(publishSequence(fixed(empty), ctx))
         const [, start, end] = this.values
-        const limit = slice && typeof start === "number" && start >= 0 && typeof end === "number" && end >= 0 ? end : undefined
+        const failedSlice = slice && (this.controls?.failed || this.values.some(isPoisonError))
+        // A symbolic source keeps its end anchor. A fixed capture can omit
+        // the excluded physical suffix before inspecting any of its slots.
+        const absoluteEnd = slice && typeof end === "number" && (end >= 0 ||
+            this.minimum === this.maximum && !ArrayView.region(receiver, ctx)?.sequence)
+        const limit = failedSlice ? 0 : absoluteEnd ? normalizeIndex(end, this.maximum) : undefined
+        const keepExtent = failedSlice || limit !== undefined && (end < 0 || !(typeof start === "number" && start >= 0))
         const low = this.bounds(this.minimum)
         const omitStart = method === "fill" ? this.bounds(this.maximum).S : 0
         const omitEnd = slice ? low.s : method === "fill" ? low.e : 0
-        const source = captureSequence(receiver, ctx, { limit, omitStart, omitEnd })
+        const source = captureSequence(receiver, ctx, { limit, keepExtent, omitStart, omitEnd })
+        if (slice) return this.publishSlice(source, work, finish)
         const complete = work.mode === CHAIN_MODE.Complete
         if (complete && (!this.done || this.failure)) {
             // A failed control belongs to the complete root only if the
@@ -250,43 +379,47 @@ class IntervalSelection extends SelectionQuestions {
 
         function finishEmpty() {
             if (work.mutation) { reportWrites(false); return finish() }
-            return finish(publishSequence(slice ? fixed(empty) : source, ctx))
+            return finish(publishSequence(source, ctx))
         }
+    }
+
+    publishSlice(source, work, finish) {
+        const ctx = this.ctx
+        const complete = work.mode === CHAIN_MODE.Complete
+        const shape = sequenceExtent(source, ctx)
+        const extent = sliceExtent(this, shape, ctx)
+        const sequence = selectedSlice(this, source, shape, extent, ctx)
+        const output = () => finish(publishSequence(capacitySequence(sequence, ctx), ctx))
+        if (!complete) return output()
+        const done = this.read(() => this.done || undefined)
+        const valid = continueGraphTransition(done, ctx, () => this.failure ?
+            continueGraphTransition(inRange(extent, 0, ctx), ctx, present => present ? this.failure : undefined) :
+            continueGraphTransition(inRange(extent, MAX_ARRAY_LENGTH, ctx), ctx, over => over ? capacityError(ctx) : undefined))
+        // Until whole-Array validation completes, the result itself owns its
+        // remaining candidate placements. Transfer them before dropping that use.
+        const release = isPending(valid, ctx) && retainOperands(sequence.operands, ctx)
+        return continueGraphTransition(valid, ctx, failure => {
+            try { return failure ?? output() }
+            finally { if (release) release() }
+        })
     }
 
     publishSelected(source, work, finish, reportWrites) {
         const { ctx, method } = this
-        const slice = method === "slice", fill = method === "fill", complete = work.mode === CHAIN_MODE.Complete
+        const fill = method === "fill", complete = work.mode === CHAIN_MODE.Complete
         if (this.empty && work.mutation) { reportWrites(false); return finish() }
         const done = this.read(() => this.done || undefined)
         const safe = source.maximum <= MAX_ARRAY_LENGTH
-        if (slice && this.done) {
-            const [, s, e] = this.values, from = typeof s === "number" ? s : 0, to = typeof e === "number" ? e : Infinity
-            let selected = this.empty ? fixed(empty) : sliceSequence(source, from, to, ctx)
-            if (selected) {
-                if (this.failure) selected = obstructedSequence(selected, this.failure, ctx)
-                const output = () => finish(publishSequence(capacitySequence(selected, ctx), ctx))
-                return complete ? continueGraphTransition(inRange(selected, MAX_ARRAY_LENGTH, ctx), ctx,
-                    over => over ? capacityError(ctx) : output()) : output()
-            }
-        }
         const leases = createLeaseLedger(ctx), receiver = work.receiver
         leases.acquire(receiver)
         const unwatch = this.observeExtent(source)
         const release = () => { unwatch?.(); leases.release(); this.settlePayload(true) }
-        const initial = this.bounds(source.minimum), limit = b => Math.max(0, b.E - b.s)
-        const length = slice ? this.read(() => this.sliceMinimum === this.sliceMaximum ? this.sliceMaximum :
-            this.done && source.minimum === source.maximum ? limit(this.bounds(source.minimum)) : undefined) : source.length
-        let wrote = false, lost, capacity, settled
-        const cause = () => capacity ??= capacityError(ctx)
+        const initial = this.bounds(source.minimum)
+        let wrote = false, lost, settled
+        const cause = capacityCause(ctx)
         const project = node => {
             const extent = node.length, b = this.bounds(extent), marker = this.failure && structuralPlacement(this.failure)
-            if (!canSelect(b, extent, !slice && !fill)) return slice ? empty : node
-            if (slice) {
-                if (!marker) return restrict(node, b.s, b.E)
-                // A failed raw boundary spans [0,L]; the guaranteed intersection is empty.
-                return span(limit(b), marker)
-            }
+            if (!canSelect(b, extent, !fill)) return node
             let mapped
             if (fill) {
                 mapped = join(join(restrict(node, 0, b.s), span(b.E - b.s, marker ?? this.payload)),
@@ -307,7 +440,7 @@ class IntervalSelection extends SelectionQuestions {
             return projected.node
         }
         let captured = source.node
-        const sourceReady = !slice && !fill && !captured ? continueGraphTransition(source.ready, ctx, node => {
+        const sourceReady = !fill && !captured ? continueGraphTransition(source.ready, ctx, node => {
             captured = node
             this.changed()
             return node
@@ -323,7 +456,7 @@ class IntervalSelection extends SelectionQuestions {
             const select = proveSkip => {
                 if (settled) return fixed(settled).point(index, back)
                 const lo = source.minimum, hi = source.maximum
-                if (!slice && index >= hi) return hole
+                if (index >= hi) return hole
                 const min = this.bounds(lo), max = this.bounds(hi)
                 const b = {}
                 for (const key of ["t", "T", "s", "S", "e", "E"]) {
@@ -335,13 +468,7 @@ class IntervalSelection extends SelectionQuestions {
                     source.point(fromEnd ? -1 - j : j, fromEnd)
                 const admitted = read => index < lo ? read() : continueGraphTransition(inRange(source, index, ctx), ctx,
                     member => member ? read() : hole)
-                if (slice) {
-                    if (index >= this.sliceMaximum) return hole
-                    if (!this.failure) {
-                        if (!back && b.s === b.S && index < b.e - b.s) return at(b.s + index)
-                        if (back && b.e === b.E && index < b.e - b.S) return at(b.e - 1 - index)
-                    }
-                } else if (fill) {
+                if (fill) {
                     if (i < b.s || i >= b.E || this.empty) return at(i)
                     if (b.S <= i && i < b.e) return admitted(() => this.payload)
                 } else {
@@ -376,11 +503,10 @@ class IntervalSelection extends SelectionQuestions {
         }
         let seq
         if (isPending(ready, ctx)) {
-            const head = slice ? empty : restrict(source.head, 0, Math.min(source.head.length, fill ? initial.s : initial.t))
-            seq = { minimum: slice ? this.sliceMinimum : source.minimum,
-                maximum: slice ? this.sliceMaximum : source.maximum, length, head, tail: empty, ready }
+            const head = restrict(source.head, 0, Math.min(source.head.length, fill ? initial.s : initial.t))
+            seq = { minimum: source.minimum, maximum: source.maximum, length: source.length, head, tail: empty, ready }
             pointSelection(seq, point, ctx)
-            if (!slice && !fill) {
+            if (!fill) {
                 const facts = seq.obstructions = {
                     end: (first, limit) => settled ? first + skippedLength(settled, first, limit) :
                         captured ? copySkipEnd(captured, this.bounds(captured.length), first, limit) : first
@@ -421,7 +547,7 @@ class IntervalSelection extends SelectionQuestions {
                 }
             }
             const selectionSequence = seq
-            if (!slice && source.node?.fixedPresence &&
+            if (source.node?.fixedPresence &&
                 !this.values.some(isPoisonError) && this.indexes.filter(i => this.values[i] === undefined).length === 1) {
                 // With one unknown bound a failed control distinguishes the
                 // undecided destinations. Every other clean run is already
@@ -464,24 +590,31 @@ class IntervalSelection extends SelectionQuestions {
                     return partition = split(layout, 0)
                 } })
             }
-            if (!slice) {
-                const reach = (b, n) => fill ? b.E : copyReach(b, n)
-                const samples = lengthSamples(this.values, source.minimum, source.maximum)
-                let last = 0, suffix = source.tail.length
-                for (const n of samples) {
-                    const end = reach(this.bounds(n), n)
-                    last = Math.max(last, end)
-                    suffix = Math.min(suffix, n - end)
-                }
-                seq.tail = restrict(source.tail, source.tail.length - suffix, source.tail.length)
-                if (last < source.maximum) {
-                    const split = () => [boundedSequence(selectionSequence, last, false, ctx), trimmedSequence(source, last, 0, ctx)]
-                    if (last <= source.minimum) seq = concatSequence(...split(), ctx)
-                    else seq.split = split
-                }
+            const reach = (b, n) => fill ? b.E : copyReach(b, n)
+            const samples = lengthSamples(this.values, source.minimum, source.maximum)
+            let last = 0, suffix = source.tail.length, fillFirst = 0, fillEnd = source.minimum
+            for (const n of samples) {
+                const bounds = this.bounds(n), end = reach(bounds, n)
+                last = Math.max(last, end)
+                suffix = Math.min(suffix, n - end)
+                fillFirst = Math.max(fillFirst, bounds.S)
+                fillEnd = Math.min(fillEnd, bounds.e)
             }
-            this.updateBounds = active => refine(selectionSequence, slice ? this.sliceMinimum : source.minimum,
-                slice ? this.sliceMaximum : source.maximum, active)
+            seq.tail = restrict(source.tail, source.tail.length - suffix, source.tail.length)
+            if (last < source.maximum) {
+                const split = () => [boundedSequence(selectionSequence, last, false, ctx), trimmedSequence(source, last, 0, ctx)]
+                if (last <= source.minimum) seq = concatSequence(...split(), ctx)
+                else seq.split = split
+            }
+            // The proved fill interval has one captured placement regardless
+            // of the unresolved source layout. A slice can take any subrange
+            // of this run without inspecting or waiting on either neighbour.
+            if (fill && this.payload && fillFirst < fillEnd) {
+                const before = takeSequence(seq, fillFirst, false, ctx)
+                const after = trimmedSequence(seq, fillEnd, 0, ctx)
+                seq = concatSequence(concatSequence(before, fixed(span(fillEnd - fillFirst, this.payload)), ctx), after, ctx)
+            }
+            this.updateBounds = active => refine(selectionSequence, source.minimum, source.maximum, active)
         } else seq = fixed(ready)
         const selection = this
         if (complete && seq.maximum > MAX_ARRAY_LENGTH) {
@@ -538,8 +671,11 @@ function prepareInterval(work) {
     controls.release = function () { this.selection = this.preparationFailed = undefined }
     // Once conversion fails, the only successful Complete slice is empty.
     // Its captured exact shape suffices while diagnostics finish collecting.
-    if (method === "slice" && work.mode === CHAIN_MODE.Complete && minimum === maximum)
-        controls.preparationFailed = () => work.preparationFailed()
+    const preparedReceiver = Boolean(work.receiverCapture)
+    if (method === "slice") controls.preparationFailed = preparedReceiver ? () => work.preparationFailed() : function () {
+        this.failed = true
+        this.selection.changed()
+    }
     if (method === "fill") controls.preparationFailed = function () {
         this.failed = true
         this.selection.settlePayload()
@@ -594,7 +730,9 @@ function prepareInterval(work) {
         selection.payload = payload
         selection.settlePayload()
     }
-    if (work.mode === CHAIN_MODE.Complete && !selection.done) {
+    if (work.mode === CHAIN_MODE.Complete && !selection.done && (method !== "slice" || preparedReceiver)) {
+        if (method !== "slice" && !preparedReceiver)
+            supplyErrorEvidence(work.resultEvidence, query => selection.observeUnchanged(work, query))
         if (minimum !== maximum) {
             const sequence = captureOrder(work.receiver, ctx)
             if (sequence) {

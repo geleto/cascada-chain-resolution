@@ -7,35 +7,40 @@ function isPending(value, operationContext) {
     return mayBeThenable(value, operationContext) && typeof value.then === "function"
 }
 
-function thenValue(value, onFulfilled, onRejected, operationContext) {
+function deliverSubscription(result, callback, state, operationContext) {
+    if (operationContext.execution.fatalError !== null) return undefined
+    if (errorUtils.isFatalError(result)) errorUtils.failExecution(operationContext, result)
+    return callback(result, state, operationContext)
+}
+
+function thenValue(value, onFulfilled, onRejected, operationContext, state) {
     if (errorUtils.isFatalError(value))
         errorUtils.failExecution(operationContext, value)
-    if (!mayBeThenable(value, operationContext)) return onFulfilled(value)
+    if (!mayBeThenable(value, operationContext)) return onFulfilled(value, state, operationContext)
 
     const then = errorUtils.catchExternalThrow(
         () => readCallableThen(value, operationContext),
         operationContext,
         errorUtils.ERROR_KIND.ThenAccessFailed,
     )
-    if (errorUtils.isPoisonError(then)) return onRejected(then)
-    if (then === undefined) return onFulfilled(value)
+    if (errorUtils.isPoisonError(then)) return onRejected(then, state, operationContext)
+    if (then === undefined) return onFulfilled(value, state, operationContext)
 
     let continuationStarted = false
-    const deliver = callback => result => {
-        // Distinguish a continuation escape from a failure of the then body.
-        // Readiness is determined only by the returned transition result.
+    function fulfill(result) {
         continuationStarted = true
-        if (operationContext.execution.fatalError !== null) return undefined
-        if (errorUtils.isFatalError(result))
-            errorUtils.failExecution(operationContext, result)
-        return callback(result)
+        return deliverSubscription(result, onFulfilled, state, operationContext)
+    }
+    function reject(result) {
+        continuationStarted = true
+        return deliverSubscription(result, onRejected, state, operationContext)
     }
     try {
-        return Reflect.apply(then, value, [deliver(onFulfilled), deliver(onRejected)])
+        return Reflect.apply(then, value, [fulfill, reject])
     } catch (reason) {
         if (continuationStarted) throw reason
         return onRejected(errorUtils.createPoisonError(
-            reason, operationContext, errorUtils.ERROR_KIND.ThenInvocationFailed))
+            reason, operationContext, errorUtils.ERROR_KIND.ThenInvocationFailed), state, operationContext)
     } finally {
         // Delivery uses its own result; saved callback frames need no source.
         value = undefined

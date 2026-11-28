@@ -9,6 +9,7 @@ import { collectInputs, continueGraphTransition, decideInputs } from "./internal
 import { isPending, isTraversable } from "./language-values.js"
 import { isObjectLike } from "./meta.js"
 import { createLeaseLedger } from "./ownership.js"
+import { markPromiseHandled } from "./thenable-subscription.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 
 const MAX_ARRAY_LENGTH = 0xffffffff
@@ -95,7 +96,7 @@ function layoutAt(node, index) {
         if (index < node.left.length) node = node.left
         else { index -= node.left.length; node = node.right }
     }
-    return node.delivery?.result?.placement ?? node.placement
+    return node.fixedResult?.placement ?? node.placement
 }
 
 // Identity depends on prescribed writes. A known present placement or flag
@@ -149,9 +150,32 @@ function placementCounts(node, include, placements = new Map()) {
     return placements
 }
 
+// A settled primitive on an ordinary captured producer can live in the shared
+// terminal layout. Open selectors and managed deliveries retain their own path.
+function settledScalarLayout(node, seen = new Map()) {
+    if (!node.stored || !node.fixedPresence) return node
+    if (node.scalarLayout) return node.scalarLayout
+    if (seen.has(node)) return seen.get(node)
+    let result = node
+    if (node.left) {
+        const left = settledScalarLayout(node.left, seen), right = settledScalarLayout(node.right, seen)
+        if (left !== node.left || right !== node.right) result = branch(left, right)
+    } else {
+        const p = node.placement, v = p.sourceVersion
+        if (v && v.present === true && !v.publication && !v.copiedDelivery && !v.transition && !v.pendingPresence &&
+            !v.ownFailure && !v.role && !v.discoveryBlocked && p.present === true &&
+            !p.ownFailure && !p.role && !p.discoveryBlocked && isObjectLike(p.value) && !isObjectLike(v.value))
+            result = span(node.length, { ...p, value: v.value, sourceVersion: undefined })
+    }
+    if (!result.stored) node.scalarLayout = result
+    else seen.set(node, result)
+    return result
+}
+
 // Publish a repeated placement once, including its managed parent relationships.
 // An open prefix leaves repeated producers in the region until they settle.
 function compactLayout(node, ctx, prefix = false) {
+    if (!prefix && node.stored && node.fixedPresence) node = settledScalarLayout(node)
     if (!node.stored) return node
     const repeated = new Set()
     for (const [p, count] of placementCounts(node, part => part.stored)) {
@@ -195,59 +219,159 @@ function compactLayout(node, ctx, prefix = false) {
     }
 }
 
-// Fixed-coordinate copies keep the same payload at each retained occurrence.
-// A new ordered root reuses its children's delivery. A scalar needs no parent
-// publication. Managed children notify the active backings at their exact keys
-// as soon as they arrive, even if another payload never arrives.
-function fixedPayloads(node, ctx) {
-    if (!node.stored && !node.shared) return
-    if (node.delivery) return node.delivery
-    const cell = node.delivery = {}
-    if (node.left) {
-        const left = fixedPayloads(node.left, ctx), right = fixedPayloads(node.right, ctx)
-        relay(left, 0)
-        relay(right, node.left.length)
-        cell.result = collectInputs([left?.result ?? node.left, right?.result ?? node.right], ctx,
-            ([a, b]) => finish(branch(a, b)))
-    } else {
-        const p = node.placement
-        cell.result = resolvePlacement(p, ctx, ready => {
-            const placement = { ...ready, ownFailure: p.ownFailure ?? ready.ownFailure,
-                layoutChild: isObjectLike(ready.value) && !isPoisonError(ready.value) }
-            if (isTraversable(placement.value, ctx)) {
-                cell.managed = true
-                cell.child = placement
-                for (const receive of cell.listeners ?? []) receive(0, placement, node.length)
-            }
-            return finish(span(node.length, placement))
-        })
+// A disjoint interval of leaf numbers proves that a join does not duplicate
+// stored occurrences. Overlapping ranges and repeated runs keep the counted
+// publication path. Cache this proof on immutable subtrees, including misses.
+function individualFixedSlots(node, ctx) {
+    if (!node.stored && !node.shared) return true
+    if (!node.fixedPresence) return false
+    if (node.fixedSlots !== undefined) return node.fixedSlots
+    if (!node.left) {
+        if (node.length !== 1) return node.fixedSlots = false
+        const id = ctx.execution._nextLayoutSlot = (ctx.execution._nextLayoutSlot ?? 0) + 1
+        return node.fixedSlots = { first: id, last: id }
     }
-    return cell
+    return node.fixedSlots = disjointFixedSlots(node.left, node.right, ctx)
+}
 
-    function finish(layout) {
-        cell.result = layout
-        cell.listeners = undefined
-        const publications = cell.publications
-        cell.publications = undefined
-        for (const region of publications ?? []) region.publish(layout)
-        return layout
-    }
-    function relay(child, offset) {
-        if (!child) return
-        if (child.managed) cell.managed = true
-        if (isPending(child.result, ctx)) (child.listeners ??= new Set()).add((index, p, count) => {
-            cell.managed = true
-            for (const receive of cell.listeners ?? []) receive(offset + index, p, count)
-        })
+function disjointFixedSlots(left, right, ctx) {
+    const a = individualFixedSlots(left, ctx), b = individualFixedSlots(right, ctx)
+    if (!a || !b) return false
+    if (a === true || b === true) return a === true ? b : a
+    return (a.last < b.first || b.last < a.first) && {
+        first: Math.min(a.first, b.first), last: Math.max(a.last, b.last) }
+}
+
+// A splice visits two nonoverlapping ranges of one source and each insertion
+// once. Their original leaf IDs can interleave after a middle insertion.
+function inheritSpliceSlots(result, source, inserted, ctx) {
+    if (result.stored && result.fixedPresence) {
+        const proof = disjointFixedSlots(source, inserted, ctx)
+        if (proof) result.fixedSlots = proof
     }
 }
 
-function followFixedChildren(node, receive, offset = 0) {
-    if (!node.delivery?.managed) return
+// A pending sibling may keep this readiness signal alive. The signal carries
+// no layout, payload or successful sibling. Active destinations subscribe to
+// child publication and can detach independently of root completion.
+class FixedLink {
+    constructor(parent, offset) { this.parent = parent; this.offset = offset }
+    deliver(index, placement, count, indexed) { this.parent.deliver(this.offset + index, placement, count, indexed) }
+    finish() { this.parent.finish() }
+}
+
+class FixedDelivery {
+    remaining = 1
+    published = false
+    deliver(index, placement, count, indexed = false) {
+        if (!indexed) this.published = true
+        for (const use of (indexed ? this.indexed : this.listeners) ?? []) use.deliver(index, placement, count, indexed)
+    }
+    finish() {
+        if (--this.remaining) return
+        this.left = this.right = this.leftUse = this.rightUse = undefined
+        const listeners = this.listeners
+        this.listeners = this.indexed = undefined
+        for (const use of listeners ?? []) use.finish?.()
+    }
+    join(left, right, offset) {
+        this.published = Boolean(left?.published || right?.published)
+        this.left = left?.remaining ? left : undefined
+        this.right = right?.remaining ? right : undefined
+        this.remaining = Number(Boolean(this.left)) + Number(Boolean(this.right))
+        this.offset = offset
+    }
+    subscribe(use) {
+        if (!this.remaining) return false
+        if (!this.listeners && (this.left || this.right)) {
+            this.remaining = 0
+            if (this.left) {
+                this.leftUse = new FixedLink(this, 0)
+                if (this.left.subscribe(this.leftUse)) this.remaining++
+                this.published ||= this.left.published
+            }
+            if (this.right) {
+                this.rightUse = new FixedLink(this, this.offset)
+                if (this.right.subscribe(this.rightUse)) this.remaining++
+                this.published ||= this.right.published
+            }
+            if (!this.remaining) {
+                this.left = this.right = this.leftUse = this.rightUse = undefined
+                return false
+            }
+        }
+        ;(this.listeners ??= new Set()).add(use)
+        return true
+    }
+    unsubscribe(use) {
+        if (!this.listeners?.delete(use) || this.listeners.size) return
+        this.listeners = undefined
+        this.left?.unsubscribe(this.leftUse)
+        this.right?.unsubscribe(this.rightUse)
+        this.leftUse = this.rightUse = undefined
+    }
+    index(use) {
+        if (!this.remaining) return
+        if (!this.indexed) {
+            this.indexed = new Set()
+            if (this.leftUse) this.left.index(this.leftUse)
+            if (this.rightUse) this.right.index(this.rightUse)
+        }
+        this.indexed.add(use)
+    }
+    unindex(use) {
+        if (!this.indexed?.delete(use) || this.indexed.size) return
+        this.indexed = undefined
+        if (this.leftUse) this.left.unindex(this.leftUse)
+        if (this.rightUse) this.right.unindex(this.rightUse)
+    }
+}
+
+function fixedPayloads(node, ctx) {
+    if (!node.stored && !node.shared) return
+    if (node.delivery) return node.delivery
+    const cell = node.delivery = new FixedDelivery()
+    if (node.left) cell.join(fixedPayloads(node.left, ctx), fixedPayloads(node.right, ctx), node.left.length)
+    else settleFixedLeaf(node, cell, ctx)
+    return cell
+}
+
+function fixedPayloadError(p) {
+    return p && !p.role && !p.ownFailure && isPoisonError(p.value)
+}
+
+function settleFixedLeaf(node, cell, ctx) {
+    const p = node.placement
+    const result = resolvePlacement(p, ctx, ready => {
+        const placement = { ...ready, sourceVersion: undefined, ownFailure: p.ownFailure ?? ready.ownFailure,
+            layoutChild: isObjectLike(ready.value) && !isPoisonError(ready.value) }
+        node.fixedResult = span(node.length, placement)
+        // Ordinary payload poison is already readable in the immutable leaf.
+        // Only active counters need projected backing publication.
+        if (fixedPayloadError(placement)) cell.deliver(0, placement, node.length, true)
+        else if (isTraversable(placement.value, ctx) || placement.ownFailure || isPoisonError(placement.value))
+            cell.deliver(0, placement, node.length)
+        cell.finish()
+    })
+    markPromiseHandled(result, ctx)
+}
+
+function resolvedFixedLayout(node) {
+    if (!node.delivery) return node
+    return node.fixedResult ??= branch(resolvedFixedLayout(node.left), resolvedFixedLayout(node.right))
+}
+
+function followFixedChildren(node, use, offset, previous, indexed = false) {
+    if (!node.delivery || !indexed && !node.delivery.published) return
+    const end = offset + node.length
+    if (previous && end <= previous.length && restrict(previous, offset, end) === node) return
     if (node.left) {
-        followFixedChildren(node.left, receive, offset)
-        followFixedChildren(node.right, receive, offset + node.left.length)
-    } else receive(offset, node.delivery.child, node.length)
+        followFixedChildren(node.left, use, offset, previous, indexed)
+        followFixedChildren(node.right, use, offset + node.left.length, previous, indexed)
+    } else {
+        const placement = node.fixedResult?.placement
+        if (!indexed || fixedPayloadError(placement)) use.deliver(offset, placement, node.length, indexed)
+    }
 }
 function mapLayout(node, select, cache = new Map()) {
     const replacement = select(node)
@@ -300,6 +424,16 @@ function flagPositions(node, cause, ctx) {
     return flagged
 }
 function capacityError(ctx) { return validationError("Invalid Array length", ctx, ERROR_KIND.InvalidArrayLength) }
+// A derived range keeps the originating command's Error even after its
+// operands retire. Capture only the context and the first actual failure.
+function capacityCause(ctx) {
+    let error
+    return () => error ??= capacityError(ctx)
+}
+
+function reportCapacityLoss(lost, cause, ctx) {
+    return continueGraphTransition(lost, ctx, failed => failed ? cause() : undefined)
+}
 
 // A native Array fits by construction. A managed view can already have a
 // mandatory Error tail. Full consumption stops there, before touching slots.
@@ -340,19 +474,20 @@ function layoutFromRemap(entries) {
 // unmarked slot. Its direct result can ask this without rebuilding the layout.
 function capacityFailure(node, ctx, cause) {
     if (node.length <= MAX_ARRAY_LENGTH) return
-    const tail = restrict(node, MAX_ARRAY_LENGTH, node.length)
-    const unmarked = anyPlacement([tail], ctx, part => {
+    return reportCapacityLoss(hasUnmarkedPlacement(restrict(node, MAX_ARRAY_LENGTH, node.length), ctx), cause, ctx)
+}
+
+function hasUnmarkedPlacement(node, ctx) {
+    return anyPlacement([node], ctx, part => {
         if (part.errors === part.length) return false
         if (!part.selection) return true
         if (part.selection !== MIXED_SELECTION)
             return resolvePlacementTransition(layoutAt(part, 0), ctx, p => p.role !== STRUCTURAL_ERROR)
     })
-    return continueGraphTransition(unmarked, ctx, lost => lost ? cause() : undefined)
 }
 
 function projectCapacity(node, ctx, exceeded = false, cause) {
-    let loss
-    cause ??= () => loss ??= capacityError(ctx)
+    cause ??= capacityCause(ctx)
     if (node.length <= MAX_ARRAY_LENGTH) return { node, failure: exceeded ? cause() : undefined }
     const tail = restrict(node, MAX_ARRAY_LENGTH, node.length)
     const output = projectLoss(tail, cause, ctx)
@@ -634,5 +769,5 @@ function closedLayout(node, ctx, fixedCoordinates = false) {
     return PlacementConstruction.initializeAndPublish(new ArrayView(backing, ctx, 0, node.length), ctx, () => {})
 }
 
-export { LayoutBuilder, MAX_ARRAY_LENGTH, MAX_COUNT, capacityError, consumeArrayValue, capacityFailure, capacityPlacement, structuralPlacement, projectLoss, skippedLength, matchingLength, overlappingFailures, skippedRun, skippedCause, missingOutputMarker, missingOutputMarkers, span, join, restrict, layoutFromRemap,
-    layoutAt, layoutCause, searchRuns, mapLayout, reverseLayout, denseLayout, flagPositions, projectCapacity, captureLayout, closedLayout, materializeIndividualSlots, LayoutRegion, storedPlacements, implicitLayout, placementCounts, compactLayout, fixedPayloads, followFixedChildren, possibleWrites, anyPresent, visibleLayout }
+export { LayoutBuilder, MAX_ARRAY_LENGTH, MAX_COUNT, capacityCause, capacityError, consumeArrayValue, hasUnmarkedPlacement, reportCapacityLoss, capacityPlacement, structuralPlacement, projectLoss, skippedLength, matchingLength, overlappingFailures, skippedRun, skippedCause, missingOutputMarker, missingOutputMarkers, span, join, restrict, layoutFromRemap,
+    layoutAt, layoutCause, searchRuns, mapLayout, reverseLayout, denseLayout, flagPositions, projectCapacity, captureLayout, closedLayout, materializeIndividualSlots, LayoutRegion, storedPlacements, implicitLayout, placementCounts, compactLayout, fixedPayloads, fixedPayloadError, followFixedChildren, individualFixedSlots, inheritSpliceSlots, resolvedFixedLayout, possibleWrites, anyPresent, visibleLayout }

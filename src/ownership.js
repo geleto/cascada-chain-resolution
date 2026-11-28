@@ -1,6 +1,6 @@
 import * as metadata from "./meta.js"
 import { runWithFatalGuard } from "./error.js"
-import { retireRelationships, visitRetentionParents } from "./parent-placements.js"
+import { retireRelationships, retentionParentsOf } from "./parent-placements.js"
 
 function reconsider(value, operationContext) {
     const execution = operationContext.execution
@@ -19,12 +19,16 @@ function retireCandidates(operationContext) {
     let discovered
     const markLive = proof => {
         if (proof.live) return
-        proof.live = true
-        const dependents = proof.dependents
-        proof.dependents = undefined
-        for (const dependent of dependents ?? []) markLive(dependent)
+        const stack = [proof]
+        while (stack.length) {
+            const next = stack.pop()
+            if (next.live) continue
+            next.live = true
+            for (const dependent of next.dependents ?? []) stack.push(dependent)
+            next.dependents = undefined
+        }
     }
-    const visit = (node, dependent) => {
+    const discover = (node, dependent) => {
         const meta = metadata.metaOf(node, operationContext)
         if (!meta?.relationshipsActive) return
         let proof = proofs.get(node)
@@ -39,10 +43,20 @@ function retireCandidates(operationContext) {
         proofs.set(node, proof)
         discovered.push(node)
         if (meta.pinCount || meta.readLeaseCount) { markLive(proof); return }
-        visitRetentionParents(node, operationContext, parent => {
-            visit(parent, proof)
-            return !proof.live
-        })
+        return { proof, parents: retentionParentsOf(node, operationContext) }
+    }
+    const visit = node => {
+        const first = discover(node)
+        if (!first) return
+        const stack = [first]
+        while (stack.length) {
+            const { proof, parents } = stack.at(-1)
+            if (proof.live) { stack.pop(); continue }
+            const next = parents.next()
+            if (next.done) { stack.pop(); continue }
+            const parent = discover(next.value, proof)
+            if (parent) stack.push(parent)
+        }
     }
     try {
         for (const candidate of candidates) {
@@ -56,6 +70,10 @@ function retireCandidates(operationContext) {
         }
     } finally {
         candidates.clear()
+        // The visitor closes over this batch. A pending delivery can keep its
+        // retirement frame reachable after the last Array holder is cleared.
+        proofs.clear()
+        discovered = undefined
         execution._retirementCandidates = undefined
     }
 }
@@ -84,26 +102,33 @@ function runOutsideGraphTransition(operationContext, work) {
 
 // One consumer owns one ledger. Storage is allocated only for managed inputs;
 // multiple appearances within that use share a lease, other consumers do not.
-function createLeaseLedger(operationContext) {
-    let values
-    let closed = false
-    return { acquire, release, get empty() { return !values?.size } }
+class LeaseLedger {
+    #operationContext
+    #values
 
-    function acquire(value) {
-        if (!closed && !values?.has(value) && metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type) &&
+    constructor(operationContext) { this.#operationContext = operationContext }
+    get empty() { return !this.#values?.size }
+
+    acquire = value => {
+        const operationContext = this.#operationContext
+        if (operationContext && !this.#values?.has(value) && metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type) &&
             metadata.incrementReadLease(value, operationContext))
-            (values ??= new Set()).add(value)
+            (this.#values ??= new Set()).add(value)
         return value
     }
 
-    function release() {
-        if (closed) return
-        closed = true
-        if (values && operationContext.execution.fatalError === null)
-            for (const value of values) metadata.decrementReadLease(value, operationContext)
-        values = undefined
-        operationContext = undefined
+    release = () => {
+        const operationContext = this.#operationContext
+        if (!operationContext) return
+        this.#operationContext = undefined
+        if (this.#values && operationContext.execution.fatalError === null)
+            for (const value of this.#values) metadata.decrementReadLease(value, operationContext)
+        this.#values = undefined
     }
+}
+
+function createLeaseLedger(operationContext) {
+    return new LeaseLedger(operationContext)
 }
 
 // A pending writer retains its destination but does not freeze its contents.

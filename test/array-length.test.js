@@ -2,7 +2,9 @@ import { Execution } from "../src/index.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 import { LengthState } from "../src/array-length.js"
+import { captureSequence, inRange } from "../src/array-sequence.js"
 import { ArrayView } from "../src/array-view.js"
+import { LinkedWidth, projectedCount } from "../src/array-width.js"
 import { metaOf } from "../src/meta.js"
 import { readLanguageProperty } from "../src/language-properties.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
@@ -27,6 +29,70 @@ function countLinkReads(state) {
 }
 
 describe("captured Array length knowledge", () => {
+    it("preserves clipped historical thresholds across selections near the safe-integer limit", async () => {
+        const ctx = { execution: new Execution(), errorContext: "clipped widths" }
+        const k = Number.MAX_SAFE_INTEGER, source = LinkedWidth.pending(0, 12, ctx)
+        const selectors = [], questions = []
+        let last = source, values = Array.from({ length: 13 }, (_, i) => i)
+        for (const [offset, floor, ceiling] of [[k - 6, 0, k], [-(k - 4), 1, 4], [k - 2, 0, k], [-(k - 2), 0, 12]]) {
+            const projected = projectedCount(last, offset, ctx, floor, ceiling)
+            last = LinkedWidth.pending(projected.minimum, projected.maximum, ctx)
+            selectors.push([last, projected])
+            const state = new LengthState(0, last)
+            values = values.map(n => {
+                const shifted = BigInt(n) + BigInt(offset)
+                return shifted < BigInt(floor) ? floor : shifted > BigInt(ceiling) ? ceiling : Number(shifted)
+            })
+            for (const index of [undefined, ...values, ...values]) {
+                const owner = new OperationOwner(ctx), capture = state.capture(owner, index)
+                const q = { values: values.map(n => index === undefined ? n : index < n) }
+                Promise.resolve(capture?.read ? capture.read() : capture).then(n => { q.answer = n })
+                if (capture?.read && questions.length % 7 === 0) { owner.close(); q.released = true }
+                questions.push(q)
+            }
+        }
+        for (const [selector, width] of selectors.reverse()) selector.select(width)
+        for (const [lo, hi] of [[0, 12], [1, 8], [2, 5], [3, 5], [4, 4]]) {
+            source.narrow(lo, hi)
+            await new Promise(setImmediate)
+            for (const q of questions) {
+                const possible = new Set(q.values.slice(lo, hi + 1))
+                assert.equal(q.answer, !q.released && possible.size === 1 ? q.values[lo] : undefined)
+            }
+        }
+    })
+
+    it("publishes proved growth through copies and numeric captures while a higher index stays open", async () => {
+        const ctx = { execution: new Execution(), errorContext: "captured growth" }
+        const source = new runtime.Chain(["X"], ctx, runtime.CHAIN_MODE.Sequential)
+        const first = Promise.withResolvers(), last = Promise.withResolvers()
+        let inside
+        const low = runtime.enter(source, [4], ctx, true, child => { inside = child; return first.promise })
+        const high = runtime.enter(source, [8], ctx, true, () => last.promise)
+        const widthOnly = captureSequence(runtime.lookupPath(source, [], ctx), ctx, { limit: 0, keepExtent: true })
+        const wrap = v => new runtime.Chain(v, ctx, runtime.CHAIN_MODE.Sequential)
+        const copy = wrap(runtime.run(source, [], "concat", [], ctx, {}))
+        const cropped = wrap(runtime.run(copy, [], "slice", [0, 3], ctx, {}))
+        let full, short, includesIndex
+        Promise.resolve(inRange(widthOnly, 2, ctx)).then(result => { includesIndex = result })
+        Promise.resolve(runtime.lookupPath(copy, ["length"], ctx)).then(n => { full = n })
+        Promise.resolve(runtime.lookupPath(cropped, ["length"], ctx)).then(n => { short = n })
+        runtime.assignPath(source, [14], "later", ctx)
+        runtime.assignPath(inside, [], "four", ctx)
+        first.resolve()
+        await low
+        await new Promise(setImmediate)
+        assert.equal(includesIndex, true)
+        assert.equal(short, 3)
+        assert.equal(full, undefined)
+        last.resolve()
+        await high
+        await new Promise(setImmediate)
+        assert.equal(full, 5)
+        assert.deepEqual(await runtime.export(copy, [], ctx), ["X", , , , "four"])
+        assert.equal(await runtime.lookupPath(source, ["length"], ctx), 15)
+    })
+
     it("keeps an earlier unfinished index inside a later assigned length on a concat result", async () => {
         for (const fail of [false, true]) {
             const ctx = { execution: new Execution(), errorContext: "resize during index creation" }

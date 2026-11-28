@@ -46,24 +46,19 @@ function continueGuarded(
     if (errorUtils.isFatalError(value))
         errorUtils.failExecution(operationContext, value)
     if (owner && !owner.open) return undefined
-    const guard = callback => result => {
-        if (
-            operationContext.execution.fatalError !== null ||
-            (owner && !owner.open)
-        )
-            return undefined
-        return run(operationContext, callback, result)
-    }
-    // Reception supplies a missing poison source inside the live-work guard,
-    // before the consumer can publish it or perform its failure effects.
-    const fulfill = result => onFulfilled(errorUtils.isPoisonError(result)
-        ? errorUtils.createPoisonError(result, operationContext, result.kind) : result)
-    return languageValues.thenValue(
-        value,
-        guard(fulfill),
-        guard(onRejected),
-        operationContext,
-    )
+    return languageValues.thenValue(value, fulfillGuarded, rejectGuarded, operationContext,
+        { onFulfilled, onRejected, owner, run })
+}
+
+function fulfillGuarded(value, { onFulfilled, owner, run }, operationContext) {
+    if (operationContext.execution.fatalError !== null || (owner && !owner.open)) return undefined
+    return run(operationContext, result => onFulfilled(errorUtils.isPoisonError(result)
+        ? errorUtils.createPoisonError(result, operationContext, result.kind) : result), value)
+}
+
+function rejectGuarded(reason, { onRejected, owner, run }, operationContext) {
+    if (operationContext.execution.fatalError !== null || (owner && !owner.open)) return undefined
+    return run(operationContext, onRejected, reason)
 }
 
 // Complete required-input collection: poison is data held outside the waits;

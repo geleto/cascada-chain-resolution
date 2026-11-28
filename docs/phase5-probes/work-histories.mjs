@@ -37,7 +37,7 @@ const changes = new Map([
             'const complete = () => {\n        if (!measuredClosed) { measuredClosed = true; measured.live-- }\n        unregister?.()'],
     ]],
     ['language-values.js', [
-        ['return Reflect.apply(then, value, [deliver(onFulfilled), deliver(onRejected)])',
+        ['return Reflect.apply(then, value, [fulfill, reject])',
             'globalThis.reviewHistoryCounts().subscriptions++; $&'],
     ]],
 ])

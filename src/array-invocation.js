@@ -11,7 +11,6 @@ import { PendingFailure, resolvePlacementTransition, structuralFailure } from ".
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
-    PASS_AS_PAYLOAD,
     runArrayStep,
     resolveArrayInRange,
 } from "./array-methods.js"
@@ -53,7 +52,7 @@ function selectArrayMethodDescription(invocationWork) {
             },
             undefined, invocationWork)),
         invoke(preparedArguments) {
-            if (preparedArguments instanceof PendingFailure) return preparedArguments.outcome(invocationWork.mutation)
+            if (preparedArguments instanceof PendingFailure) return preparedArguments.outcome(invocationWork)
             try {
                 return runArrayStep(invocationWork, () =>
                     invokeArrayMethod(methodDefinition, preparedArguments, invocationWork))
@@ -91,80 +90,37 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     const { operationContext } = invocationWork
     let args = invocationWork.args
     const { argumentIndex } = methodDefinition
-    // A separator needs a second occurrence; a search or index needs a first.
-    // A ready absolute at() already names its placement without reading length.
-    if (args.length && argumentIndex !== undefined &&
-        !(methodDefinition === ARRAY_METHODS.at && typeof args[0] === "number" && args[0] >= 0)) {
+    // A separator needs a second occurrence.
+    if (args.length && argumentIndex !== undefined) {
         const needed = runArrayStep(invocationWork, () => resolveArrayInRange(argumentIndex, invocationWork, present => present))
         if (isPending(needed, operationContext))
-            invocationWork.prepareArgumentFrontier(methodDefinition.inputs.length, args)
+            invocationWork.prepareArgumentFrontier(1, args)
         return internalSteps.continueGraphTransition(needed, operationContext, present => {
             try {
                 if (present === false) {
                     invocationWork.prepareArgumentFrontier(0, args)
                     return []
                 }
-                // A shape probe for at() is optional until its index is known.
-                if (errorUtils.isPoisonError(present) && methodDefinition !== ARRAY_METHODS.at) return present
-                return prepareConversions(methodDefinition, invocationWork, args)
+                if (errorUtils.isPoisonError(present)) return present
+                return prepareScalarArgument(methodDefinition, invocationWork, args)
             } finally { args = undefined }
         }, undefined, invocationWork)
     }
-    return prepareConversions(methodDefinition, invocationWork, args)
+    return prepareScalarArgument(methodDefinition, invocationWork, args)
 }
 
-function prepareConversions(methodDefinition, invocationWork, args) {
-    const inputs = methodDefinition.inputs ?? []
-    invocationWork.prepareArgumentFrontier(methodDefinition.restInput ? args.length : inputs.length, args)
-    // The prepared length preserves omission and every remaining argument.
-    let prepared = new Array(methodDefinition.restInput
-        ? args.length
-        : Math.min(inputs.length, args.length))
-    const length = prepared.length
-    invocationWork.discardPreparedOutput = () => {
-        prepared = undefined
-        for (let index = 0; index < length; index++)
-            if ((inputs[index] ?? methodDefinition.restInput) === PASS_AS_PAYLOAD)
-                invocationWork.discardArgument(index)
-    }
-    const readiness = []
-    for (let index = 0; index < length; index++) {
-        const input = inputs[index] ?? methodDefinition.restInput
-        if (input === PASS_AS_PAYLOAD) {
-            if (prepared) prepared[index] = args[index]
-            continue
-        }
-        const result = input(args[index], invocationWork)
-        // Scalar, identity and executable conversion capture their source on
-        // reception. A search bound first awaits shape.
-        invocationWork.releaseArgument(index)
-        readiness.push(
-            internalSteps.continueGraphTransition(
-                result,
-                invocationWork.operationContext,
-                value => {
-                    if (errorUtils.isPoisonError(value)) {
-                        invocationWork.preparationFailed()
-                        return value
-                    }
-
-                    if (prepared) prepared[index] = value
-                },
-                undefined,
-                invocationWork,
-            ),
-        )
-    }
+function prepareScalarArgument(methodDefinition, invocationWork, args) {
+    const convert = methodDefinition.convertArgument
+    invocationWork.prepareArgumentFrontier(convert ? 1 : 0, args)
+    if (!convert || !args.length) return []
+    const input = convert(args[0], invocationWork)
+    invocationWork.releaseArgument(0)
     args = undefined
-    return internalSteps.prepareInputs(
-        readiness,
-        invocationWork.operationContext,
-        () => {
-            invocationWork.discardPreparedOutput = undefined
-            return prepared
-        },
-        invocationWork,
-    )
+    return internalSteps.continueGraphTransition(input, invocationWork.operationContext, value => {
+        if (!errorUtils.isPoisonError(value)) return [value]
+        invocationWork.preparationFailed()
+        return value
+    }, undefined, invocationWork)
 }
 
 function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) {
@@ -209,14 +165,16 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
             // independent direct-failure decision is still pending.
             const returnsReceiver = methodDefinition.methodResult === RETURN_RECEIVER
             if (returnsReceiver && !errorUtils.isPoisonError(directFailure)) invocationWork.retainOutput(output)
-            const success = () => returnsReceiver ? output : readResult()
+            const receiverFailure = !returnsReceiver && errorUtils.isPoisonError(output) ? output : undefined
+            const success = returnsReceiver ? () => output : readResult
+            if (!returnsReceiver) output = undefined
             let result = directFailure === undefined ? success() : internalSteps.continueGraphTransition(
                 directFailure, operationContext, failure => failure ?? runArrayStep(invocationWork, success))
-            if (methodDefinition.methodResult !== RETURN_RECEIVER && errorUtils.isPoisonError(output)) {
+            if (receiverFailure) {
                 // Publish receiver failure now; only the independent result waits.
                 result = internalSteps.continueGraphTransition(result, operationContext,
                     value => errorUtils.isPoisonError(value)
-                        ? errorUtils.combineErrors([output, value]) : output,
+                        ? errorUtils.combineErrors([receiverFailure, value]) : receiverFailure,
                     undefined, invocationWork)
             }
             outcome.result = result

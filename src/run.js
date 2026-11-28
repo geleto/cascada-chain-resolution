@@ -13,6 +13,8 @@ import {
 
 function run(chain, path, method, args, operationContext, facts, delivery) {
     const operation = new invocation.InvocationWork(chain, path, operationContext, facts, method, [...args])
+    operation.delivery = delivery
+    delivery.carriesEvidence = true
     path = args = undefined
     const mutation = operation.mutation
     const result = invocation.invokeMethod(

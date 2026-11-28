@@ -1,5 +1,8 @@
 import { continueGraphTransition } from "./internal-step.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
+import { captureWidth, fixedWidth, LinkedWidth, projectedCount } from "./array-width.js"
+
+const isQuestion = node => node.deliver !== undefined || node.width !== undefined
 
 // Contributions and questions share program order. A source outcome can feed
 // several captured sequences, but later additions belong to only one sequence.
@@ -60,7 +63,7 @@ class LengthState {
     }
 
     append(node) {
-        if (node.deliver) this.retain()
+        if (isQuestion(node)) this.retain()
         node.state = this
         node.previous = this.tail
         if (this.tail) this.tail.next = node
@@ -71,7 +74,7 @@ class LengthState {
         node.minimum = Math.max(minimum, node.value ?? node.source?.minimum ?? 0)
         node.maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
         if (node.source && this.retentions) node.source.consumers.set(this.outcomes, undefined)
-        if (node.deliver) {
+        if (isQuestion(node)) {
             // Earlier active questions already observe their prefix. Subscribe only
             // the new interval, leaving the unobserved tail lazy.
             for (let previous = node.previous; previous && previous !== this.lastActiveQuestion; previous = previous.previous)
@@ -84,7 +87,7 @@ class LengthState {
     remove(node) {
         if (node === this.lastActiveQuestion) {
             let previous = node.previous
-            while (previous && !previous.deliver) {
+            while (previous && !isQuestion(previous)) {
                 previous.source?.consumers.set(this.outcomes, undefined)
                 previous = previous.previous
             }
@@ -96,7 +99,7 @@ class LengthState {
         else this.tail = node.previous
         node.source?.consumers.delete(this.outcomes)
         node.state = node.previous = node.next = undefined
-        if (node.deliver) this.release()
+        if (isQuestion(node)) this.release()
     }
 
     releaseQuestion(node) {
@@ -169,7 +172,12 @@ class LengthState {
             maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
             node.minimum = minimum
             node.maximum = maximum
-            if (node.deliver) {
+            if (node.width) {
+                const low = Math.min(minimum, node.limit), high = Math.min(maximum, node.limit)
+                const width = node.width
+                if (low !== width.low || high !== width.high) ready.push(() => width.narrow(low, high))
+                if (low === high) this.remove(node)
+            } else if (node.deliver) {
                 const answer = LengthState.lengthAnswer(minimum, maximum, node.index, node.limit)
                 if (answer !== undefined) {
                     const deliver = node.deliver
@@ -184,10 +192,10 @@ class LengthState {
     }
 
     compact(node) {
-        if (!node || node.source || node.deliver) return
+        if (!node || node.source || isQuestion(node)) return
         // Later growth can subsume earlier contributions, but an intervening
         // question still observes its own prefix without that growth.
-        while (node.previous && !node.previous.deliver &&
+        while (node.previous && !isQuestion(node.previous) &&
             (node.previous.source?.bound ?? node.previous.value) <= node.value)
             this.remove(node.previous)
         if (node.value <= (node.previous?.minimum ?? this.baseline)) {
@@ -204,13 +212,23 @@ class LengthState {
             work.operationContext, onAnswer, undefined, work)
     }
 
+    captureExtent(limit, ctx) {
+        if (this.widths) return projectedCount(this.widths, 0, ctx, 0, limit)
+        const minimum = Math.min(this.minimum, limit), maximum = Math.min(this.maximum, limit)
+        if (minimum === maximum) return fixedWidth(minimum)
+        if (this.tail?.width && this.tail.limit === limit) return this.tail.width
+        const width = LinkedWidth.pending(minimum, maximum, ctx)
+        this.append({ width, limit })
+        return width
+    }
+
     // Shape has its own completion: deletion can remove a pending placement
     // without deciding whether its preceding entry grew the Array. Capture one
     // ordered question; later contributions cannot change its answer.
     capture(owner, index, limit) {
         let answer = this.answer(index, limit)
         if (answer !== undefined) return answer
-        this.observeWidths()
+        if (this.widths) return captureWidth(this.widths, index, limit, owner)
         const { promise, resolve } = Promise.withResolvers()
         let unregister
         const node = this.append({ index, limit, deliver(value) {
@@ -233,7 +251,7 @@ class LengthState {
         const copy = new LengthState(this.baseline)
         for (let node = this.head; node; node = node.next) {
             if (node.source) copy.append({ source: node.source })
-            else if (!node.deliver) copy.compact(copy.append({ value: node.value }))
+            else if (!isQuestion(node)) copy.compact(copy.append({ value: node.value }))
         }
         return copy
     }

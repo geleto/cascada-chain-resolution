@@ -8,6 +8,7 @@ import { createLeaseLedger, releaseDetached } from "./ownership.js"
 import { PathOperation } from "./path-operation.js"
 import { CHAIN_MODE } from "./chain.js"
 import { receiveValue } from "./input-preparations.js"
+import { resultEvidence } from "./error-evidence.js"
 
 // One preparation is shared by receiver discovery and selected dispatch. The
 // invocation retains it until capture; a pending delivery then has its own
@@ -50,6 +51,11 @@ class ArgumentInput {
 
 class InvocationWork extends PathOperation {
     receiverReached = false
+    get resultEvidence() { return resultEvidence(this.delivery) }
+    get scopeEvidence() {
+        if (this.mode === CHAIN_MODE.Complete && (this.method === "fill" || this.method === "copyWithin"))
+            return this.resultEvidence
+    }
     get receiverOwnsFailure() { return this.controlledArray && this.mode !== CHAIN_MODE.Complete }
     #inputs
     #receiverLeases
@@ -102,8 +108,15 @@ class InvocationWork extends PathOperation {
 
     prepareArgumentFrontier(count = this.args.length, args = this.args) {
         count = Math.min(count, args.length)
-        for (const input of this.#inputs?.splice(count) ?? []) input?.close()
+        this.discardArgumentsFrom(count)
         for (let index = 0; index < count; index++) this.prepareArgument(index, args)
+    }
+
+    discardArgumentsFrom(first) {
+        const inputs = this.#inputs
+        if (!inputs || first >= inputs.length) return
+        for (let index = first; index < inputs.length; index++) inputs[index]?.close()
+        inputs.length = first
     }
 
     leaseArgumentsUntilReceiverReached() {

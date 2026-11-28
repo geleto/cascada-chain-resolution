@@ -7,6 +7,21 @@ const MAX = 0xffffffff, K = Number.MAX_SAFE_INTEGER
 const mutate = { mutationScopeDepth: 0 }
 
 describe("capacity projection of a captured slot", () => {
+    it("proves a cropped virtual slot obstructed with its original cause still undecided", async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "cropped capacity" }
+        const wrap = value => new r.Chain(value, ctx), unknown = Promise.withResolvers()
+        const prefix = wrap(new Array(MAX - 1))
+        const source = wrap(r.run(prefix, [], "concat", [unknown.promise, "X", "Y"], ctx, {}))
+        const slice = wrap(r.run(source, [], "slice", [MAX, MAX + 1], ctx, {}))
+        let obstructed
+        Promise.resolve(r.hasError(slice, [], ctx)).then(value => { obstructed = value })
+        await new Promise(setImmediate)
+        assert.equal(obstructed, true)
+        const details = r.getErrors(slice, [], ctx)
+        assert(r.isPending(details, ctx))
+        unknown.resolve([])
+        assert.equal((await details).kind, r.ERROR_KIND.InvalidArrayLength)
+    })
     it("publishes certain Complete scope failure and permits exact repair before the cause settles", async () => {
         for (const length of [MAX, MAX - 1]) for (const reject of [false, true]) {
             const ctx = { execution: new r.Execution(), errorContext: "scoped splice" }
@@ -200,6 +215,31 @@ describe("capacity projection of a captured slot", () => {
         }
     })
 
+    it("reports only new loss from a splice insertion or a displaced original slot", async () => {
+        for (const mode of [r.CHAIN_MODE.Unordered, r.CHAIN_MODE.Sequential])
+            for (const marked of [false, true]) for (const start of [0, MAX]) for (const deferred of [false, true]) {
+                const ctx = { execution: new r.Execution(), errorContext: "splice capacity" }, wrap = value => new r.Chain(value, ctx, mode)
+                const tail = wrap([]), original = r.validationError("earlier", ctx, r.ERROR_KIND.OperationInputFailed)
+                if (marked) r.appendMissingOutput(tail, original, ctx)
+                else r.run(tail, [], "push", ["last"], ctx, mutate)
+                const source = wrap(r.run(wrap(new Array(MAX - 1)), [], "concat", [r.lookupPath(tail, [], ctx)], ctx, {}))
+                const at = Promise.withResolvers(), count = Promise.withResolvers()
+                const result = r.run(source, [], "splice", [deferred ? at.promise : start, deferred ? count.promise : 0, "X"], ctx, mutate)
+                count.resolve(0)
+                await new Promise(setImmediate)
+                at.resolve(start)
+                const direct = await result, crossed = await r.lookupPath(source, [MAX], ctx)
+                if (marked && start === 0) {
+                    assert.equal(crossed, original)
+                    assert.deepEqual(await r.export(wrap(direct), [], ctx), [])
+                } else {
+                    assert.equal(direct.kind, r.ERROR_KIND.InvalidArrayLength)
+                    assert.equal(crossed, direct)
+                }
+                assert.equal(await r.lookupPath(source, ["length"], ctx), MAX + 1)
+            }
+    })
+
     it("credits repeated virtual slots together before their common predecessor selects the cause", async () => {
         const ctx = { execution: new r.Execution(), errorContext: "repeated selection" }
         const wrap = value => new r.Chain(value, ctx), get = source => r.lookupPath(source, [], ctx)
@@ -387,6 +427,49 @@ describe("Array capacity on captured layouts", () => {
         assert.equal(first.errorContext, "outer")
         assert.equal(second.errorContext, "inner")
         assert.deepEqual(new Set((await search).errors), new Set([first, second]))
+    })
+
+    it("settles previously captured lengths as soon as later operands prove count saturation", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) {
+            const ctx = { execution: new r.Execution(), errorContext: "historical saturation" }
+            const wrap = value => new r.Chain(value, ctx, mode)
+            const root = chain => r.lookupPath(chain, [], ctx)
+            const length = chain => r.lookupPath(chain, ["length"], ctx)
+            const concat = (chain, value) => wrap(r.run(chain, [], "concat", [value], ctx, {}))
+            const cause = r.validationError("missing", ctx, r.ERROR_KIND.OperationInputFailed)
+            let half = wrap([])
+            r.appendMissingOutput(half, cause, ctx)
+            for (let i = 0; i < 52; i++) half = concat(half, root(half))
+            const full = concat(half, root(half))
+            for (const split of [false, true]) {
+                const first = Promise.withResolvers(), second = Promise.withResolvers()
+                const a = Promise.withResolvers(), b = Promise.withResolvers()
+                const prefix = concat(wrap([]), first.promise)
+                let result = concat(prefix, a.promise)
+                if (split) result = concat(concat(result, second.promise), b.promise)
+                const cropped = wrap(r.run(result, [], "slice", [0, -1], ctx, {}))
+                let old, current, shorter
+                Promise.resolve(length(prefix)).then(n => { old = n })
+                Promise.resolve(length(result)).then(n => { current = n })
+                Promise.resolve(length(cropped)).then(n => { shorter = n })
+                if (split) {
+                    b.resolve(root(half))
+                    await new Promise(setImmediate)
+                    assert.equal(current, undefined)
+                }
+                a.resolve(root(split ? half : full))
+                await new Promise(setImmediate)
+                assert.equal(current, K)
+                assert.equal(shorter, K - 1)
+                assert.equal(old, undefined)
+                assert.equal(length(result), current)
+                assert.equal(length(cropped), shorter)
+                first.resolve([])
+                second.resolve([])
+                await new Promise(setImmediate)
+                assert.equal(old, 0)
+            }
+        }
     })
 
     it("credits a saturated structural run behind an open prefix without enumerating virtual slots", async () => {

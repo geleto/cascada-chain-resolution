@@ -5,6 +5,26 @@ import * as r from "cascada-chain-resolution"
 
 describe("prepared join failure boundaries", function () {
     this.timeout(15000)
+    it("joins the stored text of a maximum-length sparse Array with an empty separator", () => {
+        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--input-type=module", "-e", `
+            import assert from "node:assert/strict"
+            import * as r from "cascada-chain-resolution"
+            for (const mode of Object.values(r.CHAIN_MODE)) {
+                const ctx = { execution: new r.Execution(), errorContext: "sparse text" }
+                const last = Promise.withResolvers(), array = new Array(0xffffffff)
+                array[array.length - 1] = last.promise
+                array[0] = "A"
+                const chain = new r.Chain(array, ctx, mode)
+                const joined = r.run(chain, [], "join", [""], ctx, {})
+                last.resolve("Z")
+                assert.equal(await joined, "AZ")
+                assert.equal(r.run(chain, [], "join", [""], ctx, {}), "AZ")
+                assert.equal(ctx.execution.fatalError, null)
+            }`], { encoding: "utf8", timeout: 10000 })
+        assert.ifError(result.error)
+        assert.equal(result.status, 0, result.stdout + result.stderr)
+    })
+
     it("rejects real string-size overflow without failing unrelated operation work", () => {
         const sourceRoot = new URL("../src/index.js", import.meta.url).href
         const result = spawnSync(process.execPath,

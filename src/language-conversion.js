@@ -87,6 +87,11 @@ function toPrimitiveValue(value, ancestry, operation) {
     )
 }
 
+// These primitives have infallible numeric conversion without host inspection.
+function isNumericPrimitive(value) {
+    return value == null || typeof value === "number" || typeof value === "string" || typeof value === "boolean"
+}
+
 function toIntegerOrInfinity(value, operation) {
     return internalSteps.continueGraphTransition(
         toNumberValue(value, operation),
@@ -151,11 +156,14 @@ function joinArrayText(array, separator, ancestry, operation) {
     const result = internalSteps.prepareInputs(conversions, operationContext, values =>
         internalSteps.continueGraphTransition(shape.length?.read ? shape.length.read() : shape.length,
             operationContext, length => {
-                const joined = new Array(length)
+                // Candidates are in numeric order. Holes produce no text
+                // with an empty separator, even at the native Array limit.
+                const compact = separator === ""
+                const joined = new Array(compact ? Math.min(keys.length, length) : length)
                 for (let index = 0; index < keys.length; index++) {
                     const key = keys[index]
-                    if (Number(key) >= joined.length) continue
-                    joined[key] = values[index]
+                    if (Number(key) >= length) break
+                    joined[compact ? index : key] = values[index]
                 }
                 // Entries and separator are converted strings; no host code remains.
                 // No standard API exposes the engine's string-size limit. The native
@@ -213,6 +221,7 @@ function joinLayout(node, separator, ancestry, operation) {
 }
 
 export {
+    isNumericPrimitive,
     joinLogicalArray,
     toIntegerOrInfinity,
     toNumberValue,

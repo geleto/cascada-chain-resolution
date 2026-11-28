@@ -237,16 +237,31 @@ function retireRelationships(owner, operationContext) {
     retireRefIndex(owner, operationContext)
 }
 
-function visitRetentionParents(value, operationContext, visit) {
+// Unselected Array operands protect a possible value, but have no logical
+// placement key. Keep them in the same retention graph outside enumeration.
+function linkRetentionParent(value, parent, operationContext) {
+    const meta = metadata.requireMeta(value, operationContext)
+    ;(meta.retentionParents ??= new Set()).add(parent)
+}
+
+function unlinkRetentionParent(value, parent, operationContext, retainedByReplacement = false) {
+    const meta = metadata.requireMeta(value, operationContext)
+    const parents = meta.retentionParents
+    if (parents?.delete(parent)) {
+        if (!parents.size) delete meta.retentionParents
+        if (!retainedByReplacement) reconsider(value, operationContext)
+    }
+}
+
+function* retentionParentsOf(value, operationContext) {
     const meta = metadata.metaOf(value, operationContext)
-    if (meta?.backingOwners) for (const owner of meta.backingOwners)
-        if (visit(owner) === false) return false
+    if (meta?.retentionParents) yield* meta.retentionParents
+    if (meta?.backingOwners) yield* meta.backingOwners
     const incoming = meta?.incomingParents
-    if (incoming instanceof Map) {
-        for (const owner of incoming.keys()) if (visit(owner) === false) return false
-    } else if (incoming) return visit(incoming.source)
+    if (incoming instanceof Map) yield* incoming.keys()
+    else if (incoming) yield incoming.source
 }
 
 export { addParent, removeParent, visitParentPlacements, getParentPlacements,
     CONSTRUCTION_STATE, PlacementConstruction, initializePlacements, recordLogicalPlacement, initializeHolder,
-    updateBackingOwners, activateRelationships, retireRelationships, visitRetentionParents, destinationOf }
+    updateBackingOwners, activateRelationships, retireRelationships, retentionParentsOf, linkRetentionParent, unlinkRetentionParent, destinationOf }

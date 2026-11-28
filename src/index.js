@@ -48,8 +48,9 @@ function capturePath(chain, path, operationContext, mode, firstDynamicSegment = 
 }
 
 function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
+    const evidence = {}
     return runOperation(operationContext, lookupPathForExpressionCore,
-        [chain, path, operationContext, firstDynamicSegment], returnExpressionResult)
+        [chain, path, operationContext, firstDynamicSegment, evidence], returnExpressionResult, evidence)
 }
 
 function importMethodResult(value, operationContext) {

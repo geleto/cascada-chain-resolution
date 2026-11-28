@@ -41,7 +41,9 @@ console.log(await cascada.export(chain, [], operationContext))
 
 ## API reference
 
-Managed mutations retain their pre-operation value for repair. External scopes order overlapping work hierarchically; their repair clears poison without rolling back native effects.
+Managed paths track their current value and their own poison flag separately.
+Registered external paths also track poison at the affected scope and order
+overlapping operations hierarchically.
 
 ```js
 import {
@@ -120,7 +122,7 @@ A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Read
 
 The graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) implements `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects directly with the ordinary Error.
 
-Compiler mutation access trees drive atomic external identity registration and hierarchical ordering of overlapping native scopes. Observations copy mutable property results. A failed managed mutation discards private changes and retains its pre-operation value beneath placement poison; repair exposes that baseline. Failed external mutations retain native effects and poison their selected tree scope; repair clears covered external subtree poison without native rollback. See [mutation and observation](docs/mutation-and-observation.md) and [external ordering](docs/external-context-ordering.md).
+Compiler mutation access trees drive atomic external identity registration and hierarchical ordering of overlapping native scopes. Observations copy mutable property results. A managed mutation that fails its whole scope discards its private writes and flags that scope. A streaming Array operation can publish independent writes in other regions. An external mutation may perform native effects before it fails and flags its scope. Those effects are visible after repair. See [mutation and observation](docs/mutation-and-observation.md) and [external ordering](docs/external-context-ordering.md).
 
 ### Higher-runtime integration
 
@@ -279,7 +281,24 @@ Contextual queries of registered external scopes include ordered own and descend
 
 ### `repairPath(chain, path, operationContext, firstDynamicSegment = path.length)`
 
-Clear selected managed scope poison to expose its preserved pre-operation value, and clear repairable poison in a covered external subtree without reverting native effects. Repair uses ordinary managed ordering and ordered metadata publication, with no native reservation of its own. Successful repair returns undefined without invoking a native method or external-resource read/write; it need not await earlier native outcomes whose poison it overwrites. A healthy or absent managed target needs no managed change; poison without a retained baseline returns unchanged. Strict-ancestor own poison blocks selection. Repair does not change canonical bindings or make a rejected context valid. Healthy native Error data and independent earlier managed failures are not erased. A replaceable managed location may instead be assigned/deleted; fixed resource locations remain protected. Repair-and-call clears first, then invokes under the call's required protection; a new failed managed mutation rolls back to that repaired baseline and poisons again.
+Clears the selected path's own poison flag in issue order. On a managed path,
+clearing the flag exposes the value currently held there. On a registered
+external path, repair updates that path's poison metadata. Each flagged
+descendant needs its own repair. For example, if both `["api"]` and
+`["api", "child"]` are flagged, repair `["api"]` first so the child is
+reachable, then repair `["api", "child"]`.
+
+Successful repair returns `undefined`, including when the selected path has
+no flag. It can complete while the selected value is still pending. If the
+value itself is a stored `PoisonError`, reading it after repair yields that
+same error. At a replaceable managed location, `assignPath` or `deletePath`
+can replace or remove either a flagged value or a stored poison value.
+
+A poisoned ancestor blocks repair below it. A failure to select the path,
+obtain mutation authority, or publish the repair returns poison. If selection
+or publication must wait, `repairPath` returns a Promise for the outcome.
+A mutating `run` with `repair: true` clears the selected scope's flag and
+invokes the method as one ordered operation. See the [repair contract](repair-simplification-plan.md#1-contract).
 
 ### Static path provenance and compiler entry selection
 

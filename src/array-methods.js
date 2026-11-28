@@ -1,20 +1,22 @@
 import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
+import { SelectedOperands } from "./array-sequence-layout.js"
 import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
 import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
+import { OperationOwner } from "./operation-lifecycle.js"
+import { certainPoison, supplyErrorEvidence } from "./error-evidence.js"
 import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
 import { prepareSearch, search } from "./array-search.js"
 import { concatSequence, joinContributions, capacitySequence, captureOrder, captureSequence, fixed, inRange, publishLayout, publishSequence, retainLayout } from "./array-sequence.js"
-import { createLeaseLedger } from "./ownership.js"
 import { CHAIN_MODE } from "./chain.js"
 import { applyEndpoint, applyLayoutMethod, copyDense, copyFixedRanges, partialEndpoint } from "./array-layout-methods.js"
 import { broadRange, IntervalSelection, prepareInterval } from "./array-interval.js"
 import * as propertyVersions from "./property-versions.js"
-import { readLanguagePlacement } from "./language-properties.js"
+import { readLanguagePlacement, readObservedPlacement } from "./language-properties.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { flatStream } from "./array-flat-stream.js"
 import { prepareSpliceArguments, spliceArray } from "./array-splice.js"
@@ -23,24 +25,23 @@ import { LayoutBuilder, anyPresent, capacityError, captureLayout, denseLayout, j
 
 const RETURN_RECEIVER = 1
 const RETURN_VALUE = 2
-const PASS_AS_PAYLOAD = Symbol()
 const arraySort = Array.prototype.sort
 
 // Preparation consumes only required controls. Each evaluator owns its
 // mapping and hands mutations to the common publication boundary.
 const ARRAY_METHODS = {
     __proto__: null,
-    at: { argumentIndex: 0, inputs: [numericInput], prepare: prepareAtIndex, apply: observeAt },
+    at: { prepareArguments: prepareAtArguments, prepare: prepareAtIndex, apply: observeAt },
     concat: { prepareArguments: prepareConcatArguments, leaseInputsThroughResult: true, apply: concatenate },
     copyWithin: { prepareArguments: prepareInterval, apply: intervalMethod, methodResult: RETURN_RECEIVER },
     fill: { prepareArguments: prepareInterval, apply: intervalMethod, methodResult: RETURN_RECEIVER },
     flat: { prepareArguments: retainControlArgument, leaseInputsThroughResult: true, apply: flatStream },
     includes: { prepareArguments: prepareSearch, leaseInputsThroughResult: true, apply: search },
     indexOf: { prepareArguments: prepareSearch, leaseInputsThroughResult: true, apply: search },
-    join: { argumentIndex: 1, inputs: [stringInput], apply: join },
+    join: { argumentIndex: 1, convertArgument: stringInput, apply: join },
     lastIndexOf: { prepareArguments: prepareSearch, leaseInputsThroughResult: true, apply: search },
     pop: { prepare: prepareEndpoint, apply: endpointMethod, methodResult: RETURN_VALUE },
-    push: { restInput: PASS_AS_PAYLOAD, prepare: prepareEndpoint, apply: endpointMethod, methodResult: RETURN_VALUE },
+    push: { prepareArguments: prepareEndpointArguments, apply: endpointMethod, methodResult: RETURN_VALUE },
     reverse: { prepare: prepareEndpoint, apply: endpointMethod, methodResult: RETURN_RECEIVER },
     shift: { prepare: prepareEndpoint, apply: endpointMethod, methodResult: RETURN_VALUE },
     slice: { prepareArguments: prepareInterval, apply: intervalMethod },
@@ -68,11 +69,9 @@ const ARRAY_METHODS = {
     },
     // No prepared arguments makes join use its default separator.
     toString: { apply: join },
-    unshift: { restInput: PASS_AS_PAYLOAD, prepare: prepareEndpoint, apply: endpointMethod, methodResult: RETURN_VALUE },
+    unshift: { prepareArguments: prepareEndpointArguments, apply: endpointMethod, methodResult: RETURN_VALUE },
     with: {
-        argumentIndex: 0,
-        inputs: [numericInput, PASS_AS_PAYLOAD],
-        prepare: prepareWithArguments,
+        prepareArguments: prepareWithArguments,
         apply: copyDense,
         leaseInputsThroughResult: true,
     },
@@ -111,13 +110,44 @@ function prepareEndpoint(args, work) {
     })
 }
 
+function prepareEndpointArguments(work) {
+    const args = work.args
+    const selected = prepareEndpoint(args, work)
+    if (!errorUtils.isPoisonError(selected)) work.prepareArgumentFrontier(args.length, args)
+    return selected
+}
+
+function prepareAtArguments(work) {
+    work.discardArgumentsFrom(1)
+    if (!work.args.length) return []
+    const ctx = work.operationContext
+    const raw = work.args[0]
+    // An absolute Number cannot fail conversion and needs no length read.
+    const nonempty = typeof raw === "number" && raw >= 0 ||
+        runArrayStep(work, () => resolveArrayInRange(0, work, present => present))
+    if (nonempty === false) { work.discardArgument(0); return [] }
+    // A failed conversion matters only on a nonempty receiver. A successful
+    // one can name (or exclude) its point before the first slot is known.
+    const controls = new OperationOwner(ctx)
+    const index = numericInput(work.takeArgument(0, work.args), controls, 0)
+    return internalSteps.decideInputs([index, nonempty], ctx, ([at, present]) => {
+        if (present !== false && (languageValues.isPending(at, ctx) ||
+            errorUtils.isPoisonError(at) && languageValues.isPending(present, ctx))) return
+        controls.close()
+        return present === false ? [] : errorUtils.isPoisonError(at) ? at : [at]
+    }, work)
+}
+
 function prepareAtIndex([index = 0], work) {
     if (index < 0) {
         const ctx = work.operationContext
+        if (-index > (work.arrayLength ?? ArrayView.maximumLength(work.receiver, ctx))) return
         const sequence = captureOrder(work.receiver, ctx)
         const prefixLength = ArrayView.prefixLength(work.receiver, ctx)
-        if (sequence && (!prefixLength || -index <= sequence.minimum - prefixLength))
-            return { placement: sequence.point(-1 - index, true) }
+        if (sequence && (!prefixLength || -index <= sequence.minimum - prefixLength)) {
+            const rank = -1 - index, point = sequence.capturePoint?.(rank, true)
+            return { placement: point ? propertyVersions.captureObservedPoint(point, ctx) : sequence.point(rank, true) }
+        }
     }
     return runArrayStep(work, () => index < 0
         ? resolveArrayInRange(-index - 1, work, present => present
@@ -125,16 +155,77 @@ function prepareAtIndex([index = 0], work) {
         : index)
 }
 
-function prepareWithArguments([index = 0, replacement], work) {
-    return runArrayStep(work, () => {
-        const finish = valid => {
-            try {
-                return valid ? [index, replacement] : errorUtils.validationError(
-                    "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
-            } finally { replacement = undefined }
+function prepareWithArguments(work) {
+    let args = work.args
+    const ctx = work.operationContext
+    work.discardArgumentsFrom(2)
+    if (args.length > 2) args.length = 2
+    const invalidIndex = () => errorUtils.validationError(
+        "Array index is out of range", ctx, errorUtils.ERROR_KIND.InvalidArrayOperation)
+    const shape = resolveArrayInRange(0, work, present => present)
+    if (shape === false || errorUtils.isPoisonError(shape)) {
+        args = undefined
+        return shape === false ? invalidIndex() : shape
+    }
+    const discardReplacement = () => {
+        if (args.length > 1) {
+            work.discardArgument(1)
+            args.length = 1
         }
-        return resolveArrayInRange(index < 0 ? -index - 1 : index, work, finish)
-    })
+    }
+    // A nested conversion can report its first failure while its other
+    // required causes are still pending. Only the empty-shape question lives on.
+    let failedConversion = false, remainingShape
+    work.discardPreparedOutput = () => {
+        if (!failedConversion) supplyErrorEvidence(work.resultEvidence, certainPoison)
+        failedConversion = true
+        discardReplacement()
+    }
+    const index = numericInput(work.prepareArgument(0, args), work, 0)
+    work.releaseArgument(0)
+    if (args.length) args[0] = undefined
+    const checked = internalSteps.decideInputs([shape, index], ctx, ([nonempty, at]) => {
+        if (errorUtils.isPoisonError(nonempty)) return nonempty
+        if (nonempty === false) return invalidIndex()
+        if (languageValues.isPending(at, ctx)) return
+        if (errorUtils.isPoisonError(at)) {
+            work.preparationFailed()
+            if (nonempty === true) return at
+            return
+        }
+        const rank = at < 0 ? -at - 1 : at
+        if (rank === 0) return nonempty === true ? at : undefined
+        const validate = valid => errorUtils.isPoisonError(valid) ? valid : valid ? at : invalidIndex()
+        return runArrayStep(work, () => remainingShape ? internalSteps.continueGraphTransition(
+            inRange(remainingShape, rank, ctx), ctx, validate, undefined, work) : resolveArrayInRange(rank, work, validate))
+    }, work)
+    if (errorUtils.isPoisonError(checked)) {
+        work.discardPreparedOutput = undefined
+        args = undefined
+        return checked
+    }
+    const capacity = !failedConversion && work.mode === CHAIN_MODE.Complete && resolveArrayInRange(MAX_ARRAY_LENGTH, work, over => over)
+    const result = internalSteps.decideInputs([checked, capacity], ctx, ([at, over]) => {
+        if ((over === true || errorUtils.isPoisonError(over)) && !failedConversion) {
+            // Only index validation can change the diagnostic. Capture its
+            // length independently before dropping the receiver and replacement.
+            if (work.arrayLength === undefined && languageValues.isPending(at, ctx))
+                remainingShape = captureSequence(work.receiver, ctx, { limit: 0, keepExtent: true })
+            work.preparationFailed()
+        }
+        if (languageValues.isPending(at, ctx)) return
+        if (errorUtils.isPoisonError(at)) return at
+        if (languageValues.isPending(over, ctx)) return
+        if (errorUtils.isPoisonError(over)) return over
+        return over ? capacityError(ctx) : [at, work.prepareArgument(1, args)]
+    }, work)
+    // While a copy is still possible, capture its replacement at issuance.
+    if (languageValues.isPending(result, ctx) && args.length > 1) work.prepareArgument(1, args)
+    return internalSteps.continueGraphTransition(result, ctx, value => {
+        work.discardPreparedOutput = undefined
+        args = undefined
+        return value
+    }, undefined, work)
 }
 
 function observeAt(index, invocationWork) {
@@ -143,19 +234,18 @@ function observeAt(index, invocationWork) {
             retainElement(p, invocationWork), undefined, invocationWork)
     const thisValue = invocationWork.receiver
     if (!isArrayIndex(index) && !ArrayView.mayHaveVirtualIndex(thisValue, index, invocationWork.operationContext)) return undefined
-    return retainElement(readLanguagePlacement(thisValue, index, invocationWork.operationContext), invocationWork)
+    return retainElement(readObservedPlacement(thisValue, index, invocationWork.operationContext), invocationWork)
 }
 
-function numericInput(value, invocationWork) {
+function numericInput(value, invocationWork, defaultValue) {
     return internalSteps.continueGraphTransition(
         value,
         invocationWork.operationContext,
         resolved => {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
-            // Let each position apply its own undefined default.
             return resolved === undefined
-                ? undefined
+                ? defaultValue
                 : conversion.toIntegerOrInfinity(resolved, invocationWork)
         },
         undefined,
@@ -187,7 +277,8 @@ function intervalMethod(args, work, finish, reportWrites) {
     const length = work.arrayLength ?? ArrayView.minimumLength(work.receiver, ctx)
     const width = work.method === "copyWithin" ? Math.min(args[2] - args[1], length - args[0]) : args[2] - args[1]
     const prefix = ArrayView.prefixLength(work.receiver, ctx)
-    if (work.method === "slice" && args[1] <= prefix)
+    if (work.method === "slice" && (args[1] <= prefix ||
+        region && !region.pending && work.arrayLength !== undefined && length <= MAX_ARRAY_LENGTH))
         return finish(arrayRemaps.sliceOutput(work.receiver, args[0], args[1], ctx))
     if ((region?.layout || region?.placements) && (!prefix || length > MAX_ARRAY_LENGTH) ||
         work.method !== "slice" && broadRange(width, work.receiver, length, ctx))
@@ -211,13 +302,13 @@ function endpointMethod(args, work, finish, reportWrites) {
         if (shared) return finish(shared, () => removes ? retainElement(cut ? readLanguagePlacement(work.receiver, at, ctx) :
             undefined, work) : length + args.length)
     }
-    if (method === "unshift" && args.length) {
+    if (method === "unshift" && args.length && (!region || ArrayView.prefixLength(work.receiver, ctx))) {
         const newLength = length + args.length
         const copy = arrayRemaps.copyPhysicalArray(work, length, output => finish(output, () => newLength), 0, 0, args)
         if (copy !== undefined) return copy
     }
     if (work.mode === CHAIN_MODE.Complete && removes && length - 1 > MAX_ARRAY_LENGTH) return capacityError(ctx)
-    if (!region || removes && !region.pending && length <= MAX_ARRAY_LENGTH && ArrayView.prefixLength(work.receiver, ctx)) {
+    if (!region || removes && !region.pending && length <= MAX_ARRAY_LENGTH) {
         if (removes) {
             const first = method === "shift", index = first ? 0 : length - 1
             const output = arrayRemaps.sliceOutput(work.receiver, first ? Math.min(1, length) : 0, first ? length : Math.max(0, length - 1), ctx)
@@ -262,17 +353,20 @@ function runArrayStep(invocationWork, work) {
 
 // An ordinary fixed part is a sparse placement remap. Open or compact parts
 // keep their sequence. Capture either at delivery, before a later write.
-function concatInput(value, work, leases) {
+function concatInput(value, work, operands) {
     const ctx = work.operationContext
     return internalSteps.continueGraphTransition(value, ctx, value => runArrayStep(work, () => {
         try {
             if (errorUtils.isPoisonError(value)) return value
-            leases?.acquire(value)
-            if (!isLogicalArray(value, ctx)) return [{ value, present: true }]
-            if (ArrayView.region(value, ctx) || ArrayView.hasPendingLength(value, ctx)) return captureSequence(value, ctx)
-            return arrayRemaps.createRemap(value, ctx)
+            const part = !isLogicalArray(value, ctx) ? [{ value, present: true }] :
+                ArrayView.region(value, ctx) || ArrayView.hasPendingLength(value, ctx) ? captureSequence(value, ctx) :
+                    arrayRemaps.createRemap(value, ctx)
+            if (!operands) return part
+            const sequence = Array.isArray(part) ? fixed(layoutFromRemap(part)) : part
+            operands.select(sequence.operands, ctx)
+            return sequence
         } finally { value = undefined }
-    }), undefined, leases ? undefined : work)
+    }), undefined, operands ? undefined : work)
 }
 
 function prepareConcatArguments(work) {
@@ -307,15 +401,17 @@ function prepareConcatArguments(work) {
 
 function concatenate(args, work) {
     const ctx = work.operationContext, streaming = work.mode !== CHAIN_MODE.Complete
-    const leases = streaming ? createLeaseLedger(ctx) : undefined
-    let parts, prefix
+    let parts, prefix, operands
     try {
         const length = work.arrayLength ?? ArrayView.readyLength(work.receiver, ctx)
         if (streaming) {
             let minimum = length ?? ArrayView.minimumLength(work.receiver, ctx)
             parts = []
             for (let i = 0; i < args.length && minimum < MAX_COUNT; i++) {
-                const part = concatInput(work.takeArgument(i, args), work, leases)
+                const value = work.takeArgument(i, args)
+                const pending = languageValues.isPending(value, ctx) && new SelectedOperands()
+                if (pending) (operands ??= [])[i] = pending
+                const part = concatInput(value, work, pending)
                 parts.push(part)
                 minimum += Math.min(MAX_COUNT - minimum, Array.isArray(part) ? part.length :
                     errorUtils.isPoisonError(part) ? 1 : part.minimum ?? 0)
@@ -329,24 +425,26 @@ function concatenate(args, work) {
         if (length !== undefined && !ArrayView.region(work.receiver, ctx) &&
             parts.every(part => Array.isArray(part) && (remaining -= part.length) >= 0)) {
             const extended = arrayRemaps.appendView(work.receiver, parts, length, MAX_ARRAY_LENGTH - length - remaining, ctx)
-            if (extended) { leases?.release(); return work.retainOutput(extended) }
+            if (extended) return work.retainOutput(extended)
         }
         const sequential = work.mode === CHAIN_MODE.Sequential
-        const suffix = joinContributions(parts, asSequence, sequential, ctx)
+        const suffix = joinContributions(parts, concatPartReader(ctx), sequential, ctx, operands)
         prefix = ArrayView.borrowPrefix(work.receiver, length, ctx)
-        if (!prefix) leases?.acquire(work.receiver)
         const receiver = prefix && prefix.length === length ? fixed(span(length)) :
             captureSequence(work.receiver, ctx, { omitEnd: prefix?.length })
         const sequence = concatSequence(receiver, suffix, ctx, streaming)
         const borrowed = prefix && { source: work.receiver, range: prefix }
-        const publish = sequence => work.retainOutput(publishSequence(sequence, ctx, leases?.release, borrowed))
+        const publish = sequence => work.retainOutput(publishSequence(sequence, ctx, undefined, borrowed))
         return streaming ? publish(capacitySequence(sequence, ctx)) : internalSteps.continueGraphTransition(
             inRange(sequence, MAX_ARRAY_LENGTH, ctx), ctx, over => over ? capacityError(ctx) :
                 runArrayStep(work, () => publish(sequence)), undefined, work)
-    } catch (failure) { leases?.release(); throw failure }
-    finally { args = parts = prefix = undefined }
+    } finally {
+        args = parts = prefix = operands = undefined
+    }
+}
 
-    function asSequence(part) {
+function concatPartReader(ctx) {
+    return part => {
         if (errorUtils.isPoisonError(part)) return fixed(span(1, structuralPlacement(part)))
         if (!Array.isArray(part)) return part
         return fixed(layoutFromRemap(part))
@@ -440,7 +538,7 @@ function sortArray(args, work, finish, reportWrites) {
     if (!languageValues.isPending(completed, ctx)) return completed
     // The owner can be repaired once failure is certain, while the operation's
     // original result still collects its exact cause.
-    const failed = () => new propertyVersions.PendingFailure(completed, ctx).outcome(true)
+    const failed = () => new propertyVersions.PendingFailure(completed, ctx).outcome(work)
     if (certain) return failed()
     const publication = Promise.withResolvers()
     publishFailure = () => publication.resolve(failed())
@@ -507,7 +605,7 @@ function sortableFacts(leaves, ctx) {
 function sortLayout(node, args, work, length, finish, reportWrites, noteFailure) {
     const ctx = work.operationContext, leaves = placementCounts(node)
     if (!work.mutation) {
-        const release = retainLayout([node], ctx)
+        const release = retainLayout(node, ctx)
         work.releaseReceiverLeases()
         work.releaseCapturedReceiver = release
     }
@@ -873,5 +971,5 @@ function compareExported(comparator, left, right, operationContext) {
     } finally { comparator = left = right = result = undefined }
 }
 
-export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, numericInput, runArrayStep, retainElement,
+export { ARRAY_METHODS, RETURN_RECEIVER, numericInput, runArrayStep, retainElement,
     resolveArrayLength, resolveArrayInRange, checkArrayCapacity }

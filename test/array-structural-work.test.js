@@ -1,9 +1,14 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import * as r from "../src/index.js"
+import { join, placementCounts, span } from "../src/array-layout.js"
+import { fixed, valueSignal } from "../src/array-sequence.js"
+import { readSequenceLayout, selectSequenceLayout } from "../src/array-sequence-layout.js"
 import { ArrayView } from "../src/array-view.js"
+import { requireMeta } from "../src/meta.js"
 import { getParentPlacements } from "../src/parent-placements.js"
-import { ready, rejected } from "./ordered-thenable.js"
+import { buildRefIndex } from "../src/refcounts.js"
+import { OrderedThenable, ready, rejected } from "./ordered-thenable.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 const mutate = { mutationScopeDepth: 0 }
@@ -23,6 +28,252 @@ function measured(size, mode, data = Array.from({ length: size }, (_, i) => i)) 
 }
 
 describe("Array structural work", () => {
+    it("publishes a deferred length through a resolved root and a later-selected key", async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "selected length" }
+        const key = Promise.withResolvers(), length = Promise.withResolvers()
+        const array = new r.Chain(Promise.resolve(["A", "B"]), ctx)
+        await r.lookupPath(array, [], ctx)
+        const old = r.capturePath(array, [], ctx)
+        const write = r.assignPath(array, [key.promise], length.promise, ctx)
+        const capture = r.export(array, [], ctx)
+        let delivered = false
+        Promise.resolve(capture).then(() => { delivered = true })
+        key.resolve("length")
+        await new Promise(setImmediate)
+        assert.equal(delivered, false)
+        length.resolve(1)
+        await write
+        assert.deepEqual(await capture, ["A"])
+        assert.deepEqual(await r.export(old, [], ctx), ["A", "B"])
+    })
+    it("counts the same placement reached through unequal layout branches", () => {
+        const a = { present: true, value: "A" }, b = { present: true, value: "B" }
+        const shared = join(span(1, a), span(1, b))
+        const layout = join(shared, join(span(1, b), shared))
+        assert.deepEqual(placementCounts(layout), new Map([[a, 2], [b, 3]]))
+    })
+    it("releases a requested point gate when its selection settles", async () => {
+        const ctx = { execution: new r.Execution(() => {}), errorContext: "point count" }
+        const cut = Promise.withResolvers(), source = new r.Chain(["A", "B"], ctx)
+        const copy = new r.Chain(r.run(source, [], "toSpliced", [0, cut.promise], ctx, {}), ctx)
+        const pending = r.lookupPath(copy, [0], ctx)
+        const region = ArrayView.region(r.lookupPath(copy, [], ctx), ctx)
+        verifyRefCounts(ctx, copy._state)
+        assert(region.gates.size > 0)
+        cut.resolve(1)
+        assert.equal(await pending, "B")
+        assert.equal(region.gates?.size ?? 0, 0)
+        verifyRefCounts(ctx, copy._state)
+    })
+
+    it("releases data held only for a numeric shape and protects outstanding data captures", function () {
+        this.timeout(30000)
+        const result = execFileSync(process.execPath, [...process.execArgv, "--expose-gc", "--unhandled-rejections=strict",
+            "test/fixtures/array-sequence-lifetimes.mjs"], { encoding: "utf8", timeout: 25000 })
+        assert.match(result, /Array shape and data lifetimes verified/)
+    })
+
+    it("keeps each fixed child's parent and failure visible across width settlement", async () => {
+        for (const indexed of [false, true]) {
+            const ctx = { execution: new r.Execution(), errorContext: "fixed children" }
+            const width = Promise.withResolvers(), child = Promise.withResolvers(), rejected = Promise.withResolvers()
+            const source = new r.Chain(["A", "B"], ctx)
+            r.run(source, [], "splice", [1, width.promise], ctx, mutate)
+            r.run(source, [], "unshift", [child.promise, rejected.promise], ctx, mutate)
+            const snapshot = r.capturePath(source, [], ctx)
+            const raw = r.lookupPath(snapshot, [], ctx), region = ArrayView.region(raw, ctx)
+            const observed = indexed && r.hasError(snapshot, [], ctx)
+            child.resolve({ n: 1 })
+            rejected.reject(new Error("bad payload"))
+            await new Promise(setImmediate)
+            const item = r.lookupPath(snapshot, [0], ctx), error = r.lookupPath(snapshot, [1], ctx)
+            assert(r.isPoisonError(error))
+            assert(getParentPlacements(item, ctx).some(p => p.parent === raw && p.key === "0"))
+            assert.equal(region.gates?.size ?? 0, 0)
+            if (indexed) assert.equal(await observed, true)
+            r.assignPath(source, [1], "fixed", ctx)
+            width.resolve(1)
+            assert.deepEqual(await r.export(source, [], ctx), [{ n: 1 }, "fixed", "A"])
+            assert.equal(await r.lookupPath(snapshot, [1], ctx), error)
+            assert.equal(r.hasError(source, [], ctx), false)
+            verifyRefCounts(ctx, source._state, snapshot._state)
+        }
+    })
+
+    it("reads shared rejected data through indexed, overridden and unreplaced point captures", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) for (const requested of [false, true]) {
+            const ctx = { execution: new r.Execution(), errorContext: "shared rejected payload" }
+            const width = Promise.withResolvers(), payload = Promise.withResolvers()
+            const source = new r.Chain(["A", "B"], ctx, mode)
+            r.run(source, [], "splice", [1, width.promise], ctx, mutate)
+            r.run(source, [], "unshift", [payload.promise], ctx, mutate)
+            const held = r.capturePath(source, [], ctx, mode)
+            const has = r.hasError(held, [], ctx), all = r.getErrors(held, [], ctx)
+            const point = requested ? r.lookupPath(held, [0], ctx) : undefined
+            if (requested) assert(r.isPending(point, ctx))
+            r.assignPath(source, [0], "replacement", ctx)
+            const cause = r.validationError("payload", ctx, r.ERROR_KIND.OperationInputFailed)
+            payload.reject(cause)
+            assert.equal(await has, true)
+            assert(r.isPending(all, ctx))
+            if (requested) assert.equal(await point, cause)
+            assert.equal(r.lookupPath(held, [0], ctx), cause)
+            assert.equal(r.lookupPath(source, [0], ctx), "replacement")
+            await r.repairPath(held, [0], ctx)
+            assert.equal(r.lookupPath(held, [0], ctx), cause)
+            verifyRefCounts(ctx, source._state, held._state)
+            width.resolve(1)
+            assert.equal(await all, cause)
+            assert.deepEqual(await r.export(source, [], ctx), ["replacement", "A"])
+            verifyRefCounts(ctx, source._state, held._state)
+        }
+    })
+
+    it("indexes a rejected shared placement for every newly indexed backing owner", async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "late shared Error index" }
+        const width = Promise.withResolvers(), payload = Promise.withResolvers()
+        const source = new r.Chain(["A", "B"], ctx)
+        r.run(source, [], "splice", [1, width.promise], ctx, mutate)
+        r.run(source, [], "unshift", [payload.promise], ctx, mutate)
+        const held = r.capturePath(source, [], ctx)
+        r.assignPath(source, [1], "replacement", ctx)
+        const earlier = r.lookupPath(held, [], ctx), live = r.lookupPath(source, [], ctx)
+        assert.notEqual(earlier, live)
+        assert.equal(ArrayView.region(earlier, ctx), ArrayView.region(live, ctx))
+        const cause = r.validationError("payload", ctx, r.ERROR_KIND.OperationInputFailed)
+        payload.reject(cause)
+        await new Promise(setImmediate)
+        const pair = new r.Chain([earlier, live], ctx)
+        buildRefIndex(r.lookupPath(pair, [], ctx), ctx)
+        assert.equal(requireMeta(earlier, ctx).errorCount, 1)
+        assert.equal(requireMeta(live, ctx).errorCount, 1)
+        assert.equal(r.hasError(pair, [], ctx), true)
+        const all = r.getErrors(pair, [], ctx)
+        assert(r.isPending(all, ctx))
+        verifyRefCounts(ctx, pair._state, source._state, held._state)
+        width.resolve(1)
+        assert.equal(await all, cause)
+        verifyRefCounts(ctx, pair._state, source._state, held._state)
+    })
+
+    it("preserves a movable splice child through derived snapshots and later writes", async () => {
+        for (const mode of [r.CHAIN_MODE.Unordered, r.CHAIN_MODE.Sequential])
+            for (const method of ["toReversed", "with", "push"])
+                for (const deferred of [false, true]) {
+                    const ctx = { execution: new r.Execution(), errorContext: method }
+                    const wrap = value => new r.Chain(value, ctx, mode)
+                    const start = new OrderedThenable(), payload = new OrderedThenable()
+                    const owner = wrap({ n: 0 }), source = wrap(["a", "b"])
+                    r.assignPath(owner, ["n"], 1, ctx)
+                    const child = () => r.lookupPath(owner, [], ctx)
+                    r.run(source, [], "splice", [deferred ? start : 1, 0, deferred ? payload : child()], ctx, mutate)
+                    const saved = method === "push" ? r.capturePath(source, [], ctx, mode) :
+                        wrap(r.run(source, [], method, method === "with" ? [0, "x"] : [], ctx, {}))
+                    if (method === "push") r.run(saved, [], method, ["x"], ctx, mutate)
+                    r.assignPath(source, [], undefined, ctx)
+                    if (deferred) payload.resolve(child())
+                    // Finish the immediate handoff. Only the derived snapshot
+                    // now protects the captured generation against this write.
+                    await new Promise(setImmediate)
+                    r.assignPath(owner, ["n"], 9, ctx)
+                    if (deferred) start.resolve(1)
+                    const expected = method === "push" ? ["a", { n: 1 }, "b", "x"] :
+                        method === "with" ? ["x", { n: 1 }, "b"] : ["b", { n: 1 }, "a"]
+                    assert.deepEqual(await r.export(saved, [], ctx), expected)
+                    assert.equal(r.lookupPath(owner, ["n"], ctx), 9)
+                    verifyRefCounts(ctx, owner._state, saved._state)
+                }
+    })
+
+    it("retains a fixed concat child while an earlier part is pending", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) {
+            const ctx = { execution: new r.Execution(), errorContext: "fixed concat child" }
+            const child = new r.Chain({ n: 0 }, ctx, mode)
+            r.assignPath(child, ["n"], 1, ctx)
+            const first = Promise.withResolvers()
+            const source = new r.Chain([], ctx, mode)
+            const copy = new r.Chain(r.run(source, [], "concat",
+                [first.promise, [r.lookupPath(child, [], ctx)]], ctx, {}), ctx, mode)
+            r.assignPath(child, ["n"], 9, ctx)
+            assert.equal(r.lookupPath(child, ["n"], ctx), 9)
+            first.resolve(["prefix"])
+            assert.deepEqual(await r.export(copy, [], ctx), ["prefix", { n: 1 }])
+            verifyRefCounts(ctx, copy._state, child._state)
+        }
+    })
+
+    it("publishes a selected splice range while an earlier cut or an unused start stays pending", async () => {
+        for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) {
+            const ctx = { execution: new r.Execution(), errorContext: "independent cuts" }
+            const wrap = value => new r.Chain(value, ctx, mode)
+            const earlier = Promise.withResolvers(), at = Promise.withResolvers()
+            const source = wrap(["a", "b", "c"])
+            const first = wrap(r.run(source, [], "splice", [1, earlier.promise], ctx, mutate))
+            const copy = wrap(r.run(source, [], "toSpliced", [at.promise, Infinity, "new"], ctx, {}))
+            const output = r.export(copy, [], ctx)
+            at.resolve(1)
+            await new Promise(setImmediate)
+            assert.deepEqual(await output, ["a", "new"])
+            verifyRefCounts(ctx, source._state, copy._state)
+
+            const unused = Promise.withResolvers(), count = Promise.withResolvers()
+            const removed = wrap(r.run(source, [], "splice", [unused.promise, count.promise], ctx, mutate))
+            count.resolve(undefined)
+            await new Promise(setImmediate)
+            assert.deepEqual(await r.export(removed, [], ctx), [])
+            assert.equal(r.lookupPath(source, [0], ctx), "a")
+            earlier.resolve(1)
+            assert.deepEqual(await r.export(first, [], ctx), ["b"])
+            assert.deepEqual(await r.export(source, [], ctx), ["a", "c"])
+            unused.reject(new Error("unused start"))
+            await new Promise(setImmediate)
+            assert.deepEqual(await r.export(source, [], ctx), ["a", "c"])
+        }
+    })
+
+    it("keeps a probed index outside the shortened splice copy absent from an earlier export", async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "shortened splice copy" }
+        const wrap = value => new r.Chain(value, ctx, r.CHAIN_MODE.Unordered)
+        const source = wrap(["A", "B", "C"])
+        const width = Promise.withResolvers(), start = Promise.withResolvers(), count = Promise.withResolvers()
+        r.run(source, [], "splice", [1, width.promise], ctx, mutate)
+        const out = wrap(r.run(source, [], "toSpliced", [start.promise, count.promise, "X"], ctx, {}))
+        const probe = r.lookupPath(out, [3], ctx), early = r.export(out, [], ctx)
+        count.resolve(1)
+        await new Promise(setImmediate)
+        width.resolve(2)
+        await new Promise(setImmediate)
+        start.resolve(-1)
+        assert.equal(await probe, undefined)
+        assert.deepEqual(await early, ["X"])
+        assert.deepEqual(await r.export(out, [], ctx), ["X"])
+    })
+
+    it("finishes a selected layout already assembled by a re-entered reader", async () => {
+        const ctx = { execution: new r.Execution(), errorContext: "selected layout" }
+        const at = Promise.withResolvers(), choice = valueSignal(at.promise, ctx)
+        const selected = fixed(span(1, { value: "kept", present: true })), output = {}
+        const current = selectSequenceLayout(output, selected.operands, choice, () => selected, ctx)
+        const early = choice.pending.then(() => {
+            assert.equal(current(), selected)
+            assert.equal(readSequenceLayout(output.layoutSource, true), selected.node)
+        })
+        const layout = output.ready
+        at.resolve(0)
+        await early
+        assert.equal(await layout, selected.node)
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
+    it("shares fixed ranges and releases superseded publication destinations", function () {
+        this.timeout(30000)
+        const args = [...process.execArgv, "--expose-gc", "--unhandled-rejections=strict", "test/fixtures/array-region-memory.mjs"]
+        const options = { encoding: "utf8", timeout: 25000, stdio: "pipe" }
+        assert.throws(() => execFileSync(process.execPath, [...args, "16", "--without-counters"], options),
+            error => error.status === 1 && error.stderr.includes("Array region memory counters"))
+        assert.match(execFileSync(process.execPath, args, options), /Shared Array ranges and retired destinations verified/)
+    })
+
     it("bounds copied producers, leases and notifications through mixed Array histories", function () {
         this.timeout(30000)
         const result = execFileSync(process.execPath, [...process.execArgv, "--expose-gc", "--unhandled-rejections=strict",
@@ -54,6 +305,103 @@ describe("Array structural work", () => {
             assert.deepEqual(await exported, ["x", { n: 1 }, "end"])
             assert.deepEqual(await r.export(reverse, [], ctx), ["end", { n: 2 }, "x"])
             verifyRefCounts(ctx, reverse._state, copy._state)
+        }
+    })
+
+    it("publishes prefix aliases and failure to an indexed snapshot independently of the width and remaining data", async () => {
+        for (const mode of Object.values(r.CHAIN_MODE)) for (const widthFirst of [false, true]) {
+            const ctx = { execution: new r.Execution(), errorContext: "fixed prefix" }
+            const source = new r.Chain(["A", , "C"], ctx, mode), cut = Promise.withResolvers()
+            const slow = Promise.withResolvers(), incoming = new OrderedThenable(), failed = Promise.withResolvers()
+            const child = { n: 1 }, cause = r.validationError("bad input", ctx, r.ERROR_KIND.OperationInputFailed)
+            child.self = child
+            r.run(source, [], "splice", [1, cut.promise], ctx, mutate)
+            r.run(source, [], "unshift", [slow.promise, incoming, failed.promise, ready(child)], ctx, mutate)
+            const held = r.capturePath(source, [], ctx, mode)
+            const has = r.hasError(held, [], ctx), all = r.getErrors(held, [], ctx)
+            if (widthFirst) { cut.resolve(1); await new Promise(setImmediate) }
+            incoming.resolve(child)
+            failed.reject(cause)
+            await new Promise(setImmediate)
+            function checkParents() {
+                const raw = r.lookupPath(held, [], ctx)
+                const keys = getParentPlacements(child, ctx).filter(p => p.parent === raw).map(p => p.key).sort()
+                assert.deepEqual(keys, ["1", "3"])
+                assert.equal(r.hasError(held, [], ctx), true)
+                verifyRefCounts(ctx, held._state, source._state)
+            }
+            if (widthFirst || mode !== r.CHAIN_MODE.Complete) checkParents()
+            if (!widthFirst) { cut.resolve(1); await new Promise(setImmediate) }
+            checkParents()
+            assert.equal(await has, true)
+            assert.equal(r.lookupPath(held, [2], ctx), cause)
+            assert(r.isPending(r.lookupPath(held, [0], ctx), ctx))
+            r.deletePath(source, [2], ctx)
+            r.assignPath(source, [1, "n"], 9, ctx)
+            assert.equal(r.lookupPath(held, [1, "self", "n"], ctx), 1)
+            assert.equal(r.lookupPath(source, [1, "n"], ctx), 9)
+            slow.resolve("ok")
+            assert.equal(await all, cause)
+            assert.equal(await r.getErrors(source, [], ctx), null)
+            const output = await r.export(source, [], ctx)
+            assert.equal(output.length, 6)
+            assert.equal(2 in output, false)
+            assert.equal(output[3].self, output[3])
+            assert.deepEqual(output.slice(4), ["A", "C"])
+            verifyRefCounts(ctx, held._state, source._state)
+        }
+    })
+
+    it("keeps exact primitive values, holes and own undefined in successive snapshots", async () => {
+        for (const widthFirst of [false, true]) {
+            const ctx = { execution: new r.Execution(), errorContext: "fixed primitive histories" }
+            const source = new r.Chain(["A", , "C"], ctx), width = Promise.withResolvers()
+            const values = [-0, NaN, 1n << 100n, Symbol("slot"), undefined, false, "", null]
+            const inputs = values.map(() => Promise.withResolvers()), snapshots = []
+            r.run(source, [], "splice", [2, width.promise], ctx, mutate)
+            for (const input of inputs) {
+                r.run(source, [], "push", [input.promise], ctx, mutate)
+                snapshots.push(r.capturePath(source, [], ctx))
+            }
+            const deliver = () => { for (let i = values.length - 1; i >= 0; i--) inputs[i].resolve(values[i]) }
+            if (widthFirst) width.resolve(1)
+            else deliver()
+            await new Promise(setImmediate)
+            if (widthFirst) deliver()
+            else width.resolve(1)
+            for (const [i, held] of snapshots.entries()) {
+                const out = await r.export(held, [], ctx)
+                assert.deepEqual(out, ["A", , ...values.slice(0, i + 1)])
+            }
+        }
+    })
+
+    it("repairs a copied flag while its underlying value and an independent sibling are pending", async () => {
+        for (const mode of Object.values(r.CHAIN_MODE)) for (const prepend of [false, true]) {
+            const ctx = { execution: new r.Execution(), errorContext: "copied flag" }
+            const data = Promise.withResolvers(), slow = Promise.withResolvers(), cut = Promise.withResolvers()
+            const source = new r.Chain([data.promise, "last"], ctx, mode)
+            const error = r.validationError("flag", ctx, r.ERROR_KIND.OperationInputFailed)
+            r.poisonPath(source, [0], error, ctx)
+            let output = source
+            if (prepend) {
+                r.run(source, [], "splice", [1, cut.promise], ctx, mutate)
+                r.run(source, [], "unshift", [slow.promise], ctx, mutate)
+            } else output = new r.Chain(r.run(source, [], "toSpliced", [1, 0, slow.promise], ctx, {}), ctx, mode)
+            cut.resolve(0)
+            await new Promise(setImmediate)
+            const key = prepend ? 1 : 0
+            assert.equal(r.lookupPath(output, [key], ctx), error)
+            assert.equal(r.hasError(output, [], ctx), true)
+            const repaired = r.repairPath(output, [key], ctx), read = r.lookupPath(output, [key, "n"], ctx)
+            assert(r.isPending(read, ctx))
+            data.resolve({ n: 7 })
+            await repaired
+            assert.equal(await read, 7)
+            if (!prepend) assert.equal(r.lookupPath(source, [0], ctx), error)
+            slow.resolve("end")
+            assert.equal(await r.hasError(output, [], ctx), false)
+            verifyRefCounts(ctx, source._state, output._state)
         }
     })
 

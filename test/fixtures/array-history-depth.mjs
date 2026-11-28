@@ -4,19 +4,41 @@ import { instrumentRuntime } from "../runtime-transform.js"
 
 const n = Number(process.argv[2] ?? 192)
 assert(Number.isSafeInteger(n) && n >= 16)
-let copies, leases, bounds, points
+let copies, leases, bounds, points, joins, childLinks, materializedSlots, capturedSlots, pointDepth = 0, maxPointDepth = 0
+let rangeDepth = 0, maxRangeDepth = 0
+globalThis.__arrayMaterializedSlots = length => { materializedSlots += length }
+globalThis.__arrayPointDepth = delta => { pointDepth += delta; maxPointDepth = Math.max(maxPointDepth, pointDepth) }
+globalThis.__arrayRangeDepth = delta => { rangeDepth += delta; maxRangeDepth = Math.max(maxRangeDepth, rangeDepth) }
 const count = (text, name) => [text, text + "\n    globalThis.__arrayHistoryCount(" + JSON.stringify(name) + ")\n"]
 globalThis.__arrayHistoryCount = name => {
     if (name === "copy") copies++
     if (name === "lease") leases++
     if (name === "bound") bounds++
     if (name === "point") points++
+    if (name === "join") joins++
+    if (name === "childLink") childLinks++
+    if (name === "slot") capturedSlots++
 }
 const loaded = instrumentRuntime([
+    ["array-layout.js", [["return createArrayFromRemap(entries, ctx)",
+        "globalThis.__arrayMaterializedSlots(entries.length)\n    $&"],
+        count("const placement = readArrayPlacement(array, key, ctx, inspect)", "slot")]],
+    ["array-remap.js", [count("const i = Number(key), segment = i < storage.prefix ? storage : storage.tail", "slot")]],
+    ["array-width.js", [count("function notifyReader(reader, active) {", "bound"),
+        count("const [update, lo, hi] = pending[i]", "bound")]],
     ["property-versions.js", [count("function createCopiedVersion(placement, owner, key, operationContext) {", "copy"),
-        count("function retainPlacement(placement, operationContext) {", "lease")]],
+        count("function retainPlacement(placement, operationContext, retentionParent) {", "lease")]],
     ["array-sequence.js", [count("function refine(sequence, minimum, maximum, active) {", "bound"),
+        ["function read(value, projections) {", "$&\n        globalThis.__arrayPointDepth(1); try {"],
+        ["while (projections?.length) value = projections.pop()(value)\n        return value",
+            "$&\n        } finally { globalThis.__arrayPointDepth(-1) }"],
+        ["() => project(current()), ctx, blocked)", "() => { globalThis.__arrayRangeDepth(1); " +
+            "try { return project(current()) } finally { globalThis.__arrayRangeDepth(-1) } }, ctx, blocked)"],
         count("function pointAt(source, index, back, project) {", "point")]],
+    ["array-sequence-layout.js", [["function deriveSequenceLayout(output, left, right, project, ctx, prerequisite) {",
+        "$&\n    if (right) globalThis.__arrayHistoryCount(\"join\")"]]],
+    ["array-view.js", [["region.children(undefined, placement => addParent(placement.value, record, placement, operationContext))",
+        "region.children(undefined, placement => { globalThis.__arrayHistoryCount(\"childLink\"); addParent(placement.value, record, placement, operationContext) })"]]],
 ])
 const r = await import("../../src/index.js")
 const mutation = { mutationScopeDepth: 0 }
@@ -33,7 +55,8 @@ async function history(method, mode) {
         controls.push(() => signal.resolve(value))
         return signal.promise
     }
-    copies = leases = bounds = points = 0
+    copies = leases = bounds = points = joins = maxPointDepth = maxRangeDepth = 0
+    const cuts = ["cuts", "splice-start", "toSpliced-start"].includes(method)
     if (["tail", "reverse", "toReversed", "fill", "copyWithin"].includes(method)) {
         call("splice", [1, input(1)], true)
         expected.splice(1, 1)
@@ -72,10 +95,11 @@ async function history(method, mode) {
             call("unshift", [input(i), i], true); expected.unshift(i, i)
             call("shift", [], true); expected.shift()
             break
-        case "cuts": {
-            const start = i % 3
-            if (i % 2) call("splice", [input(start), 0, i], true)
-            else array = wrap(call("toSpliced", [input(start), 0, i]))
+        case "cuts": case "splice-start": case "toSpliced-start": {
+            const start = i === 1 || method === "cuts" && i % 4 === 3 ? expected.length : i % 3
+            const args = [input(start), 0, method === "splice-start" ? input(i) : i]
+            if (method === "splice-start" || method === "cuts" && i % 2) call("splice", args, true)
+            else array = wrap(call("toSpliced", args))
             expected.splice(start, 0, i)
             break
         }
@@ -84,13 +108,23 @@ async function history(method, mode) {
             break
         }
     }
+    if (cuts) assert.equal(joins, 0, "joined unselected splice layouts at issuance")
     const first = r.lookupPath(array, [0], ctx)
+    const tailReads = cuts && [r.lookupPath(array, [expected.length - 1], ctx),
+        call("at", [-1]), r.lookupPath(wrap(call("toReversed", [])), [0], ctx)]
+    if (tailReads) assert(tailReads.every(value => r.isPending(value, ctx)))
     const inspectOrder = method === "concat" || method === "reverse" || method === "toReversed"
     const cursor = inspectOrder && r.iterate(array, [], ctx, { metadata: ["index0"] })
     const pull = cursor && cursor.next()
-    for (let i = controls.length - 1; i >= 0; i--) controls[i]()
+    if (cuts && method !== "cuts") {
+        await tick()
+        for (const settle of controls) settle()
+    } else for (let i = controls.length - 1; i >= 0; i--) controls[i]()
     assert.deepEqual(await first, expected[0], method)
+    if (tailReads) for (const read of tailReads) assert.deepEqual(await read, expected.at(-1), method)
     assert.deepEqual(await r.export(array, [], ctx), expected, method)
+    if (cuts) assert(maxPointDepth < 16, method + " nested " + maxPointDepth + " point selections")
+    if (cuts) assert(maxRangeDepth < 16, method + " nested " + maxRangeDepth + " range selections")
     if (cursor) {
         const observed = []
         for (let step = await pull; !step.done; step = await cursor.next())
@@ -124,8 +158,105 @@ async function sparse(mode, length) {
     await cursor.return()
 }
 
+async function outOfOrderStarts(method, mode, interleaved, observe) {
+    const ctx = { execution: new r.Execution(), errorContext: method }, controls = []
+    let chain = new r.Chain(["A", "B", "C", "D"], ctx, mode)
+    const expected = ["A", "B", "C", "D"]
+    for (let i = 0; i < n; i++) {
+        const control = Promise.withResolvers()
+        controls.push(control)
+        if (method === "push-delete") {
+            r.run(chain, [], "push", [i], ctx, mutation)
+            r.run(chain, [], "splice", [control.promise, 1], ctx, mutation)
+            expected.push(i)
+            expected.splice(1, 1)
+        } else {
+            const args = [control.promise, 0, i]
+            if (method === "splice") r.run(chain, [], method, args, ctx, mutation)
+            else chain = new r.Chain(r.run(chain, [], method, args, ctx, {}), ctx, mode)
+            expected.splice(1, 0, i)
+        }
+    }
+    const first = observe && r.lookupPath(chain, [0], ctx)
+    const end = observe && r.run(chain, [], "at", [-1], ctx, {})
+    const errors = observe && r.getErrors(chain, [], ctx)
+    const cursor = observe && r.iterate(chain, [], ctx, { windowEnd: 1 })
+    const item = cursor && cursor.next()
+    const order = interleaved ? controls.filter((_, i) => i % 2).concat(controls.filter((_, i) => !(i % 2))) :
+        controls.reverse()
+    for (const control of order) control.resolve(1)
+    assert.deepEqual(await r.export(chain, [], ctx), expected)
+    if (observe) {
+        assert.equal(await first, expected[0])
+        assert.equal(await end, expected.at(-1))
+        assert.equal(await errors, null)
+        assert.equal(await r.lookupPath((await item).value, [], ctx), expected[0])
+        await cursor.return()
+    }
+    assert.equal(ctx.execution.fatalError, null)
+}
+
+async function fixedEdits(method) {
+    const ctx = { execution: new r.Execution(), errorContext: method }, starts = []
+    const wrap = value => new r.Chain(value, ctx, method === "length" ? r.CHAIN_MODE.Sequential : r.CHAIN_MODE.Complete)
+    const expected = ["A", "B", "C"]
+    let chain = wrap(expected.slice())
+    materializedSlots = capturedSlots = 0
+    for (let i = 0; i < n; i++) {
+        const start = Promise.withResolvers(), previous = chain
+        starts.push(start)
+        if (method === "splice") {
+            r.run(chain, [], "splice", [start.promise, 0, i], ctx, mutation)
+            expected.splice(1, 0, i)
+            continue
+        }
+        if (method === "length") {
+            r.run(chain, [], "push", [i, i], ctx, mutation)
+            r.assignPath(chain, ["length"], start.promise, ctx, 0)
+            expected.push(i, i)
+            expected.length = i + 4
+            continue
+        }
+        chain = wrap(r.run(previous, [], "slice", [start.promise], ctx, {}))
+        r.assignPath(previous, [], undefined, ctx)
+        r.run(chain, [], method, [i], ctx, mutation)
+        expected[method](i)
+    }
+    for (const [i, start] of starts.entries()) {
+        if (method === "length" || method === "splice") {
+            const j = n - 1 - i
+            starts[j].resolve(method === "length" ? j + 4 : 1)
+        } else start.resolve(0)
+    }
+    assert.deepEqual(await r.export(chain, [], ctx), expected)
+    assert(materializedSlots <= 4 * n, `${method} materialized ${materializedSlots} slots for ${n} edits`)
+    assert(capturedSlots <= 4 * n, `${method} read ${capturedSlots} storage slots for ${n} edits`)
+}
+
 for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
     for (const length of [2048, 0xfffffffe]) await sparse(mode, length)
+for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
+for (const [method, args, initialCut] of [["pop", [], 1], ["pop", [], 0], ["shift", [], 0],
+    ["slice", [0, -1], 0], ["splice", [-1, 1], 0]])
+for (const size of [32, 64, 128, 256]) {
+    const ctx = { execution: new r.Execution(), errorContext: "regional trim work" }, width = Promise.withResolvers()
+    let array = new r.Chain(Array.from({ length: size }, (_, i) => ({ i })), ctx, mode)
+    const splice = r.run(array, [], "splice", [initialCut, width.promise], ctx, mutation)
+    width.resolve(0)
+    await splice
+    childLinks = 0
+    for (let i = 0; i < size / 2; i++) {
+        const output = r.run(array, [], method, args, ctx, method === "slice" ? {} : mutation)
+        if (method === "slice") {
+            const predecessor = array
+            array = new r.Chain(output, ctx, mode)
+            r.assignPath(predecessor, [], undefined, ctx)
+        }
+    }
+    assert(childLinks < size * 2, `Republished ${childLinks} region child links during ${size / 2} ${method} trims`)
+    assert.equal(r.lookupPath(array, ["length"], ctx), size / 2)
+    assert.equal(r.lookupPath(array, [size / 2 - 1, "i"], ctx), method === "shift" ? size - 1 : size / 2 - 1)
+}
 for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) for (const flagged of [false, true]) {
     const ctx = { execution: new r.Execution(), errorContext: "sparse copy" }
     const data = new Array(8192), value = Promise.withResolvers(), target = Promise.withResolvers()
@@ -146,8 +277,17 @@ for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered]) for (const
     assert.equal(await r.lookupPath(array, [4096], ctx), "present")
 }
 const methods = process.argv.slice(3)
-for (const method of methods.length ? methods : ["tail", "copies", "fill", "copyWithin", "reverse", "toReversed", "concat", "toSpliced", "front", "dense", "slice", "cuts"]) {
+if (!methods.length || methods.includes("out-of-order"))
+    for (const mode of [r.CHAIN_MODE.Sequential, r.CHAIN_MODE.Unordered])
+        for (const method of ["splice", "toSpliced", "push-delete"])
+            for (const interleaved of [false, true])
+                await outOfOrderStarts(method, mode, interleaved, interleaved !== (mode === r.CHAIN_MODE.Sequential))
+if (!methods.length || methods.includes("slice-edits"))
+    for (const method of ["push", "unshift", "splice", "length"]) await fixedEdits(method)
+for (const method of methods.length ? methods : ["tail", "copies", "fill", "copyWithin", "reverse", "toReversed", "concat", "toSpliced", "front", "dense", "slice", "cuts", "splice-start", "toSpliced-start"]) {
+    if (method === "out-of-order" || method === "slice-edits") continue
     await history(method, ["slice", "cuts"].includes(method) ? r.CHAIN_MODE.Sequential : r.CHAIN_MODE.Unordered)
+    if (method === "splice-start" || method === "toSpliced-start") await history(method, r.CHAIN_MODE.Sequential)
     if (n >= 5000) console.log(method, n, "passed")
     await tick()
     globalThis.gc?.()

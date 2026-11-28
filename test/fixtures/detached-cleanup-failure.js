@@ -14,7 +14,7 @@ const target = new URL("../../src/ownership.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
-    const marker = "function release() {\n        if (closed) return"
+    const marker = "release = () => {\n        const operationContext = this.#operationContext\n        if (!operationContext) return"
     const source = String(result.source).replaceAll("\r\n", "\n")
     assert(source.includes(marker), "Lease cleanup fault anchor needs updating")
     return { ...result, source: source.replace(marker,

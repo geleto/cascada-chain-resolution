@@ -4,6 +4,7 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import { LengthState } from "./array-length.js"
+import { fixedWidth } from "./array-width.js"
 import { addParent, removeParent, PlacementConstruction, activateRelationships, updateBackingOwners } from "./parent-placements.js"
 import { copyArrayOverlays, getOwnPlacementVersion, ownPlacementVersionEntries } from "./property-versions.js"
 
@@ -41,7 +42,7 @@ class ArrayBacking {
             const borrowed = range?.borrowed?.record === this && range.borrowed
             const offset = range?.start ?? 0
             const start = offset + (borrowed?.start ?? 0)
-            let length = range ? range.lengthState.minimum ?? range.lengthState : undefined
+            let length = range ? retainedLength(range, range.lengthState.minimum ?? range.lengthState) : undefined
             if (borrowed) length = Math.min(length, borrowed.length - offset)
             for (const index of indexes) {
                 if (typeof index === "object") {
@@ -99,13 +100,26 @@ class ArrayView {
             start: (range?.start ?? 0) + start,
             lengthState: end - start,
         }
+        if (range?.retainedEnd !== undefined) bounds.retainedEnd = range.retainedEnd
         if (prefix) bounds.borrowed = prefix
         else if (range?.borrowed && bounds.start < range.borrowed.length) bounds.borrowed = range.borrowed
     }
 
     static prefixLength(owner, ctx) {
         const range = metadata.metaOf(owner, ctx)?.arrayRange
-        return range?.borrowed ? Math.max(0, Math.min(ArrayView.minimumLength(owner, ctx), range.borrowed.length - range.start)) : 0
+        return range?.borrowed ? Math.max(0, Math.min(retainedLength(range, ArrayView.minimumLength(owner, ctx)),
+            range.borrowed.length - range.start)) : 0
+    }
+
+    // The retained backing ends at the cut even if an owner later grows its
+    // logical length. Own versions may publish into the newly added holes.
+    static clipBacking(owner, ctx) {
+        const range = metadata.requireMeta(owner, ctx).arrayRange
+        range.retainedEnd = Math.min(range.retainedEnd ?? Infinity, range.start + range.lengthState)
+    }
+
+    static retainedLength(owner, ctx, length = ArrayView.maximumLength(owner, ctx)) {
+        return retainedLength(metadata.metaOf(owner, ctx)?.arrayRange, length)
     }
 
     // A cursor past the borrowed prefix still needs the tail's versions,
@@ -156,6 +170,11 @@ class ArrayView {
     static resolveInRange(array, index, work, onInRange) {
         const state = ArrayView.#stateOf(array, work.operationContext)
         return typeof state === "number" ? onInRange(index < state) : state.resolve(work, onInRange, index)
+    }
+
+    static captureExtent(array, ctx, limit) {
+        const state = ArrayView.#stateOf(array, ctx)
+        return typeof state === "number" ? fixedWidth(Math.min(state, limit)) : state.captureExtent(limit, ctx)
     }
 
     static captureLength(array, operationContext, owner, limit) {
@@ -217,6 +236,8 @@ class ArrayView {
         const state = ArrayView.#stateOf(source, operationContext)
         const copy = typeof state === "number" ? state : state.fork()
         const changed = copy !== ArrayView.minimumLength(destination, operationContext)
+        const from = metadata.metaOf(source, operationContext)?.arrayRange, to = metadata.metaOf(destination, operationContext)?.arrayRange
+        if (from?.retainedEnd !== undefined && from.backing === to?.backing) to.retainedEnd = from.retainedEnd
         return () => {
             if (changed) ArrayView.#setState(destination, copy, operationContext)
         }
@@ -257,7 +278,7 @@ class ArrayView {
     static denseStorage(owner, length, ctx, skip, cut, requireMovedSlot) {
         const meta = metadata.requireMeta(owner, ctx), range = meta.arrayRange
         const borrowed = range?.borrowed, offset = range?.start ?? 0, region = ArrayView.region(owner, ctx)
-        if (!length || length > 0xffffffff || region?.pending) return
+        if (!length || length > 0xffffffff || region?.pending || length > retainedLength(range, length)) return
         const backing = borrowed?.record.array ?? range?.backing ?? owner, storage = metadata.requireMeta(backing, ctx)
         const prefix = borrowed ? ArrayView.prefixLength(owner, ctx) : region ? 0 : length
         const kept = prefix - Math.min(cut, Math.max(0, prefix - skip))
@@ -356,12 +377,21 @@ class ArrayView {
         const range = meta.arrayRange
         const backing = range?.backing ?? owner
         const record = metadata.metaOf(backing, operationContext)?.arrayBacking
-        if (range && Number(key) >= (record?.region ? ArrayView.maximumLength(owner, operationContext) :
+        if (range && Number(key) >= retainedLength(range, record?.region ? ArrayView.maximumLength(owner, operationContext) :
             ArrayView.minimumLength(owner, operationContext))) return
         const index = (range?.start ?? 0) + Number(key)
         const borrowed = range?.borrowed
         return borrowed && index < borrowed.length ? getOwnPlacementVersion(borrowed.record.producers, borrowed.start + index, operationContext) :
             getOwnPlacementVersion(record?.producers, index, operationContext) ?? record?.region?.versionAt(index)
+    }
+
+    static capturePoint(owner, key, operationContext) {
+        const range = metadata.metaOf(owner, operationContext)?.arrayRange
+        if (!range || !isArrayIndex(key) && !ArrayView.mayHaveVirtualIndex(owner, key, operationContext) ||
+            Number(key) >= retainedLength(range, ArrayView.maximumLength(owner, operationContext)) || getOwnPlacementVersion(owner, key, operationContext)) return
+        const index = range.start + Number(key)
+        if (range.borrowed && index < range.borrowed.length) return
+        return ArrayView.region(owner, operationContext)?.capturePoint?.(index)
     }
 
     // An unfinished region uses the existing shared backing producer for
@@ -395,8 +425,7 @@ class ArrayView {
     static *regionKeys(owner, region, operationContext, start, end) {
         const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
         start = Math.max(start, region.start - offset)
-        const regionEnd = region.sequence?.widths?.maximum ?? region.end
-        end = Math.min(end ?? Infinity, ArrayView.maximumLength(owner, operationContext), regionEnd - offset)
+        end = Math.min(end ?? Infinity, ArrayView.retainedLength(owner, operationContext), region.end - offset)
         if (start >= end || !region.implicit) return
         if (region.layout) {
             for (const index of region.keys(start + offset, end + offset)) yield String(index - offset)
@@ -405,27 +434,26 @@ class ArrayView {
 
     // Capture the restriction and local point overrides, without reading any
     // unknown numeric placement or retaining its former owner.
-    static implicitRanges(owner, operationContext) {
+    static implicitRanges(owner, operationContext, from, to) {
         const region = ArrayView.region(owner, operationContext)
         if (!region) return []
-        const suffix = ArrayView.implicitRange(owner, operationContext, region)
-        const prefix = region.prefix && ArrayView.implicitRange(owner, operationContext, region.prefix)
+        const suffix = ArrayView.implicitRange(owner, operationContext, region, from, to)
+        const prefix = region.prefix && ArrayView.implicitRange(owner, operationContext, region.prefix, from, to)
         return prefix ? suffix ? [prefix, suffix] : [prefix] : suffix ? [suffix] : []
     }
 
     static regionKey(owner, index, operationContext) {
         const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
         const key = index - offset
-        if (key >= 0 && key < ArrayView.maximumLength(owner, operationContext) &&
+        if (key >= 0 && key < ArrayView.retainedLength(owner, operationContext) &&
             !getOwnPlacementVersion(owner, key, operationContext)) return String(key)
     }
 
-    static implicitRange(owner, operationContext, region = ArrayView.region(owner, operationContext)) {
+    static implicitRange(owner, operationContext, region = ArrayView.region(owner, operationContext), from = 0, to = Infinity) {
         if (!region?.implicit) return
         const offset = metadata.requireMeta(owner, operationContext).arrayRange?.start ?? 0
-        const first = Math.max(offset, region.start)
-        const regionEnd = region.sequence?.widths?.maximum ?? region.end
-        const end = Math.min(offset + ArrayView.maximumLength(owner, operationContext), regionEnd)
+        const first = Math.max(offset + from, region.start)
+        const end = Math.min(offset + Math.min(to, ArrayView.retainedLength(owner, operationContext)), region.end)
         if (first >= end) return
         const counts = region.layout && region.counts(first, end)
         let masked, errors = counts?.poison ?? 0
@@ -437,8 +465,7 @@ class ArrayView {
             ;(masked ??= new Set()).add(index)
             if (!region.pending && (member?.ownFailure || errorUtils.isPoisonError(member?.value))) errors--
         }
-        if (region.pending) for (const index of region.gates?.keys() ?? [])
-            if (index >= first && index < end) (masked ??= new Set()).add(index)
+        if (region.pending) for (const index of region.pointKeys(first, end)) (masked ??= new Set()).add(index)
         const count = (counts?.covered ?? end - first) - (masked?.size ?? 0)
         if (count) return { region, first, end, offset, count, errors,
             contains: index => index >= first && index < end && !masked?.has(index),
@@ -460,7 +487,9 @@ class ArrayView {
             const at = offset + index
             if (region?.prefix && at < region.start) region = region.prefix
             if (!region?.layout || at < region.start || at >= region.end || getOwnPlacementVersion(owner, index, operationContext)) return
-            const end = Math.min(region.end, offset + ArrayView.minimumLength(owner, operationContext))
+            const end = Math.min(region.end, offset + ArrayView.retainedLength(owner, operationContext,
+                ArrayView.minimumLength(owner, operationContext)))
+            if (at >= end) return
             const run = region.skippedRun(at, end)
             if (!run) return
             // Linear pulls only move forward on this protected logical version.
@@ -480,7 +509,7 @@ class ArrayView {
         const range = meta?.arrayRange
         if (meta?.type !== metadata.TYPE.Array || !range) return
         const record = metadata.metaOf(range.backing, operationContext)?.arrayBacking
-        const length = ArrayView.minimumLength(owner, operationContext)
+        const length = retainedLength(range, ArrayView.minimumLength(owner, operationContext))
         const borrowed = range?.borrowed
         if (borrowed) yield* versions(borrowed.record.producers, range.start + borrowed.start,
             Math.min(length, borrowed.length - range.start))
@@ -585,7 +614,7 @@ class ArrayView {
             backing = range?.backing ?? array
             const borrowed = range?.borrowed
             const offset = range?.start ?? 0
-            const extent = range ? ArrayView.minimumLength(array, operationContext) : undefined
+            const extent = range ? retainedLength(range, ArrayView.minimumLength(array, operationContext)) : undefined
             if (borrowed) {
                 const cut = Math.max(0, borrowed.length - offset)
                 const prefix = start < cut ? ArrayView.#storageKeys(borrowed.record.array, borrowed.start + offset, Math.min(extent, cut),
@@ -665,6 +694,7 @@ class ArrayView {
         if (!isArrayIndex(key)) return undefined
         const range = metadata.requireMeta(array, operationContext).arrayRange
         const state = ArrayView.#stateOf(array, operationContext), index = Number(key)
+        if (range.retainedEnd !== undefined && index >= range.retainedEnd - range.start) return
         const inRange = typeof state === "number" ? index < state : state.answer(index)
         return inRange !== false ? String(range.start + index) : undefined
     }
@@ -699,6 +729,10 @@ class ArrayView {
             return errorUtils.runExternalAction(operationContext, () => array.length)
         } finally { array = undefined }
     }
+}
+
+function retainedLength(range, length) {
+    return range?.retainedEnd === undefined ? length : Math.max(0, Math.min(length, range.retainedEnd - range.start))
 }
 
 function* indexKeys(start, end) {
